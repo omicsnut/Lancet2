@@ -60,4 +60,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           mike deploy --push "$VERSION"
-          mike set-default --push "$VERSION"
+
+      # TODO: Change default to "latest" after downstream ML scoring
+      # support is integrated for newer versions (post v2.8.7).
+      - name: Ensure default points to v2.8.7
+        run: mike set-default --push 2.8.7
