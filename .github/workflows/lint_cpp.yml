@@ -48,6 +48,9 @@ jobs:
             -DLANCET_BUILD_STATIC=OFF \
             -DLANCET_ENABLE_CLOUD_IO=ON
 
+      - name: Build (fetch deps and populate include paths)
+        run: pixi run cmake --build build
+
       - name: Run clang-tidy
         run: |
           pixi run run-clang-tidy \
