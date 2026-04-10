@@ -1,4 +1,16 @@
 
+<a name="v2.10.2"></a>
+## [v2.10.2](https://github.com/nygenome/Lancet2/compare/v2.10.1...v2.10.2) (2026-04-10)
+
+### Bug Fixes
+
+* correct PREFIX_API_KEY env var and bump docs to v2.10.2
+
+### Refactoring
+
+* Update release notes in changelog
+
+
 <a name="v2.10.1"></a>
 ## [v2.10.1](https://github.com/nygenome/Lancet2/compare/v2.10.0...v2.10.1) (2026-04-10)
 
