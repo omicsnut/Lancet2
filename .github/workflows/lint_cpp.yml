@@ -45,8 +45,8 @@ jobs:
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DLANCET_TESTS=ON \
             -DLANCET_BENCHMARKS=ON \
-            -DLANCET_BUILD_STATIC=OFF \
-            -DLANCET_ENABLE_CLOUD_IO=ON
+            -DLANCET_BUILD_STATIC=ON \
+            -DLANCET_ENABLE_CLOUD_IO=OFF
 
       - name: Build (fetch deps and populate include paths)
         run: pixi run cmake --build build
