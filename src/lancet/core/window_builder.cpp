@@ -12,11 +12,11 @@
 #include "absl/strings/str_split.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
+#include "spdlog/fmt/bundled/format.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <memory>
-#include <spdlog/fmt/bundled/format.h>
 #include <stdexcept>
 #include <string>
 #include <string_view>

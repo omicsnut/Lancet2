@@ -15,13 +15,13 @@
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
+#include "spdlog/fmt/bundled/format.h"
 #include "spoa/alignment_engine.hpp"
 
 #include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <numeric>
-#include <spdlog/fmt/bundled/format.h>
 #include <string>
 #include <thread>
 #include <utility>

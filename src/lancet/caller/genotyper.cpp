@@ -5,7 +5,8 @@
 #include "lancet/hts/cigar_unit.h"
 #include "lancet/hts/cigar_utils.h"
 
-#include <absl/types/span.h>
+#include "absl/types/span.h"
+
 #include <algorithm>
 #include <array>
 #include <limits>

@@ -379,13 +379,14 @@ void PipelineRunner::Run() {
 auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
   using namespace std::string_view_literals;
   // clang-format off
-  static constexpr auto FORMAT_STR_HEADER = R"raw(##fileformat=VCFv4.3
+  static constexpr auto FORMAT_STR_HEADER = R"raw(##fileformat=VCFv4.5
 ##fileDate={RUN_TIMESTAMP}
 ##source=Lancet_{FULL_VERSION_TAG}
 ##commandLine="{FULL_COMMAND_USED}"
 ##reference="{REFERENCE_PATH}"
-{CONTIG_HDR_LINES}{CONDITIONAL_INFO_LINES}##INFO=<ID=TYPE,Number=1,Type=String,Description="Variant type (SNV, INS, DEL, MNP)">
-##INFO=<ID=LENGTH,Number=1,Type=Integer,Description="Variant length in base pairs">
+{CONTIG_HDR_LINES}{CONDITIONAL_INFO_LINES}##INFO=<ID=TYPE,Number=A,Type=String,Description="Variant type (SNV, INS, DEL, MNP)">
+##INFO=<ID=LENGTH,Number=A,Type=Integer,Description="Variant length in base pairs">
+##INFO=<ID=MULTIALLELIC,Number=0,Type=Flag,Description="Indicates if the site has multiple ALT alleles">
 {ANNOTATION_INFO_LINES}##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele depth">
 ##FORMAT=<ID=ADF,Number=R,Type=Integer,Description="Forward strand allele depth">

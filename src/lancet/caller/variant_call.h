@@ -7,8 +7,10 @@
 #include "lancet/core/sample_info.h"
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/types/span.h"
 
+#include <numeric>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -61,6 +63,38 @@ class VariantCall {
     bool mEnableSequenceComplexity = false;
   };
 
+  struct SampleGenotypeData {
+    // 8B Align: Vectors/Pointers
+    std::vector<int> mPhredLikelihoods;
+    absl::InlinedVector<u16, 4> mAlleleDepths;
+    absl::InlinedVector<u16, 4> mFwdAlleleDepths;
+    absl::InlinedVector<u16, 4> mRevAlleleDepths;
+    absl::InlinedVector<f32, 4> mRmsMappingQualities;
+    absl::InlinedVector<f32, 4> mNormPosteriorBQs;
+
+    // 4B Align: Scalars
+    f32 mStrandBias{0.0F};
+    f32 mSoftClipAsym{0.0F};
+    f32 mFragLenDelta{0.0F};
+    f32 mReadPosCohenD{0.0F};
+    f32 mBaseQualCohenD{0.0F};
+    f32 mMapQualCohenD{0.0F};
+    f32 mAlleleMismatchDelta{0.0F};
+    f32 mSiteDepthFoldChange{0.0F};
+    f32 mPolarRadius{0.0F};
+    f32 mPolarAngle{0.0F};
+    u32 mTotalDepth{0};
+    u32 mGenotypeQuality{0};
+
+    // 2B Align: Pairs
+    std::pair<i16, i16> mGenotypeIndices = {-1, -1};
+
+    // 1B Align: Bools
+    bool mIsMissingSupport = false;
+
+    [[nodiscard]] auto RenderVcfString() const -> std::string;
+  };
+
   // Native multi-allelic constructor
   using SupportsByVariant = absl::flat_hash_map<RawVariant const*, SupportArray>;
   VariantCall(RawVariant const* var, SupportsByVariant const& all_supports, Samples samps,
@@ -80,9 +114,7 @@ class VariantCall {
   }
   [[nodiscard]] auto IsMultiallelic() const -> bool { return mIsMultiallelic; }
 
-  [[nodiscard]] auto NumSamples() const -> usize {
-    return mFormatFields.empty() ? 0 : mFormatFields.size() - 1;
-  }
+  [[nodiscard]] auto NumSamples() const -> usize { return mSampleGenotypes.size(); }
   [[nodiscard]] auto Identifier() const -> VariantID { return mVariantId; }
   [[nodiscard]] auto TotalCoverage() const -> usize { return mTotalSampleCov; }
 
@@ -92,6 +124,28 @@ class VariantCall {
 
   [[nodiscard]] auto AsVcfRecord() const -> std::string;
 
+  // ── VARIANT STORE EXTENSIONS (* ALLELE OVERLAPS) ──────────────────────
+  [[nodiscard]] auto IsDeletion() const -> bool {
+    return std::ranges::any_of(mCategories,
+                               [](RawVariant::Type type) { return type == RawVariant::Type::DEL; });
+  }
+
+  [[nodiscard]] auto GetMaxDeletionLength() const -> i64 {
+    static constexpr auto SELECT_MAX = [](i64 max_so_far, i64 curr_len) {
+      return std::max(max_so_far, curr_len);
+    };
+
+    static constexpr auto FILTER_DEL = [](RawVariant::Type var_type, i64 len_val) {
+      return var_type == RawVariant::Type::DEL ? len_val : 0;
+    };
+
+    return std::transform_reduce(mCategories.cbegin(), mCategories.cend(), mVariantLengths.cbegin(),
+                                 i64{0}, SELECT_MAX, FILTER_DEL);
+  }
+
+  [[nodiscard]] auto RefLength() const -> usize { return mRefAllele.length(); }
+
+  // ──────────────────────────────────────────────────────────────────────
   // ── VARIANT IDENTITY & ORDERING DESIGN ──────────────────────────────────
   // Identity (operator==) and ordering (operator<) both use the same
   // conceptual key: CHROM + POS + REF (locus-level, ALTs excluded).
@@ -121,6 +175,7 @@ class VariantCall {
   friend auto operator==(VariantCall const& lhs, VariantCall const& rhs) -> bool {
     return lhs.mVariantId == rhs.mVariantId;
   }
+
   friend auto operator<(VariantCall const& lhs, VariantCall const& rhs) -> bool {
     if (lhs.mChromIndex != rhs.mChromIndex) return lhs.mChromIndex < rhs.mChromIndex;
     if (lhs.mStartPos1 != rhs.mStartPos1) return lhs.mStartPos1 < rhs.mStartPos1;
@@ -149,7 +204,7 @@ class VariantCall {
   std::vector<i64> mVariantLengths;
   std::vector<std::string> mAltAlleles;
   std::vector<RawVariant::Type> mCategories;
-  std::vector<std::string> mFormatFields;
+  std::vector<SampleGenotypeData> mSampleGenotypes;
 
   // ── Sequence complexity (11 ML-ready features, from RawVariant) ─────────
   // ── Graph complexity metrics (from RawVariant, transcribed) ────────────
@@ -176,12 +231,6 @@ class VariantCall {
   void Finalize(SupportArray const& evidence, Samples samps, FeatureFlags features);
 
   // ── Modular field builders ─────────────────────────────────────────────
-
-  struct AltPresence {
-    bool mInNormal = false;
-    bool mInTumor = false;
-  };
-
   struct PerAlleleMetrics {
     std::string mAd;
     std::string mAdf;
@@ -190,14 +239,13 @@ class VariantCall {
     std::string mNpbq;
   };
 
-  /// Build per-sample FORMAT strings
-  /// (GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ).
-  /// Also computes site quality and total coverage. Returns {alt_in_normal, alt_in_tumor}.
-  auto BuildFormatFields(SupportArray const& evidence, Samples samps, bool tumor_normal_mode)
-      -> AltPresence;
+  /// Build per-sample FORMAT components and track multi-allelic site qualities.
+  /// Pre-computes and maps alignments dynamically into the `absl::InlinedVector` Sample structs.
+  void BuildFormatFields(SupportArray const& evidence, Samples samps, bool tumor_normal_mode);
 
-  [[nodiscard]] static auto BuildGenotype(absl::Span<int const> pls, usize num_alleles)
-      -> std::string;
+  // Natively drops PL into mGenotypeIndices tuples.
+  static void AssignGenotype(SampleGenotypeData& sample, absl::Span<int const> pls,
+                             usize num_alleles);
 
   /// Convert a GL index back to genotype string (e.g., GL=4 with k=3 → "1/2")
   [[nodiscard]] static auto GenotypeFromGLIndex(usize gl_index, usize num_alleles) -> std::string;
@@ -210,19 +258,16 @@ class VariantCall {
   [[nodiscard]] static auto SomaticLogOddsRatio(core::SampleInfo const& curr,
                                                 SupportArray const& supports, Samples samps) -> f64;
 
-  void TrackAltPresence(VariantSupport const* support, core::SampleInfo const& sinfo,
-                        bool tumor_normal_mode, AltPresence& alt_presence);
+  /// Extract multi-allelic reads via Native Vector Arrays
+  static void AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupport const* support,
+                                     usize num_alleles);
 
-  /// Generate the Number=R scalar metrics natively iterating across each variant allele index.
-  [[nodiscard]] static auto BuildPerAlleleMetrics(VariantSupport const* support, usize num_alleles)
-      -> PerAlleleMetrics;
-
-  /// Compute SHARED/NORMAL/TUMOR/UNKNOWN state from ALT presence flags.
+  /// Compute SHARED/NORMAL/TUMOR/UNKNOWN state from evidence.
   /// In non-tumor-normal mode (i.e. normal-only), state is always UNKNOWN.
-  void ComputeState(AltPresence alt_presence, bool tumor_normal_mode);
+  void ComputeState(SupportArray const& evidence, Samples samps, bool tumor_normal_mode);
 
-  /// Assemble the INFO field string (TYPE, LENGTH, optional state prefix, optional complexity
-  /// annotations).
+  /// Assemble the INFO field string (TYPE, LENGTH,
+  /// optional state prefix, optional complexity annotations).
   void BuildInfoField(bool tumor_normal_mode, FeatureFlags features);
 };
 

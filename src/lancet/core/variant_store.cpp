@@ -71,18 +71,7 @@ void VariantStore::FlushVariantsBeforeWindow(Window const& win, std::ostream& ou
     }
   }
 
-  // Complete the sort & output without holding any locks
-  std::ranges::sort(variants_to_write,
-                    [](Value const& lhs, Value const& rhs) -> bool { return *lhs < *rhs; });
-  std::ranges::for_each(variants_to_write, [&out](Value const& item) -> void {
-    fmt::print(out, "{}\n", item->AsVcfRecord());
-  });
-
-  if (!variants_to_write.empty()) {
-    out.flush();
-    LOG_DEBUG("Flushed {} variant(s) from VariantStore to output VCF file",
-              variants_to_write.size())
-  }
+  FlushExtractedVariants(variants_to_write, out);
 }
 
 void VariantStore::FlushAllVariantsInStore(std::ostream& out) {
@@ -101,12 +90,22 @@ void VariantStore::FlushAllVariantsInStore(std::ostream& out) {
       if (HAS_NO_SUPPORT(item.second)) continue;
       variants_to_write.emplace_back(std::move(item.second));
     }
+
     bucket.mData.clear();
   }
 
+  FlushExtractedVariants(variants_to_write, out);
+}
+
+void VariantStore::FlushExtractedVariants(std::vector<Value>& variants_to_write,
+                                          std::ostream& out) {
+  // 1. Sort the extracted variants topologically. This mathematically guarantees that
+  // the execution loop steps `curr_start` strictly progressively monotonically upwards!
   std::ranges::sort(variants_to_write,
                     [](Value const& lhs, Value const& rhs) -> bool { return *lhs < *rhs; });
-  std::ranges::for_each(variants_to_write, [&out](Value const& item) -> void {
+
+  // 2. Stream formatted records
+  std::ranges::for_each(variants_to_write, [&out](Value const& item) {
     fmt::print(out, "{}\n", item->AsVcfRecord());
   });
 

@@ -1,9 +1,5 @@
 #include "lancet/cli/cli_interface.h"
 
-#include "CLI/CLI.hpp"
-#include "absl/strings/match.h"
-#include "absl/strings/str_cat.h"
-
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -26,6 +22,9 @@ extern "C" {
 #include "lancet/cli/pipeline_runner.h"
 #include "lancet/core/window_builder.h"
 
+#include "CLI/CLI.hpp"
+#include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "spdlog/common.h"
 #include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"

@@ -37,6 +37,8 @@ class VariantStore {
 
   static constexpr usize NUM_SHARDS = 256;
   std::array<VariantBucket, NUM_SHARDS> mBuckets;
+
+  static void FlushExtractedVariants(std::vector<Value>& variants_to_write, std::ostream& out);
 };
 
 }  // namespace lancet::core

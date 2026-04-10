@@ -7,9 +7,9 @@
 #include "lancet/cbdg/node.h"
 #include "lancet/cbdg/traversal_index.h"
 
+#include "absl/container/chunked_queue.h"
 #include "absl/container/inlined_vector.h"
 
-#include <absl/container/chunked_queue.h>
 #include <algorithm>
 #include <optional>
 #include <string>

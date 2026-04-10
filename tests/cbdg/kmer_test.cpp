@@ -6,9 +6,9 @@
 #include "lancet/base/types.h"
 
 #include "absl/container/fixed_array.h"
+#include "absl/strings/string_view.h"
 #include "catch_amalgamated.hpp"
 
-#include <absl/strings/string_view.h>
 #include <array>
 #include <random>
 #include <ranges>
