@@ -1,0 +1,58 @@
+name: Lint C++ Sources
+
+on:
+  push:
+  pull_request:
+
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    name: clang-format
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.9.5
+
+      - name: Check formatting
+        run: |
+          FILES=$(find src/lancet tests benchmarks -type f \( -name '*.cpp' -o -name '*.h' \) | sort)
+          echo "Checking $(echo "$FILES" | wc -l) files..."
+          echo "$FILES" | xargs pixi run clang-format --dry-run --Werror
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.9.5
+
+      - name: Configure CMake
+        run: |
+          pixi run cmake -GNinja -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DLANCET_TESTS=ON \
+            -DLANCET_BENCHMARKS=ON \
+            -DLANCET_BUILD_STATIC=OFF \
+            -DLANCET_ENABLE_CLOUD_IO=ON
+
+      - name: Run clang-tidy
+        run: |
+          pixi run run-clang-tidy \
+            -p build \
+            -quiet \
+            -use-color \
+            -header-filter='src/lancet/.*' \
+            '(src/lancet|tests|benchmarks)/.*\.(cpp|h)$'
