@@ -53,5 +53,5 @@ jobs:
 
       - name: Upload to prefix.dev
         env:
-          RATTLER_BUILD_PREFIX_DEV_TOKEN: ${{ secrets.PREFIX_API_KEY }}
+          PREFIX_API_KEY: ${{ secrets.PREFIX_API_KEY }}
         run: pixi exec rattler-build upload prefix -c lancet2 output/**/*.conda
