@@ -4,6 +4,11 @@
 Dynamically reads the navigation structure from mkdocs.yml so the output
 stays in sync even as pages are added, removed, or reordered.
 
+Features:
+  - Images are embedded as base64 data URIs (self-contained document)
+  - Internal cross-page links are rewritten to in-document anchors
+  - Git version provenance and UTC timestamp in the header
+
 Usage:
     python3 scripts/export_docs.py                          # writes to stdout
     python3 scripts/export_docs.py > Lancet2_Docs.md        # redirect to file
@@ -13,6 +18,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import base64
+import mimetypes
 import re
 import subprocess
 import sys
@@ -76,15 +83,12 @@ def parse_nav(nav_list: list, depth: int = 1) -> list[NavEntry]:
     entries: list[NavEntry] = []
     for item in nav_list:
         if isinstance(item, str):
-            # Bare string: "file.md" with no title — use filename as title
             entries.append((Path(item).stem.replace("_", " ").title(), item, depth))
         elif isinstance(item, dict):
             for title, value in item.items():
                 if isinstance(value, str):
-                    # "Title: path.md"
                     entries.append((title, value, depth))
                 elif isinstance(value, list):
-                    # "Section Title:" followed by children
                     entries.append((title, None, depth))
                     entries.extend(parse_nav(value, depth + 1))
     return entries
@@ -93,11 +97,6 @@ def parse_nav(nav_list: list, depth: int = 1) -> list[NavEntry]:
 def strip_frontmatter(content: str) -> str:
     """Remove YAML front matter (---...---) from markdown content."""
     return re.sub(r"^---\s*\n.*?\n---\s*\n", "", content, count=1, flags=re.DOTALL)
-
-
-def strip_image_lines(content: str) -> str:
-    """Remove image embed lines since they won't render outside the site."""
-    return re.sub(r"^!\[.*?\]\(.*?\)\s*$", "", content, flags=re.MULTILINE)
 
 
 def bump_headings(content: str, level: int) -> str:
@@ -116,10 +115,101 @@ def make_anchor(title: str) -> str:
     return anchor
 
 
+# ---------------------------------------------------------------------------
+# Image embedding: convert relative image paths to base64 data URIs
+# ---------------------------------------------------------------------------
+def embed_images(content: str, source_dir: Path) -> str:
+    """Replace image references with inline base64 data URIs.
+
+    Handles:
+      ![alt](../assets/foo.png)
+      ![alt](../assets/foo.png#only-light)
+      ![alt](../assets/foo.png){ align=left, loading=lazy }
+    """
+    def replacer(m: re.Match) -> str:
+        alt = m.group(1)
+        raw_path = m.group(2)
+        attrs = m.group(3) or ""
+
+        # Strip MkDocs Material URL fragments (#only-light, #only-dark)
+        clean_path = raw_path.split("#")[0]
+
+        # Skip external URLs
+        if clean_path.startswith(("http://", "https://", "data:")):
+            return m.group(0)
+
+        img_path = (source_dir / clean_path).resolve()
+        if not img_path.exists():
+            print(f"  ⚠ Image not found: {img_path}", file=sys.stderr)
+            return m.group(0)
+
+        mime, _ = mimetypes.guess_type(str(img_path))
+        if mime is None:
+            mime = "application/octet-stream"
+
+        data = base64.b64encode(img_path.read_bytes()).decode("ascii")
+        # Skip MkDocs Material { attrs } — they don't work in vanilla markdown
+        return f"![{alt}](data:{mime};base64,{data})"
+
+    return re.sub(r"!\[(.*?)\]\((.*?)\)(\{.*?\})?", replacer, content)
+
+
+# ---------------------------------------------------------------------------
+# Internal link rewriting: convert cross-page .md links to #anchor refs
+# ---------------------------------------------------------------------------
+def build_file_to_title_map(entries: list[NavEntry]) -> dict[str, str]:
+    """Build a mapping from doc filepath -> nav title for anchor resolution."""
+    mapping: dict[str, str] = {}
+    for title, filepath, _ in entries:
+        if filepath is not None:
+            # Store multiple lookup keys for the same file:
+            # "guides/architecture.md", "architecture.md", "../reference.md"
+            mapping[filepath] = title
+            mapping[Path(filepath).name] = title
+            # For guides linking to root pages via ../
+            if "/" not in filepath:
+                mapping[f"../{filepath}"] = title
+    return mapping
+
+
+def rewrite_internal_links(content: str, file_map: dict[str, str]) -> str:
+    """Rewrite internal .md links to in-document #anchor links."""
+    def replacer(m: re.Match) -> str:
+        link_text = m.group(1)
+        raw_target = m.group(2)
+
+        # Skip external, anchor-only, and non-md links
+        if raw_target.startswith(("http://", "https://", "mailto:", "#", "data:")):
+            return m.group(0)
+        if ".md" not in raw_target:
+            return m.group(0)
+
+        # Split path and fragment: "architecture.md#section" -> ("architecture.md", "section")
+        if "#" in raw_target:
+            md_path, fragment = raw_target.split("#", 1)
+        else:
+            md_path, fragment = raw_target, ""
+
+        # Also try stripping "guides/" prefix for root-level lookups
+        title = file_map.get(md_path) or file_map.get(Path(md_path).name)
+
+        if title is None:
+            # Can't resolve — leave the link as-is
+            return m.group(0)
+
+        if fragment:
+            return f"[{link_text}](#{fragment})"
+        else:
+            return f"[{link_text}](#{make_anchor(title)})"
+
+    return re.sub(r"\[(.*?)\]\((.*?)\)", replacer, content)
+
+
 def build_document(entries: list[NavEntry]) -> str:
     """Assemble the combined markdown document from nav entries."""
     parts: list[str] = []
     version = get_version_info()
+    file_map = build_file_to_title_map(entries)
 
     # Title page
     parts.append("# Lancet2 — Complete Documentation\n")
@@ -150,7 +240,13 @@ def build_document(entries: list[NavEntry]) -> str:
 
         raw = src.read_text(encoding="utf-8")
         content = strip_frontmatter(raw)
-        content = strip_image_lines(content)
+
+        # Embed images as base64 (resolve relative to the source file's directory)
+        content = embed_images(content, src.parent)
+
+        # Rewrite internal .md links to #anchors
+        content = rewrite_internal_links(content, file_map)
+
         # Strip the first H1 from the file — we use our own section header
         content = re.sub(r"^#\s+.*\n", "", content, count=1)
         content = content.strip()
