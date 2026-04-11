@@ -47,7 +47,7 @@ jobs:
             mkdocs-material-
 
       - name: Install MkDocs dependencies
-        run: pip install mkdocs-material mike mkdocs-minify-plugin mkdocs-git-revision-date-localized-plugin mkdocs-mermaid2-plugin
+        run: pip install mkdocs-material mike mkdocs-minify-plugin mkdocs-git-revision-date-localized-plugin
 
       - name: Deploy latest docs (main branch)
         if: github.ref == 'refs/heads/main'
