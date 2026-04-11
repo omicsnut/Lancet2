@@ -14,7 +14,7 @@ In addition to variant calling accuracy and improved somatic filtering, Lancet2 
 ## Installation
 
 ### Pre-built packages (Recommended)
-Lancet2 packages with **full native Cloud I/O support** (`s3://`, `gs://`, `http(s)://`, etc.) are published to [prefix.dev/channels/lancet2](https://prefix.dev/channels/lancet2). Install using your preferred package manager:
+Lancet2 packages with **full Cloud I/O support** (`s3://`, `gs://`, `http(s)://`, `ftp(s)://`) are published to [prefix.dev/channels/lancet2](https://prefix.dev/channels/lancet2). Install using your preferred package manager:
 
 | Package Manager | Install Command |
 |---|---|
@@ -27,21 +27,27 @@ Development builds are published automatically on every commit. To install a spe
 pixi global install --channel https://prefix.dev/channels/lancet2 'lancet2==v2.10.2'
 ```
 
-### Build prerequisites
+### Docker images
+Public docker images hosted on Google Cloud are available for [recent tagged releases](https://console.cloud.google.com/artifacts/docker/nygc-app-c-148c/us-central1/lancet-public/lancet). A CPU that supports [AVX2 instructions](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#CPUs_with_AVX2) is required.
+
+### Build from source
+
+#### Build prerequisites
 - [Linux](https://kernel.org/) or [macOS](https://www.apple.com/macos/) (x86-64 or ARM64 architectures)
 - [Git](https://command-not-found.com/git), [Make](https://command-not-found.com/make)
 - [GCC](https://gcc.gnu.org) (12.x or greater) or [Clang](https://clang.llvm.org) (14.x or greater)
 - [CMake](https://cmake.org/download) (3.25 or greater)
 - [BZip2](https://sourceware.org/bzip2/), [LibLZMA](https://tukaani.org/xz/)
-- [CURL](https://curl.se/) and [OpenSSL](https://www.openssl.org/) (optional, required for native Cloud I/O)
+- [CURL](https://curl.se/) and [OpenSSL](https://www.openssl.org/) (optional, required for Cloud I/O)
 
-### Build commands
+#### Build commands
 ```bash
 git clone https://github.com/nygenome/Lancet2.git
 cd Lancet2 && mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release .. && make -j$(nproc)
 ```
 
+To enable Cloud I/O support (`s3://`, `gs://`, `http(s)://`, `ftp(s)://`):
 ```bash
 cmake -DCMAKE_BUILD_TYPE=Release -DLANCET_BUILD_STATIC=OFF -DLANCET_ENABLE_CLOUD_IO=ON ..
 make -j$(nproc)

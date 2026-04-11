@@ -1,6 +1,6 @@
 # Targeted Analysis
 
-Lancet can be run on exome/panel data by providing a preselected list of regions along the genome with a BED file.
+Lancet2 can be run on exome/panel data by providing a preselected list of regions along the genome with a BED file.
 The BED file is a tab delimited text file which must contain at least three columns in the following order:
 - First column indicates the chromosome of the desired region to analyze
 - Second and Third columns are the start and end positions of the region respectively.
@@ -24,4 +24,4 @@ Lancet2 pipeline --reference ref.fasta \
 !!! note "Note"
 
     Chromosome names in the BED file must match the chromosome names present in the reference FASTA and BAM/CRAM files.
-    Though it is not recommened, you can use the `--no-contig-check` flag to force ignore this check.
+    Though it is not recommended, you can use the `--no-contig-check` flag to force ignore this check.

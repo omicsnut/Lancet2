@@ -5,7 +5,7 @@ This can be enabled by passing a non-existing directory to the `--graphs-dir` fl
 
 1. the kmer-based colored de-bruijn overlap graph after the cleaning/pruning steps of the assembly
    process serialized as `DOT` formatted [graphviz](https://www.graphviz.org/) files. One `DOT` file
-   is generated for every strongly connected component for each window.
+   is generated for every connected component for each window.
 
 2. the sequence graph generated from the multiple sequence alignment of all the assembled contigs
    from the de-bruijn graph assembly serialized as `GFA` formatted files.
@@ -33,7 +33,7 @@ The above command will create two directories named `dbg_graph` and `poa_graph` 
     which serializes all intermediate graph states.
 
     The intermediate states that can be inspected in their order of generation are as follows –
-    `low_cov_removal1`, `found_ref_anchors`, `compression1`, `low_cov_removal2`, `compression2`, `short_tip_removal`, `short_link_removal`.
+    `low_cov_removal1`, `found_ref_anchors`, `compression1`, `low_cov_removal2`, `compression2`, `short_tip_removal`.
 
 ## Inspecting `DOT` formatted assembly graphs
 
@@ -112,8 +112,8 @@ and jq, and ensure that they are available as commands that can be executed in t
 
 2. Install Sequence Tube Map (https://github.com/vgteam/sequenceTubeMap) version [0452ecb82d057372e359a9b456d789336e5ab8a1](https://github.com/vgteam/sequenceTubeMap/tree/0452ecb82d057372e359a9b456d789336e5ab8a1).
 
-3. Use the Lancet2’s prep_stm_viz.sh script to run Lancet2 on a small set of variants of interest that need to be
-   visualized in Sequence Tube Map. The script will run Lancet2 using the --graph-dir flag to generate GFA formatted
+3. Use the Lancet2's [`prep_stm_viz.sh`](https://github.com/nygenome/Lancet2/blob/main/scripts/prep_stm_viz.sh) script to run Lancet2 on a small set of variants of interest that need to be
+   visualized in Sequence Tube Map. The script will run Lancet2 using the --graphs-dir flag to generate GFA formatted
    sequence graphs for each variant of interest. Local VG graphs and indices required to load the sample reads along
    with the Lancet2 graph are then constructed enabling simplified use with “custom” data option in Sequence Tube Map interface.
 

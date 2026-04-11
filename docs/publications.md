@@ -5,7 +5,7 @@ hide:
 
 # Publications
 
-## [Lancet2: Improved and accelerated somatic variant calling with joint multi-sample local assembly graphs](https://www.biorxiv.org/content/10.1101/2025.02.18.638852v2.full)
+## [Lancet2: Improved and accelerated somatic variant calling with joint multi-sample local assembly graphs](https://academic.oup.com/nargab/article/8/2/lqag036/8625920)
 **Abstract:**
 
 Here, we present Lancet2, an open-source somatic variant caller designed to improve detection of small variants in short-read sequencing data.
@@ -18,9 +18,8 @@ Lancet2 outperformed other industry-leading tools in variant calling performance
 performance improvements compared to Lancet1 (~10x speedup and 50% less peak memory usage) and most other state of the art somatic variant
 callers (at least 2x speedup with 8 cores or more) make Lancet2 an ideal tool for accurate and efficient somatic variant calling.
 
-- **Authors** – Rajeeva Lochan Musunuri, Bryan Zhu, Wayne E. Clarke, William Hooper, Timothy Chu, Jennifer Shelton, André Corvelo, Dickson Chung,
-                Shreya Sundar, Adam M Novak, Benedict Paten, Michael C. Zody, Nicolas Robine, Giuseppe Narzisi
-- **Journal** – bioRxiv, February 2025
+- **Authors** – Rajeeva Lochan Musunuri, Bryan Zhu, Wayne E. Clarke, William Hooper, Timothy Chu, Jennifer Shelton, André Corvelo, Dickson Chung, Shreya Sundar, Adam M Novak, Benedict Paten, Michael C. Zody, Nicolas Robine, Giuseppe Narzisi
+- **Journal** – NAR Genomics and Bioinformatics, Volume 8, Issue 2, April 2026
 
 ## [Somatic variant analysis of linked-reads sequencing data with Lancet](https://academic.oup.com/bioinformatics/article/37/13/1918/5926970)
 **Abstract:**

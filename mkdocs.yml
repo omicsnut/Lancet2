@@ -88,24 +88,25 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
   - pymdownx.tilde
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.superfences
 nav:
   - Getting Started: index.md
-  - Guides:
-    - Lancet2 pipeline architecture: guides/architecture.md
+  - Usage Guides:
     - Whole Genome Analysis: guides/wgs_analysis.md
     - Targeted Analysis: guides/targeted_analysis.md
+    - Native Cloud Streaming: guides/cloud_streaming.md
+  - How It Works:
+    - Pipeline Architecture: guides/architecture.md
+    - Active Region Detection: guides/active_region.md
+    - Read Filtering & Downsampling: guides/read_filtering.md
+    - Variant Discovery & Genotyping: guides/variant_discovery_genotyping.md
+    - Custom Visualization: guides/custom_visualization.md
+  - Annotations:
     - VCF Output Reference: guides/vcf_output.md
-    - Graph Complexity: guides/graph_complexity.md
-    - Sequence Complexity: guides/sequence_complexity.md
     - Alignment-Derived Annotations: guides/alignment_annotations.md
     - Polar Coordinate Features: guides/polar_features.md
+    - Graph Complexity: guides/graph_complexity.md
+    - Sequence Complexity: guides/sequence_complexity.md
     - Scoring Somatic Variants: guides/scoring_somatic_variants.md
-    - Native Cloud Streaming: guides/cloud_streaming.md
-    - Custom Visualization: guides/custom_visualization.md
-  - Reference: reference.md
+  - CLI Reference: reference.md
   - Publications: publications.md

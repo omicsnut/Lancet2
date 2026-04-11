@@ -28,7 +28,7 @@ is not possible, so no state flags appear in the INFO field.
 
 | Field | VCF Type | Description | Range | Interpretation |
 |:------|:---------|:------------|:------|:---------------|
-| `MULTIALLELIC` | Flag | Multiallelic indicator | — | Present if the record natively aggregates more than one ALT structural allele evaluated at the exact same locus constraints. |
+| `MULTIALLELIC` | Flag | Multiallelic indicator | — | Present if the record contains more than one ALT allele at this locus. |
 | `TYPE` | String | Variant type | `SNV`, `INS`, `DEL`, `MNP` | The class of variant event detected during local assembly. Comma-separated array for multiallelic variants. |
 | `LENGTH` | Integer | Variant length in base pairs | ≥ 1 | For SNVs: always 1. For INDELs: the number of inserted or deleted bases. Comma-separated array for multiallelic variants. |
 
