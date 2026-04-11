@@ -46,9 +46,10 @@ Public docker images hosted on Google Cloud are available for [recent tagged rel
 
     Building from source on the target machine is recommended for maximum runtime performance.
 
-> [!WARNING]
-> Static builds (the default) **do not** support Cloud Streaming (`gs://`, `s3://`, `http(s)://`, `ftp(s)://`) because cloud I/O requires dynamic linking of the host OS's network stack (`libcurl` / `openssl`).
-> Use the pre-built packages or Docker images instead, or build with `-DLANCET_ENABLE_CLOUD_IO=ON` (see below).
+!!! warning "Cloud support in static builds"
+
+    Static builds (the default) **do not** support Cloud Streaming (`gs://`, `s3://`, `http(s)://`, `ftp(s)://`) because cloud I/O requires dynamic linking of the host OS's network stack (`libcurl` / `openssl`).
+    Use the pre-built packages or Docker images instead, or build with `-DLANCET_ENABLE_CLOUD_IO=ON` (see below).
 
 #### Build prerequisites
 - [Linux](https://kernel.org/) or [macOS](https://www.apple.com/macos/) (x86-64 or ARM64 architectures)
