@@ -14,7 +14,7 @@ Lancet2 operates in two modes that affect which INFO fields are present:
 | Mode | Inputs | INFO State Tags | QUAL Source |
 |:-----|:-------|:----------------|:------------|
 | **Tumor-Normal** (somatic) | ≥ 1 tumor AND ≥ 1 normal BAM/CRAM | `SHARED`, `NORMAL`, `TUMOR` | Somatic log odds ratio (SOLOR) |
-| **Normal-Only** (germline) | Normal BAM/CRAM only | *(none — state is UNKNOWN)* | Per-read evidence: min(PL[0]/DP, 10) |
+| **Normal-Only** (germline) | Normal BAM/CRAM only | *(none — state is UNKNOWN)* | Per-read evidence: min(PL[0]/DP, 100) |
 
 In tumor-normal mode, state tags classify each variant by ALT allele
 presence across sample types. In normal-only mode, state classification
@@ -107,9 +107,8 @@ The VCF QUAL field depends on operating mode:
   `QUAL > 4` = strong somatic evidence at any coverage.
 
 - **Normal-Only mode**: Per-read evidence against hom-REF, computed as
-  `min(max(PL[0]/DP per sample), 10.0)`. Coverage-invariant: a clean het
-  produces QUAL ≈ 3.0 at any depth. Takes the maximum across samples
-  (strongest evidence wins).
+  `min(max(PL[0]/DP per sample), 100.00)`. Somewhat coverage-invariant:
+  Takes the maximum across samples (strongest evidence wins).
 
 ---
 

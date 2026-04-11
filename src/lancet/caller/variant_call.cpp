@@ -239,7 +239,7 @@ void VariantCall::UpdateSiteQuality(core::SampleInfo const& sinfo, VariantSuppor
   f64 per_read_qual = 0.0;
   if (!pls.empty() && sample_dp > 0) {
     per_read_qual = static_cast<f64>(ref_hom_pl) / static_cast<f64>(sample_dp);
-    per_read_qual = std::min(per_read_qual, 10.0);
+    per_read_qual = std::min(per_read_qual, 100.0);
   }
 
   mSiteQuality = std::max(mSiteQuality, tumor_normal_mode ? somatic_lor : per_read_qual);

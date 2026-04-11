@@ -423,12 +423,11 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
   bool const has_tumor = !params.mVariantBuilder.mRdCollParams.mTumorPaths.empty();
   if (has_tumor) {
     absl::StrAppend(&conditional_info_lines,
-                    "##INFO=<ID=SHARED,Number=0,Type=Flag,Description=\"Variant ALT seen in both "
-                    "tumor & normal sample(s)\">\n"
-                    "##INFO=<ID=NORMAL,Number=0,Type=Flag,Description=\"Variant ALT seen only in "
-                    "normal samples(s)\">\n"
-                    "##INFO=<ID=TUMOR,Number=0,Type=Flag,Description=\"Variant ALT seen only in "
-                    "tumor sample(s)\">\n");
+                    // clang-format off
+                    "##INFO=<ID=SHARED,Number=0,Type=Flag,Description=\"Variant ALT seen in both tumor & normal sample(s)\">\n"
+                    "##INFO=<ID=NORMAL,Number=0,Type=Flag,Description=\"Variant ALT seen only in normal samples(s)\">\n"
+                    "##INFO=<ID=TUMOR,Number=0,Type=Flag,Description=\"Variant ALT seen only in tumor sample(s)\">\n");
+                    // clang-format on
   }
 
   // Complexity feature INFO headers — only when requested via CLI flags
@@ -436,17 +435,18 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
   auto const& vb_cfg = params.mVariantBuilder;
   if (vb_cfg.mEnableGraphComplexity) {
     absl::StrAppend(
-        &annotation_info_lines,
-        "##INFO=<ID=GRAPH_CX,Number=3,Type=String,Description=\"Graph complexity metrics: "
-        "GEI,TipToPathCovRatio,MaxSingleDirDegree\">\n");
+        &annotation_info_lines, 
+        // clang-format off
+        "##INFO=<ID=GRAPH_CX,Number=3,Type=String,Description=\"Graph complexity metrics: GEI,TipToPathCovRatio,MaxSingleDirDegree\">\n");
+        // clang-format on
   }
   if (vb_cfg.mEnableSequenceComplexity) {
     absl::StrAppend(
         &annotation_info_lines,
-        "##INFO=<ID=SEQ_CX,Number=11,Type=String,Description=\"Sequence complexity features: "
-        "ContextHRun,ContextEntropy,ContextFlankLQ,ContextHaplotypeLQ,DeltaHRun,DeltaEntropy,"
-        "DeltaFlankLQ,TrAffinity,TrPurity,TrPeriod,IsStutterIndel\">\n");
-  }
+        // clang-format off
+        "##INFO=<ID=SEQ_CX,Number=11,Type=String,Description=\"Sequence complexity features: ContextHRun,ContextEntropy,ContextFlankLQ,ContextHaplotypeLQ,DeltaHRun,DeltaEntropy,DeltaFlankLQ,TrAffinity,TrPurity,TrPeriod,IsStutterIndel\">\n");
+        // clang-format on
+  } 
 
   auto full_hdr = fmt::format(
       // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
