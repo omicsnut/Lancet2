@@ -52,7 +52,9 @@ struct VariantTRFeatures {
 //
 // Distills raw multi-scale sequence metrics (homopolymer runs, Shannon
 // entropy, LongdustQ k-mer concentration, tandem repeat motifs) into an
-// orthogonal feature set designed for additive ML models (EBMs/GAMs).
+// independent feature set designed for additive ML models — EBMs (Explainable
+// Boosting Machines) and GAMs (Generalized Additive Models) — which learn one
+// feature's effect at a time, then combine them.
 //
 // Coverage stability: All 11 features are PERFECTLY COVERAGE-INVARIANT.
 // They are computed from assembled haplotype strings, not from read-level
@@ -190,6 +192,13 @@ class SequenceComplexityScorer {
   [[nodiscard]] static auto MaxHomopolymerRun(std::string_view seq) -> i32;
 
   /// Shannon entropy of base frequencies in a sequence (bits, 0.0–2.0).
+  ///
+  /// In plain terms: entropy measures "how diverse is this stretch of DNA?"
+  /// A sequence of all A's has entropy 0 (completely predictable). A sequence
+  /// with equal amounts of A, C, G, T has entropy 2.0 (maximally diverse).
+  /// Low entropy regions are harder to map uniquely and more prone to
+  /// sequencing errors — so variants in low-entropy regions are more suspect.
+  ///
   /// H = -Σ p_i log2(p_i) where p_i is frequency of base i (A/C/G/T).
   /// Returns 0.0 for sequences with only one base type.
   [[nodiscard]] static auto LocalShannonEntropy(std::string_view seq) -> f32;

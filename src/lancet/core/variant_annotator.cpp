@@ -80,7 +80,7 @@ void VariantAnnotator::AnnotateSequenceComplexity(caller::VariantSet const& vset
 //
 // Raw topology metrics (CC, BP, EdgeDensity, UnitigRatio, CoverageCv) are
 // compressed into the Graph Entanglement Index (GEI) to eliminate collinearity.
-// Only orthogonal features are preserved: GEI, TipToPathCovRatio, MaxDegree.
+// Only independent features are preserved: GEI, TipToPathCovRatio, MaxDegree.
 // ============================================================================
 void VariantAnnotator::AnnotateGraphComplexity(caller::VariantSet const& vset,
                                                cbdg::GraphComplexity const& component_cx) {

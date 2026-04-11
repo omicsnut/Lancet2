@@ -100,7 +100,7 @@ Since alignment is restricted to the local contig window (~1 kbp), the inflated 
 
 Each read is assigned to its best-matching allele using a combined scoring function that integrates the global alignment score, PBQ-weighted local DP score within the variant region, and soft-clip penalties (see [Alignment Annotations](alignment_annotations.md) for details).
 
-**Genotype calling** follows the standard per-read likelihood model: `P(read | GT) = 0.5 × P(read|a₁) + 0.5 × P(read|a₂)` across all diploid genotypes, producing Phred-scaled likelihoods (PL) and genotype quality (GQ, capped at 99).
+**Genotype calling** uses a Dirichlet-Multinomial (DM) count-based model that natively handles multi-allelic sites and absorbs correlated sequencing errors at ultra-high depth via an overdispersion parameter. This produces Phred-scaled likelihoods (PL) that plateau organically — no depth-normalization hacks are needed. Additionally, each ALT allele receives a Continuous Mixture Log-Odds (CMLOD) score that integrates exact per-read base qualities to discriminate true low-VAF variants from systematic noise. Genotype quality (GQ, capped at 99) is the second-lowest PL.
 
 All FORMAT annotations are designed to be **coverage-invariant** — they measure effect sizes rather than statistical significance, so a model trained at 30× generalizes to 2000×:
 

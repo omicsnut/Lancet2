@@ -89,6 +89,13 @@ U test (Wilcoxon Rank-Sum test). The raw Z-score is divided by √N (where
 N = total reads) to remove the √N power amplification from the Central Limit
 Theorem, recovering a standardized effect size analogous to Cohen's d.
 
+**In plain terms**: MQCD measures "are the variant-supporting reads less
+confidently mapped than the reference-supporting reads?" If ALT reads
+consistently have lower mapping quality, the variant may be a mismapping
+artifact rather than a real mutation. The score is designed so that the same
+biological bias produces the same number whether you have 20 reads or 20,000
+— making it safe to use across different sequencing depths.
+
 **Motivation for Z/√N normalization**: The raw Mann-Whitney Z-score scales
 with √N: the same mild ALT MAPQ depression produces Z ≈ −1.5 at 20× but
 Z ≈ −14.9 at 2000×. This makes raw Z-scores unusable for ML models that
@@ -148,6 +155,13 @@ of positions 5 and 145 in a 150bp read ≈ 75 — indistinguishable from a
 truly centered variant. Folding maps both ends to the same low-value space:
 
 $$P_{folded} = \min(P_{raw},\; L - 1 - P_{raw})$$
+
+**In plain terms**: folding maps both ends of the read to the same "edge
+zone." A variant seen at position 5 (near the start) and position 145
+(near the end of a 150bp read) both get folded to distance 5 from the
+nearest edge. This way, edge-biased artifacts — which tend to cluster
+at *either* end — all show up as "close to the edge" rather than
+canceling out as "average position = middle."
 
 This converts the bimodal trap into a unidirectional signal: "Are ALT alleles
 systematically closer to read edges than REF alleles?"
@@ -276,6 +290,11 @@ MQCD depression.
 
 **Purpose**: Detect collapsed paralogous mappings and abnormal depth at the
 variant site relative to the local background.
+
+**In plain terms**: SDFC answers "is this site getting more reads than its
+neighbors?" A value of 1.0 means normal depth; 2.0 means twice the expected
+depth — often a sign that reads from a duplicated region are all piling up
+at one location.
 
 **Computation**:
 

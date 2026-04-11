@@ -19,12 +19,15 @@ class Graph;  // forward declaration — avoids circular dependency with graph.h
 //      graph is too tangled for efficient path enumeration.
 //
 //   2. ML feature generation: Metrics are compressed into the Graph
-//      Entanglement Index (GEI) and two orthogonal features for downstream
+//      Entanglement Index (GEI) and two independent features for downstream
 //      variant classification. See GraphEntanglementIndex() method below.
 //
 // ── Retained Metrics ────────────────────────────────────────────────────────
 //
 //  CyclomaticComplexity (CC = E - V + 1):
+//    In plain terms: CC counts how many independent "loops" or
+//    "roundabouts" exist in the graph. More loops = more alternative
+//    paths the assembler must evaluate = higher chance of confusion.
 //    Number of independent cycles. CC=0 → linear chain, CC=1 → single
 //    variant bubble, CC≥5 → tangled repeat region. Used in both IsComplex()
 //    and as a GEI numerator term.
@@ -46,12 +49,12 @@ class Graph;  // forward declaration — avoids circular dependency with graph.h
 //
 //  MaxSingleDirDegree:
 //    Maximum outgoing edges in any single sign direction. ≤3 normal,
-//    >5 = hub k-mer causing BFS blowup. Orthogonal VCF feature.
+//    >5 = hub k-mer causing BFS blowup. Independent VCF feature.
 //
 //  TipToPathCovRatio:
 //    Mean dead-end node coverage / mean linear (unitig) node coverage.
 //    ≈0 = clean (tips have negligible coverage), high = assembly tearing.
-//    Orthogonal VCF feature.
+//    Independent VCF feature.
 //
 // Quality interpretation:
 //   HIGH:   CC ≤ 2, BP ≤ 4, UnitigRatio > 0.90, CovCV < 0.5
@@ -116,9 +119,15 @@ class GraphComplexity {
            mNumBranchPoints >= MAX_BRANCH_POINTS;
   }
 
-  // ── Graph Entanglement Index (GEI) ──────────────────────────────────────
+  // ── Graph Entanglement Index (GEI) ──────────────────────────────────
   //
-  // Compresses four collinear topology metrics (CC, BP, CoverageCv,
+  // In plain terms: GEI is a single number that answers "how tangled is
+  // the assembly graph around this variant?" A low GEI means the graph is
+  // clean and the variant is straightforward. A high GEI means the graph
+  // is a mess — tangled by repeats or collapsed paralogs — and any variant
+  // called here should be treated with suspicion.
+  //
+  // Compresses four highly correlated topology metrics (CC, BP, CoverageCv,
   // UnitigRatio) into a single continuous scalar for ML classification.
   //
   //   GEI = log₁₀(1 + (CC × BP × CoverageCv) / (UnitigRatio + ε))

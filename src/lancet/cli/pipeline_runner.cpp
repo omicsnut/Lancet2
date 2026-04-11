@@ -404,8 +404,9 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
 ##FORMAT=<ID=SDFC,Number=1,Type=Float,Description="Site depth fold change (DP / window mean coverage)">
 ##FORMAT=<ID=PRAD,Number=1,Type=Float,Description="Polar radius: log10(1 + sqrt(AD_Ref^2 + AD_Alt^2))">
 ##FORMAT=<ID=PANG,Number=1,Type=Float,Description="Polar angle: allele identity ratio atan2(AD_Alt, AD_Ref) in radians">
-##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Phred-scaled genotype likelihoods">
-##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">
+##FORMAT=<ID=CMLOD,Number=A,Type=Float,Description="Continuous mixture log-odds score per ALT allele (base-quality-weighted LOD vs null)">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Phred-scaled genotype likelihoods (Dirichlet-Multinomial model)">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality (second-lowest PL from the Dirichlet-Multinomial model, capped at 99)">
 )raw"sv;
   // clang-format on
 
@@ -442,7 +443,8 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
   if (vb_cfg.mEnableSequenceComplexity) {
     // clang-format off
     absl::StrAppend(&annotation_info_lines,
-      "##INFO=<ID=SEQ_CX,Number=11,Type=String,Description=\"Sequence complexity features: ContextHRun,ContextEntropy,ContextFlankLQ,ContextHaplotypeLQ,DeltaHRun,DeltaEntropy,DeltaFlankLQ,TrAffinity,TrPurity,TrPeriod,IsStutterIndel\">\n");
+      "##INFO=<ID=SEQ_CX,Number=11,Type=String,Description=\"Sequence complexity features: "
+      "ContextHRun,ContextEntropy,ContextFlankLQ,ContextHaplotypeLQ,DeltaHRun,DeltaEntropy,DeltaFlankLQ,TrAffinity,TrPurity,TrPeriod,IsStutterIndel\">\n");
     // clang-format on
   }
 

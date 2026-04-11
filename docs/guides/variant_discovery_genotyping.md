@@ -167,12 +167,68 @@ Folding maps both read ends to the same low-value space. Without folding, artifa
 
 ### Genotype Likelihood Model
 
-After allele assignment, genotype likelihoods are computed using the standard per-read model:
+After allele assignment, genotype likelihoods are computed using a **Dirichlet-Multinomial (DM)** count-based model rather than the standard per-read binomial model used by tools like GATK HaplotypeCaller.
+
+#### Why Not the Standard Per-Read Binomial?
+
+The standard multiallelic binomial model computes per-read likelihoods independently:
 
 ```
-P(read | GT) = 0.5 × P(read | a₁) + 0.5 × P(read | a₂)
+P(read | GT=(a₁,a₂)) = 0.5 × P(read | a₁) + 0.5 × P(read | a₂)
+P(read | allele a) = (1−ε) if read matches a, else ε/(K−1)
 ```
 
-across all diploid genotypes, producing Phred-scaled likelihoods (PL). Genotype quality (GQ) is the second-lowest PL value, capped at 99.
+The total likelihood is the product across all reads: `P(Data | GT) = Π P(read | GT)`. Converting to Phred-scaled PLs via `PL = -10 × log₁₀(P)`, each read adds an independent contribution, so **PLs scale linearly with depth**. A true heterozygous variant at 30× might produce PL[0/0]=90; at 3000× (the same variant, just deeper), PL[0/0]=9,000. This creates two problems:
+
+1. **Runaway scaling.** Ultra-deep targeted panels and UMI-deduplicated libraries produce PL values in the tens of thousands. Downstream ML models trained on 30× WGS data see entirely different feature distributions at 2000×.
+2. **Missing overdispersion.** The binomial model assumes reads are independent coin flips. In reality, correlated errors (flow-cell lane effects, PCR duplication, systematic mismapping) cause allele count variance to exceed the binomial expectation at high depth. The per-read model cannot capture this — it treats every read as equally informative.
+
+#### The Dirichlet-Multinomial (DM) Model
+
+The DM model replaces per-read iteration with a single count-based evaluation. For K alleles with observed counts `c = (c₀, c₁, ..., c_{K−1})`:
+
+```
+ln P(c | μ, M) = lnΓ(ΣMμ_i) − lnΓ(N + ΣMμ_i) + Σ[lnΓ(c_i + Mμ_i) − lnΓ(Mμ_i)]
+```
+
+**In plain terms:** imagine you have a bag of colored marbles (alleles) and you draw N marbles (reads). Each genotype hypothesis says "I expect roughly this mix of colors." The DM formula asks: "given what I expected, how surprised am I by what I actually drew?" The `lnΓ` (log-gamma) terms are a bookkeeping device that accounts for all the ways the observed counts could arise from the expected mix. Unlike the binomial model which treats each draw independently, the DM model says "draws from the same sequencing run are correlated" — controlled by the precision parameter M.
+
+where `μ_i` is the expected allele fraction under genotype hypothesis GT and `M = (1−ρ)/ρ` is the precision parameter controlling overdispersion.
+
+For each diploid genotype `(a₁, a₂)`:
+
+- **Homozygous** (`a₁ == a₂`): `μ[a₁] = 1 − ε`, `μ[other] = ε/(K−1)`
+- **Heterozygous**: `μ[a₁] = μ[a₂] = (1−ε)/2`, `μ[other] = ε/(K−1)`
+
+The DM model has two key implications:
+
+1. **Natural asymptote.** As depth N → ∞, the lgamma ratio terms in the DM log-likelihood converge, causing PLs to plateau at a ceiling determined by ρ. No artificial `PL / SAMPLE_DP` normalization is needed.
+2. **Correlated error absorption.** The overdispersion parameter ρ (default 0.01, precision M=99) widens the count variance beyond the binomial expectation. This means that at 2000× depth, adding more reads of the same evidence does not infinitely increase genotype confidence — matching the empirical reality of sequencing data.
+
+**In plain terms:** the standard model says "every extra read is equally valuable evidence." The DM model says "after a certain amount of evidence, additional reads tell you less and less" — like asking 100 people the same yes/no question vs. 10,000. The extra 9,900 answers don't make you 100× more confident because they share the same biases (same survey methodology, same population). In sequencing, those shared biases are things like PCR duplicates, flow-cell artifacts, and systematic mismapping. The DM model captures this diminishing-returns behavior automatically.
+
+The default parameters `ε = 0.005` (background error) and `ρ = 0.01` (overdispersion) are tuned for Illumina short-read sequencing. See the in-code documentation in `variant_support.cpp` for guidance on adjusting these for ONT, HiFi, or ultra-deep targeted panels.
+
+#### Continuous Mixture Log-Odds (CMLOD)
+
+In addition to DM-based PLs, each ALT allele receives a **CMLOD** (Continuous Mixture Log-Odds) score. Unlike PLs, which evaluate rigid diploid genotype states (0/0, 0/1, 1/1), CMLOD operates over continuous allele frequency space and integrates exact per-read base qualities:
+
+```
+P(read called as s | f) = Σ_t f[t] × P(s | true origin = t)
+CMLOD[alt] = max(0, LL(f_MLE) − LL(f_null))    (log₁₀ scale)
+```
+
+**In plain terms:** PLs answer "which genotype best explains the data?" — choosing between fixed states like 0% ALT, 50% ALT, or 100% ALT. CMLOD answers a different question: "is there *any* evidence this ALT allele is real, regardless of its frequency?"
+
+It works by comparing two scenarios:
+
+- **Scenario A (MLE):** the variant exists at whatever frequency the data suggests (e.g., 15% VAF)
+- **Scenario B (null):** the variant doesn't exist at all — those reads are just errors
+
+CMLOD is the log-odds between these two scenarios. Crucially, each read's contribution is weighted by its base quality: a high-confidence Q40 read counts for much more than a noisy Q10 read. This means CMLOD naturally separates true low-frequency variants from sequencing noise — a mosaic variant at 5% VAF supported by 10 high-quality reads will score much higher than 10 noisy reads at the same frequency.
+
+A Q40 read supporting ALT contributes ~4.0 to the LOD; a Q10 read contributes ~0.5. This natively separates high-confidence signal from sequencing noise without requiring an external error model.
+
+CMLOD is emitted as a `Number=A` FORMAT field (one value per ALT allele). It is particularly useful for low-VAF mosaic variant detection and somatic variant calling, where the discrete diploid PL model cannot represent continuous frequency states like 2% or 15% VAF.
 
 * **Read more:** [Alignment-Derived Annotations](alignment_annotations.md), [VCF Output Reference](vcf_output.md)

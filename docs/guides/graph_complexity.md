@@ -20,7 +20,7 @@ Bruijn graph component surrounding a variant. Requires
 
 ## Graph Entanglement Index (GEI)
 
-The GEI compresses four collinear topology metrics into a single continuous
+The GEI compresses four highly correlated topology metrics into a single continuous
 scalar. Before defining the formula, here is what each input measures:
 
 ### GEI Input Metrics
@@ -60,7 +60,7 @@ scalar. Before defining the formula, here is what each input measures:
   every node has roughly the same number of supporting reads, CovCV is low.
   If some nodes have 500× coverage while neighbors have 5×, CovCV is high.
 - **Math**: `CovCV = σ / μ` — the standard deviation of total read support
-  across all nodes divided by the mean. Dimensionless ratio where CovCV=0
+  across all nodes divided by the mean. Unitless ratio where CovCV=0
   means perfectly uniform coverage and CovCV>1 means the standard deviation
   exceeds the mean.
 - **Biology**: True biological variants produce near-uniform coverage
@@ -87,14 +87,20 @@ scalar. Before defining the formula, here is what each input measures:
 
 ### Formula
 
+**In plain terms**: GEI is a single score that captures "how tangled is the
+assembly graph?" It combines four measurements — loops, forks, uneven coverage,
+and fragmentation — into one number. The multiplicative design means all four
+factors must be problematic for the score to spike; a graph that is loopy but
+evenly covered still gets a low GEI.
+
 ```
 GEI = log₁₀(1 + (CC × BP × CoverageCv) / (UnitigRatio + ε))
 ```
 
 **Why compress?** These metrics are mathematically interlocked by graph
 theory identities. Increasing BP necessarily decreases UnitigRatio and
-increases CC. Feeding all four to an additive ML model causes "vote
-splitting" — the model distributes signal weight across correlated features,
+increases CC. Feeding all four to an additive ML model causes the model to
+split signal weight across correlated features, weakening each one and
 producing noisy, low-confidence decision curves.
 
 **The multiplicative AND logic**: The multiplication acts as a soft AND gate.

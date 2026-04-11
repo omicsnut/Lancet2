@@ -31,7 +31,7 @@ using VariantID = u64;
 //     Output: VCF record: chr1 100 . A T,G ... (comma-separated ALTs)
 //
 // FORMAT fields (per-sample):
-//   GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ
+//   GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ
 //
 //   GT   - Genotype (e.g., 0/1, 1/2 for multi-allelic)
 //   AD   - Number=R: read depth per allele (REF, ALT1, ALT2, ...)
@@ -50,8 +50,9 @@ using VariantID = u64;
 //   SDFC - Number=1: Site Depth Fold Change (DP / window mean coverage)
 //   PRAD - Number=1: Polar Radius log10(1 + sqrt(AD_Ref² + AD_Alt²))
 //   PANG - Number=1: Polar Angle atan2(AD_Alt, AD_Ref) in radians
-//   PL   - Number=G: Phred-scaled genotype likelihoods
-//   GQ   - Genotype quality (second-lowest PL, capped at 99)
+//   CMLOD - Number=A: Continuous Mixture LOD per ALT (quality-weighted)
+//   PL    - Number=G: Phred-scaled genotype likelihoods (Dirichlet-Multinomial)
+//   GQ    - Genotype quality (second-lowest DM PL, capped at 99)
 // ============================================================================
 class VariantCall {
  public:
@@ -71,6 +72,7 @@ class VariantCall {
     absl::InlinedVector<u16, 4> mRevAlleleDepths;
     absl::InlinedVector<f32, 4> mRmsMappingQualities;
     absl::InlinedVector<f32, 4> mNormPosteriorBQs;
+    absl::InlinedVector<f64, 4> mContinuousMixtureLods;
 
     // 4B Align: Scalars
     f32 mStrandBias{0.0F};

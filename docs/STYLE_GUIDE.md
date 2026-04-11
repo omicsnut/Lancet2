@@ -28,6 +28,7 @@ These principles apply equally to website pages and code comments:
 - **Direct and declarative.** "This flag forces assembly of every window" — not "This flag can be used to force assembly."
 - **Technical but accessible.** Define domain terms on first use, then use them freely. Example: "Cyclomatic Complexity (CC = E − V + 1): the number of independent cycles."
 - **No hedging.** Write "the detector terminates immediately" — not "the detector should terminate" or "the detector is expected to terminate."
+- **No unexplained jargon.** If a technical term is necessary for precision, define it in plain language on first use, then use it freely. If it adds no precision over a plain-language alternative, replace it (e.g., "independent" instead of "orthogonal", "highly correlated" instead of "collinear", "depth-dependent precision" instead of "heteroscedastic"). The test: *would a biologist or clinician reading this for the first time have to stop and look it up?* If yes, either explain it or replace it.
 - **Second person for user actions.** "Set `--min-node-cov` to 5 if you want aggressive pruning." Use "Lancet2" (not "we" or "the system") for tool behavior.
 
 ---
@@ -288,6 +289,12 @@ Code comments serve a **different audience** than website docs. The reader is a 
 
 5. **Keep it concise.** Every comment line must earn its place. If a 3-line comment can be condensed to 1 line without losing meaning, condense it. If a comment block exceeds ~15 lines, consider whether the explanation belongs in the website documentation instead, with a cross-reference.
 
+6. **No unexplained jargon.** Technical terms fall into three categories:
+   - **Replace**: terms that add no precision over plain language. Use "independent" not "orthogonal", "highly correlated" not "collinear", "depth-dependent precision" not "heteroscedastic."
+   - **Explain then use**: terms that are precise and useful but not universally known. Define on first occurrence with a brief parenthetical, then use freely: `Bessel's correction (divides by n−1 instead of n to avoid underestimating spread from a sample)`.
+   - **Use freely**: terms already explained in context, self-evident, or targeting a developer audience who will know them (e.g., `Euclidean`, `log10`, `branchless`).
+   The test: *would a biologist or clinician reading this comment have to stop and look it up?* If yes, either explain it or replace it.
+
 ---
 
 ## Comment Types
@@ -428,6 +435,7 @@ If a literal appears directly in code (not via a named constant), it **must** ha
 - **Don't leave TODO/FIXME without context.** If a TODO stays, it needs: what needs to change, why, and what blocks it.
 - **Don't use filler adverbs.** "mathematically guarantees strictly progressively monotonically upward" is 5 adverbs for a sort. Write: "Sort variants by position for ordered VCF output."
 - **Don't write essays.** If a comment block exceeds ~15 lines, the explanation likely belongs in the website docs. Add a cross-reference: `// See docs/guides/variant_discovery_genotyping.md for the full scoring derivation.`
+- **Don't use jargon when a plain word works.** If "independent" conveys the same meaning as "orthogonal", use "independent." If a technical term is essential (e.g., "Stirling's approximation"), define it on first use: `Stirling's approximation (a fast formula for log(N!) that is very accurate when N is large)`.
 
 ---
 
@@ -681,6 +689,7 @@ Before merging any change, verify:
 - [ ] Complex algorithms have step-by-step inline comments with ASCII diagrams where helpful
 - [ ] All formulas have variable annotations (e.g., `Q=0 → 0.0, Q=20 → 0.99`)
 - [ ] No comments that restate the code — every comment explains *why* or *what the intuition is*
+- [ ] No unexplained jargon — technical terms either replaced with plain language or defined on first use
 - [ ] Constants have rationale comments explaining the chosen value
 
 ### Code Style & Linting

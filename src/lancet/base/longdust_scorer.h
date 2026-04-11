@@ -532,6 +532,13 @@ class LongdustQScorer {
   // ============================================================================
   // ComputeFSingle: expected log-factorial per k-mer under Poisson(λ)
   //
+  // In plain terms: this function answers "how much k-mer concentration
+  // would we expect by pure chance?" If we scatter ℓ k-mers randomly among
+  // 16,384 bins, some bins will get 2 or more just by luck. ComputeFSingle
+  // calculates exactly how much log-factorial signal that random luck
+  // produces. When we subtract this from the actual signal, what's left
+  // is the *excess* concentration — the real repetitiveness.
+  //
   // Computes f_single(λ) = E[log(N!)] where N ~ Poisson(λ).
   //
   // This is the expected "concentration signal" for a single k-mer when
@@ -543,7 +550,8 @@ class LongdustQScorer {
   //            f_single(λ) = e^{-λ} × Σ_{n=2}^∞ log(n!) × λ^n/n!
   //            Converges quickly since Poisson PMF decays super-exponentially.
   //
-  //   λ ≥ 30:  Stirling's approximation (faster, still accurate):
+  //   λ ≥ 30:  Stirling's approximation (a fast formula for log(N!) that
+  //            is very accurate when N is large):
   //            f_single(λ) ≈ 0.5·log(2πeλ) − 1/(12λ)·(1 + 0.5/λ + 19/(30λ²))
   //                          + λ·(log(λ) − 1)
   //
@@ -590,6 +598,13 @@ class LongdustQScorer {
 
   // ============================================================================
   // ComputeF: total expected log-factorial for a sequence with ℓ k-mers
+  //
+  // In plain terms: the default model assumes all 4 DNA bases are equally
+  // common. In humans, G/C bases are less common than A/T (41% vs 59%).
+  // Without correction, an AT-rich region looks artificially "repetitive"
+  // because AT-rich k-mers are naturally overrepresented. This function
+  // adjusts the expected counts to account for the actual G/C proportion
+  // so that only *truly* unusual k-mer concentrations are flagged.
   //
   // GC-bias corrected version:
   //   f(ℓ, g) = Σ_{c=0}^k [ C(k,c) · 2^k ] · f_single(ℓ · q_c)

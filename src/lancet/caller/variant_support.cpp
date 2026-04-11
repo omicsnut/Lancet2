@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <limits>
 #include <memory>
+#include <numbers>
 #include <numeric>
 #include <string_view>
 #include <utility>
@@ -473,88 +474,208 @@ auto VariantSupport::AlleleMismatchDelta() const -> f64 {
 }
 
 // ============================================================================
-// ComputePLs — Multi-Allelic Phred-Scaled Genotype Likelihoods
+// Dirichlet-Multinomial Genotype Likelihood Engine
 //
-// Standard GATK per-read genotype likelihood model for diploid organisms.
+// In plain terms: the DM model scores each possible genotype by asking
+// "how well do the actual read counts match what this genotype predicts?"
+// A true heterozygous site should have roughly 50/50 REF/ALT reads;
+// a true homozygous site should be nearly all one allele. The model
+// measures this agreement while accounting for the fact that sequencing
+// reads are not perfectly independent — correlated errors from PCR,
+// flow-cell artifacts, and mismapping mean that extra depth gives
+// diminishing returns in confidence, not infinite certainty.
 //
-// For k alleles and a read supporting allele `s` with error probability ε:
+// Replaces the legacy per-read binomial model with a count-based
+// Dirichlet-Multinomial (DM) distribution that natively handles:
 //
-//   P(read=s | true_allele=a) = (1-ε)       if s == a   (read matches)
-//                              = ε/(k-1)     if s != a   (error)
+//   1. Multi-allelic sites (K alleles, not just bi-allelic)
+//   2. Correlated errors at ultra-high depth (overdispersion via ρ)
+//   3. Numerically stable computation via std::lgamma
 //
-//   P(read | GT=(a1,a2)) = 0.5 * P(read|a1) + 0.5 * P(read|a2)
+// The DM generalizes the Beta-Binomial to K dimensions:
+//   ln P(c | μ, M) = lnΓ(ΣMμ_i) − lnΓ(N + ΣMμ_i)
+//                   + Σ[ lnΓ(c_i + Mμ_i) − lnΓ(Mμ_i) ]
 //
-//   P(Data | GT) = ∏_reads P(read | GT)     (independence)
-//
-// Genotype ordering follows VCF 4.3 §1.6.2:
-//   GL_index(i,j) = j*(j+1)/2 + i   where i ≤ j
-//
-//   Bi-allelic (k=2):  {0/0, 0/1, 1/1}
-//   Tri-allelic (k=3): {0/0, 0/1, 1/1, 0/2, 1/2, 2/2}
-//
-// References:
-//   Li, H. (2011). "A statistical framework for SNP calling..."
-//   Poplin, R. et al. (2018). GATK HaplotypeCaller.
+// See docs/guides/variant_discovery_genotyping.md for the full derivation.
 // ============================================================================
 
 namespace {
 
-/// For a single read supporting `mAllele` with base quality `mBaseQual`,
-/// compute P(read | true_allele = a) for every allele a in [0, num_alleles).
-///
-/// Returns a vector of conditional probabilities, one per allele:
-///   result[a] = (1 - ε)      if a == read_allele  (read matches true allele)
-///             = ε / (k - 1)  if a != read_allele  (read is a sequencing error)
-///
-/// This is precomputed once per read [O(k)], then reused across all
-/// O(k²/2) genotype pairs — avoiding redundant recomputation.
-auto ReadLikelihoodsPerAllele(int const read_allele, u8 const base_qual, int const num_alleles)
-    -> std::vector<f64> {
-  f64 const error_prob = hts::PhredToErrorProb(base_qual);
-  f64 const match_prob = 1.0 - error_prob;
-  f64 const mismatch_prob = error_prob / std::max(1, num_alleles - 1);
+// ── DM Model Constants ──────────────────────────────────────────────────
+// These are hardcoded defaults tuned for Illumina short-read sequencing.
+// Both values interact: raising ρ widens the overdispersion tail (absorbs
+// more correlated noise but reduces sensitivity to true low-VAF germline
+// variants). Raising ε distributes more background mass (better numeric
+// stability at the cost of slightly reduced genotype discrimination).
 
-  std::vector<f64> likelihoods(num_alleles, mismatch_prob);
-  likelihoods[read_allele] = match_prob;
-  return likelihoods;
-}
-
-/// Accumulate one read's contribution into the genotype log-likelihoods.
+/// Background error rate: fraction of reads expected to be mismapped or
+/// mis-called even under the correct genotype hypothesis.
 ///
-/// For each genotype (allele_a, allele_b) where a ≤ b:
-///   P(read | GT=(a,b)) = 0.5 * P(read|a) + 0.5 * P(read|b)
-///   log_GL[gt] += log10(P(read | GT))
+/// Default: 0.005 (0.5%), matching typical Illumina error profiles.
 ///
-/// Complexity: O(k²/2) per read, with per-allele likelihoods already computed.
-void AccumulateReadIntoGLs(std::vector<f64> const& read_lks, int const num_alleles,
-                           std::vector<f64>& gt_log_likelihoods) {
-  for (int allele_b = 0; allele_b < num_alleles; ++allele_b) {
-    for (int allele_a = 0; allele_a <= allele_b; ++allele_a) {
-      int const gt_idx = (allele_b * (allele_b + 1) / 2) + allele_a;
+/// When to change:
+///   - ONT/PacBio CLR: raise to 0.01–0.03 (higher per-base error rate)
+///   - HiFi/CCS:       keep at 0.005 (error correction makes it Illumina-like)
+///   - Ultra-clean PCR-free libraries: could lower to 0.002–0.003
+///
+/// Effect of increasing: more probability mass on "background," reducing
+/// PL separation between genotypes. The model becomes more conservative
+/// (fewer high-confidence calls) but more robust to systematic noise.
+/// Effect of decreasing: sharper genotype discrimination but more
+/// vulnerable to correlated sequencing artifacts at ultra-high depth.
+constexpr f64 DM_BACKGROUND_ERROR = 0.005;
 
-      // Diploid mixture: equal probability of inheriting from either chromosome
-      f64 const diploid_prob = (0.5 * read_lks[allele_a]) + (0.5 * read_lks[allele_b]);
+/// Overdispersion parameter ρ. Controls the heavy-tail width of the DM
+/// distribution. Higher ρ = more variance absorbed = PLs plateau earlier.
+///
+/// Precision M = (1 − ρ) / ρ.
+///   ρ = 0.01  → M = 99   (default, moderate overdispersion)
+///   ρ = 0.001 → M = 999  (nearly binomial, PLs scale ~linearly with depth)
+///   ρ = 0.1   → M = 9    (aggressive, PLs plateau very early)
+///
+/// Default: 0.01 — empirically balances depth-robustness (2500x WGS) against
+/// sensitivity to genuine germline heterozygotes at standard coverage (30×–60×).
+///
+/// When to change:
+///   - Ultra-deep targeted panels (2000x+): consider 0.02–0.05 if PLs still
+///     explode, indicating higher-than-expected error correlation
+///   - Low-coverage WGS (10×–15×): consider 0.005 to preserve every quantum
+///     of evidence (overdispersion barely matters at low N)
+///   - ONT duplex: consider 0.02 (systematic strand-phase errors)
+///
+/// Effect of increasing: PLs plateau at lower depth. A true het at 30×
+/// may produce PL[0/1]=0, PL[0/0]=45 instead of 60 — lower GQ but more
+/// robust against correlated artifacts.
+/// Effect of decreasing: PLs scale closer to linearly with depth.
+/// A true het at 2000× could produce PL[0/0] > 50,000 — technically
+/// correct but numerically extreme and potentially misleading for
+/// downstream ML models that expect bounded features.
+constexpr f64 DM_OVERDISPERSION = 0.01;
 
-      // Guard against log10(0); floor at 10^-300 ≈ -300 in log space
-      gt_log_likelihoods[gt_idx] += std::log10(std::max(diploid_prob, 1e-300));
-    }
+/// Minimum alpha floor to prevent lgamma(0) singularity.
+/// lgamma(x) diverges as x → 0. This floor is small enough to never
+/// affect genotype discrimination (α_i ≈ 0 means zero expected counts
+/// for that allele under this genotype, which is the correct behavior).
+constexpr f64 DM_ALPHA_FLOOR = 1e-6;
+
+/// Compute the log-likelihood of observing allele counts under the DM model
+/// with concentration parameters dm_alphas.
+///
+/// In plain terms: given an expected allele mix (dm_alphas, derived from the
+/// genotype hypothesis) and the actual read counts, this function returns a
+/// single number measuring "how likely is this data under this hypothesis?"
+/// More negative = worse fit. The log-gamma terms handle the combinatorial
+/// bookkeeping of how many ways the observed counts could arise.
+///
+///   ln P(c | α) = lnΓ(Σα_i) − lnΓ(N + Σα_i) + Σ[lnΓ(c_i + α_i) − lnΓ(α_i)]
+///
+/// Uses std::lgamma for numerical stability. All values in natural-log space;
+/// conversion to Phred (log10) happens only at the final PL scaling step.
+auto LogDirichletMultinomial(std::vector<int> const& allele_counts,
+                             std::vector<f64> const& dm_alphas) -> f64 {
+  f64 log_prob = 0.0;
+  f64 alpha_sum = 0.0;
+  f64 count_alpha_sum = 0.0;
+
+  for (usize index = 0; index < allele_counts.size(); ++index) {
+    auto const count_val = static_cast<f64>(allele_counts[index]);
+    f64 const alpha_val = dm_alphas[index];
+    log_prob += std::lgamma(count_val + alpha_val) - std::lgamma(alpha_val);
+    alpha_sum += alpha_val;
+    count_alpha_sum += count_val + alpha_val;
   }
+
+  log_prob += std::lgamma(alpha_sum) - std::lgamma(count_alpha_sum);
+  return log_prob;
 }
 
-/// Convert raw log-likelihoods to normalized, capped Phred-scaled PLs.
-/// The best genotype gets PL=0; others are scaled relative to it.
-auto NormalizeLogLikelihoodsToPLs(std::vector<f64> const& gt_log_lks) -> std::vector<int> {
+/// Normalize raw natural-log likelihoods to Phred-scaled PLs.
+/// Best genotype gets PL=0; others are scaled relative to it.
+/// PL = −10 × (LL − best_LL) / ln(10)
+auto NormalizeToPLs(std::vector<f64> const& log_likelihoods) -> std::vector<int> {
   static constexpr f64 PL_CAP = static_cast<f64>(std::numeric_limits<int>::max()) / 2.0;
 
-  f64 const best_ll = *std::ranges::max_element(gt_log_lks);
+  f64 const best_log_lk = *std::ranges::max_element(log_likelihoods);
 
-  std::vector<int> pls(gt_log_lks.size());
-  for (usize idx = 0; idx < gt_log_lks.size(); ++idx) {
-    f64 const raw_pl = -10.0 * (gt_log_lks[idx] - best_ll);
-    pls[idx] = static_cast<int>(std::round(std::min(raw_pl, PL_CAP)));
+  f64 const ln_ten = std::numbers::ln10;
+  std::vector<int> phred_likelihoods(log_likelihoods.size());
+  for (usize index = 0; index < log_likelihoods.size(); ++index) {
+    f64 const raw_pl = -10.0 * (log_likelihoods[index] - best_log_lk) / ln_ten;
+    phred_likelihoods[index] = static_cast<int>(std::round(std::min(raw_pl, PL_CAP)));
   }
 
-  return pls;
+  return phred_likelihoods;
+}
+
+/// Compute the log10-probability of a single read under the mixture model.
+///
+/// In plain terms: given a read that was called as allele 's' with a certain
+/// base quality, this function asks "how likely is this read under the current
+/// allele frequency mix?" A high-quality read matching a common allele is very
+/// likely (high probability); a high-quality read matching a rare allele is
+/// less likely; a low-quality read is always somewhat ambiguous.
+///
+/// Sums over all possible true allele origins using the Law of Total Probability.
+///
+///   P(read called as s | f) = Σ_t f[t] × P(s | true_origin = t)
+///   P(s|t) = (1−ε) if s==t, else ε/(K−1)
+auto ReadMixtureProbLog10(int const called_as, u8 const base_qual, absl::Span<f64 const> frac_vec,
+                          int const num_alleles) -> f64 {
+  f64 const error_prob = hts::PhredToErrorProb(base_qual);
+  f64 const mismatch_prob = error_prob / std::max(1, num_alleles - 1);
+  f64 const match_bonus = (1.0 - error_prob) - mismatch_prob;
+
+  // Start with the uniform mismatch contribution from all alleles:
+  //   Σ_t f[t] × mismatch_prob = mismatch_prob  (since Σf = 1)
+  // Then add the extra mass from the matching allele.
+  f64 const prob_read = mismatch_prob + (frac_vec[called_as] * match_bonus);
+  return std::log10(std::max(1e-15, prob_read));
+}
+
+/// Accumulate log10-likelihoods from a vector of base qualities for one allele.
+auto AccumulateStrandLogLk(absl::Span<u8 const> base_quals, int const called_as,
+                           absl::Span<f64 const> frac_vec, int const num_alleles) -> f64 {
+  f64 strand_log_lk = 0.0;
+  for (auto const base_qual : base_quals) {
+    strand_log_lk += ReadMixtureProbLog10(called_as, base_qual, frac_vec, num_alleles);
+  }
+  return strand_log_lk;
+}
+
+/// Compute the full-pileup log10-likelihood under a K-allele mixture model.
+/// Sums per-read contributions (fwd + rev strands) across all alleles.
+/// Templated to accept the private PerAlleleData vector without naming the type.
+template <typename AlleleDataVec>
+auto PileupLogLikelihood(AlleleDataVec const& allele_data_vec, absl::Span<f64 const> frac_vec,
+                         int const num_alleles) -> f64 {
+  f64 log_lk = 0.0;
+  for (int called_as = 0; called_as < num_alleles; ++called_as) {
+    auto const& per_allele = allele_data_vec[called_as];
+    log_lk += AccumulateStrandLogLk(per_allele.mFwdBaseQuals, called_as, frac_vec, num_alleles);
+    log_lk += AccumulateStrandLogLk(per_allele.mRevBaseQuals, called_as, frac_vec, num_alleles);
+  }
+  return log_lk;
+}
+
+/// Build the null-hypothesis fraction vector: redistribute
+/// the target ALT's mass proportionally among remaining alleles.
+auto BuildNullFractions(absl::Span<f64 const> frac_mle, int const target_alt, int const num_alleles)
+    -> std::vector<f64> {
+  std::vector<f64> frac_null(frac_mle.begin(), frac_mle.end());
+  f64 const null_mass = frac_null[target_alt];
+  frac_null[target_alt] = 0.0;
+
+  f64 const remaining_sum = 1.0 - null_mass;
+  if (remaining_sum <= 0.0) {
+    frac_null[0] = 1.0;
+    return frac_null;
+  }
+
+  for (int index = 0; index < num_alleles; ++index) {
+    frac_null[index] /= remaining_sum;
+  }
+
+  return frac_null;
 }
 
 }  // namespace
@@ -564,25 +685,52 @@ auto VariantSupport::ComputePLs() const -> std::vector<int> {
   if (num_alleles == 0) return {};
 
   auto const num_genotypes = num_alleles * (num_alleles + 1) / 2;
-  std::vector<f64> gt_log_lks(num_genotypes, 0.0);
 
-  // Walk every read once. Fwd and rev strands use identical math —
-  // strand information is already captured in the SB (strand bias log odds ratio) field.
+  // Build allele count vector: count[i] = total reads assigned to allele i
+  std::vector<int> allele_counts(num_alleles, 0);
   for (int allele_idx = 0; allele_idx < num_alleles; ++allele_idx) {
-    auto const& allele_data = mAlleleData[allele_idx];
+    auto const aidx = static_cast<AlleleIndex>(allele_idx);
+    allele_counts[allele_idx] = static_cast<int>(TotalAlleleCov(aidx));
+  }
 
-    for (auto const base_qual : allele_data.mFwdBaseQuals) {
-      auto const read_lks = ReadLikelihoodsPerAllele(allele_idx, base_qual, num_alleles);
-      AccumulateReadIntoGLs(read_lks, num_alleles, gt_log_lks);
-    }
+  // DM precision: M = (1 − ρ) / ρ.
+  // Higher M → closer to multinomial (less overdispersion).
+  // ρ=0.01 → M=99   ρ=0.001 → M=999   ρ=0.1 → M=9
+  f64 const precision = (1.0 - DM_OVERDISPERSION) / DM_OVERDISPERSION;
 
-    for (auto const base_qual : allele_data.mRevBaseQuals) {
-      auto const read_lks = ReadLikelihoodsPerAllele(allele_idx, base_qual, num_alleles);
-      AccumulateReadIntoGLs(read_lks, num_alleles, gt_log_lks);
+  std::vector<f64> genotype_log_lks(num_genotypes, 0.0);
+  int genotype_idx = 0;
+
+  // VCF-standard unphased genotype ordering:
+  //   (0,0), (0,1), (1,1), (0,2), (1,2), (2,2), ...
+  for (int allele_b = 0; allele_b < num_alleles; ++allele_b) {
+    for (int allele_a = 0; allele_a <= allele_b; ++allele_a) {
+      // Build expected allele fraction vector for this genotype.
+      // Base: distribute ε uniformly across all alleles as background noise.
+      std::vector<f64> expected_mu(num_alleles, DM_BACKGROUND_ERROR / num_alleles);
+      f64 const main_mass = 1.0 - DM_BACKGROUND_ERROR;
+
+      if (allele_a == allele_b) {
+        // Homozygous: all main mass on one allele
+        expected_mu[allele_a] += main_mass;
+      } else {
+        // Heterozygous: split main mass equally between two alleles
+        expected_mu[allele_a] += main_mass / 2.0;
+        expected_mu[allele_b] += main_mass / 2.0;
+      }
+
+      // Map expected fractions to Dirichlet concentration parameters: α_i = M × μ_i
+      std::vector<f64> dm_alphas(num_alleles);
+      for (int kidx = 0; kidx < num_alleles; ++kidx) {
+        dm_alphas[kidx] = std::max(DM_ALPHA_FLOOR, expected_mu[kidx] * precision);
+      }
+
+      genotype_log_lks[genotype_idx] = LogDirichletMultinomial(allele_counts, dm_alphas);
+      ++genotype_idx;
     }
   }
 
-  return NormalizeLogLikelihoodsToPLs(gt_log_lks);
+  return NormalizeToPLs(genotype_log_lks);
 }
 
 // ============================================================================
@@ -612,6 +760,74 @@ auto VariantSupport::ComputeGQ(std::vector<int> const& pls) -> int {
   // After normalization, min1 should be 0. GQ = min2 - min1 = min2.
   static constexpr int MAX_GQ = 99;
   return std::min(min2 - min1, MAX_GQ);
+}
+
+// ============================================================================
+// ComputeContinuousMixtureLods — Continuous Mixture LOD (CMLOD FORMAT field)
+//
+// In plain terms: CMLOD measures "how much evidence is there that this
+// variant is real?" For each ALT allele, it compares two scenarios:
+//   1. The variant exists at its observed frequency (e.g., 15% VAF)
+//   2. The variant doesn't exist — those ALT reads are just errors
+// The score is the log-odds between these scenarios. Higher = more
+// evidence the variant is real. Each read's contribution is weighted by
+// its base quality, so 10 high-quality reads matter far more than 10
+// low-quality reads at the same allele frequency.
+//
+// For mosaic/somatic calling, rigid diploid genotype states are inappropriate.
+// A subclonal variant at 2% VAF is a continuous frequency, not a discrete
+// diploid state (0/0, 0/1, or 1/1).
+//
+// CMLOD integrates exact per-read base qualities into a K-dimensional mixture
+// model, breaking the count-based identifiability paradox:
+//
+//   P(read called as s | f) = Σ_t f[t] × P(s | true_origin = t)
+//   P(s|t) = (1−ε) if s==t, else ε/(K−1)
+//
+//   LL(f) = Σ_reads log10( P(read | f) )
+//   CMLOD[alt] = max(0, LL(f_MLE) − LL(f_null))
+//
+// Where f_MLE = empirical allele fractions, f_null = redistribute the target
+// ALT's mass proportionally among remaining alleles.
+//
+// A Q40 read supporting ALT contributes ~4.0 to the LOD; a Q10 read
+// contributes ~0.5. This natively separates high-confidence signal from
+// sequencer noise without requiring any external error model.
+//
+// Complexity: O(N × K) per ALT allele, where N = total read count.
+// ============================================================================
+auto VariantSupport::ComputeContinuousMixtureLods() const -> std::vector<f64> {
+  auto const num_alleles = static_cast<int>(mAlleleData.size());
+  std::vector<f64> lod_scores(num_alleles, 0.0);
+  if (num_alleles < 2) return lod_scores;
+
+  // Empirical allele fractions (MLE): f_i = count_i / total_depth
+  auto const total_depth = static_cast<f64>(TotalSampleCov());
+  if (total_depth == 0.0) return lod_scores;
+
+  std::vector<f64> frac_mle(num_alleles, 0.0);
+  for (int index = 0; index < num_alleles; ++index) {
+    auto const allele_depth = TotalAlleleCov(static_cast<AlleleIndex>(index));
+    frac_mle[index] = static_cast<f64>(allele_depth) / total_depth;
+  }
+
+  f64 const log_lk_mle =
+      PileupLogLikelihood(mAlleleData, absl::MakeConstSpan(frac_mle), num_alleles);
+
+  // Compute CMLOD for each ALT allele independently
+  for (int target_alt = 1; target_alt < num_alleles; ++target_alt) {
+    if (TotalAlleleCov(static_cast<AlleleIndex>(target_alt)) == 0) continue;
+
+    auto const frac_null =
+        BuildNullFractions(absl::MakeConstSpan(frac_mle), target_alt, num_alleles);
+
+    f64 const log_lk_null =
+        PileupLogLikelihood(mAlleleData, absl::MakeConstSpan(frac_null), num_alleles);
+
+    lod_scores[target_alt] = std::max(0.0, log_lk_mle - log_lk_null);
+  }
+
+  return lod_scores;
 }
 
 // ============================================================================

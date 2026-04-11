@@ -1,26 +1,80 @@
 # Polar Coordinate Features
 
 These per-sample FORMAT fields transform Cartesian allele depth coordinates
-(`AD_Ref`, `AD_Alt`) into polar coordinates, orthogonalizing biological
-identity from sequencing depth for downstream ML variant classification.
+(`AD_Ref`, `AD_Alt`) into polar coordinates, separating biological
+identity from sequencing depth so that neither depends on the other.
 
 ---
 
-## Motivation
+## Why Not DP and VAF?
 
-When plotting `AD_Ref` (X) vs `AD_Alt` (Y), variant classes suffer two
-geometric distortions in Cartesian space:
+Standard VCF metrics already encode depth (`DP = AD_Ref + AD_Alt`) and allele
+fraction (`VAF = AD_Alt / DP`). At first glance, these seem sufficient. The
+problem is geometric: DP and VAF have structural properties that degrade ML
+classification, and the polar transform fixes both simultaneously.
 
-1. **The "Diagonal" Problem**: Biologically identical variants (e.g.,
-   heterozygous germline at 50% VAF) form elongated diagonals spanning
-   `(5,5)` at low depth to `(500,500)` at high depth. Distance-based ML
-   algorithms (K-Means, KNN) misinterpret opposite ends of this diagonal
-   as different classes.
+### DP vs. PRAD: How We Measure "Weight of Evidence"
 
-2. **The "Wedge" (Fan) Problem**: Variance in allele counts scales with
-   depth. A 50% VAF at 10× has tight variance; at 1000× it fans out.
-   This creates wedge-shaped clusters whose width constantly changes,
-   preventing clean decision boundaries.
+**DP** is a simple sum (the L₁ norm) of the allele depth vector.
+**PRAD** is the log-compressed Euclidean distance (the L₂ norm) —
+the magnitude of the evidence *vector*.
+
+The difference matters because DP **couples** the two allele counts: for a
+fixed DP, increasing one allele's count forces the other's count down. This
+treats REF and ALT as interchangeable, which they are not — a somatic variant
+with AD=(95, 5) and a germline het with AD=(50, 50) both have DP=100, but
+represent fundamentally different signal geometries. PRAD treats REF and ALT
+as **independent dimensions** of a vector, so the distance from the origin
+(the "zero-information" state) reflects the true signal magnitude.
+
+Crucially, sequencing noise scatters reads **equally in all directions**
+around the true allele depth point — a read is just as likely to land 2 counts
+above as 2 counts to the right. This means the zone of expected noise forms a
+roughly circular region, not a diagonal band. The Euclidean radius (PRAD)
+traces a circular arc that matches this noise shape naturally. A constant DP
+traces a straight diagonal that cuts through the noise at an angle,
+artificially coupling the two allele counts.
+
+### VAF vs. PANG: The Unstable Precision Problem
+
+**VAF** is a linear ratio: `Alt / (Ref + Alt)`. **PANG** is an angular
+ratio: `atan2(Alt, Ref)`.
+
+VAF has **depth-dependent precision** — its noise level changes with coverage.
+A single-read fluctuation at 10× depth swings VAF by 10%; the same
+fluctuation at 1000× barely moves it (0.1%). This means two VAF=0.5 data
+points at different depths carry radically different *reliability*, but
+the number itself gives no indication of this. An ML model using raw VAF
+must learn the "fan" (wedge) shape where the meaning of a VAF value
+*depends on DP* — a hidden dependency that forces the model to learn the
+interaction between VAF and DP rather than treating each independently.
+
+PANG computes the angle of the allele depth vector, which is a pure ratio
+independent of magnitude. When paired with PRAD, the two make the noise spread
+**uniform** across the feature space: the flaring Cartesian wedge (where
+variance grows with depth) unrolls into a rectangular strip with constant-width
+noise at every depth. PANG answers **"what is it?"** (somatic vs. germline),
+PRAD answers **"how confident are we?"**, and these two questions become
+**independent** — allowing ML models to learn each axis separately.
+
+### The Diagonal Collapse
+
+A germline het at 20× sits at AD=(10, 10) in Cartesian space; the same
+variant at 2000× sits at AD=(1000, 1000). A distance-based classifier sees
+these as enormously far apart despite being biologically identical.
+
+- **With DP/VAF:** the model sees `VAF=0.5, DP=20` and `VAF=0.5, DP=2000` —
+  same VAF but wildly different DP. It must learn that "VAF=0.5 means
+  germline" regardless of DP, which requires seeing examples at every depth.
+- **With PANG/PRAD:** both points have **PANG=0.785 (45°)**. The biological
+  identity is a constant. Only the radius differs, and it does so on a
+  bounded log scale (1.15 → 3.15). The entire diagonal collapses into a
+  single PANG value, and the model only needs to learn that PANG ≈ π/4
+  means "germline."
+
+This is the fundamental advantage: the polar transform **algebraically
+separates** what a variant *is* from how much evidence supports it, enabling
+ML models trained at one coverage to generalize to any other.
 
 The polar transform "unrolls" the wedge and "collapses" the diagonal into
 a uniform rectangular strip where ML models can draw simple flat boundaries.
@@ -29,10 +83,13 @@ a uniform rectangular strip where ML models can draw simple flat boundaries.
 
 ## Polar Radius (`PRAD`)
 
+**In plain terms**: PRAD answers "how much total evidence do I have?" on a
+compressed scale where 1.0 ≈ ~10 reads, 2.0 ≈ ~100 reads, 3.0 ≈ ~1000 reads.
+
 **Computation**: `PRAD = log10(1 + sqrt(AD_Ref² + AD_Alt²))`, computed per-sample.
 
 The log10-compressed Euclidean magnitude of the allele depth vector. Encodes
-total signal strength (sequencing depth) orthogonal to allele fraction, with
+total signal strength (sequencing depth) independent of allele fraction, with
 built-in normalization for cross-coverage ML generalization.
 
 **Why log10?** The raw Euclidean radius `sqrt(AD_Ref² + AD_Alt²)` scales
@@ -74,6 +131,10 @@ models benefit from the compressed range.
 ---
 
 ## Polar Angle (`PANG`)
+
+**In plain terms**: PANG answers "what fraction of reads support the variant?"
+expressed as an angle. The key property: this angle is the same whether you
+have 10 reads or 10,000 — depth doesn't change it.
 
 **Computation**: `PANG = atan2(AD_Alt, AD_Ref)`, computed per-sample.
 

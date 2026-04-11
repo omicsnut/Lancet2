@@ -35,6 +35,16 @@ concept Number = std::integral<T> || std::floating_point<T>;
 // ============================================================================
 // OnlineStats — Welford's online algorithm for numerically stable statistics
 //
+// In plain terms: OnlineStats computes the mean and spread (standard
+// deviation) of a stream of numbers — like base qualities or coverage
+// values — without storing all the numbers. Each new number updates a
+// running average and a running "how spread out are they?" counter.
+// The clever part is that it avoids the naive formula (which can give
+// wildly wrong answers when numbers are large and close together) by
+// tracking deviations from the running mean instead. Two independent
+// counters can be merged (e.g., from different threads) without
+// re-reading the original data.
+//
 // WHY WELFORD'S: The naive formula Var = E[x²] − (E[x])² suffers from
 // catastrophic cancellation when the mean is large relative to the spread
 // (e.g., base qualities with mean ~35 and σ ~2).  Welford's recurrence
@@ -49,7 +59,8 @@ concept Number = std::integral<T> || std::floating_point<T>;
 //
 // FINAL STATISTICS:
 //   Mean     = m1
-//   Variance = m2 / (n − 1)    ← Bessel's correction (unbiased estimator)
+//   Variance = m2 / (n − 1)    ← Bessel's correction (divides by n−1 instead
+//                            of n to avoid underestimating spread from a sample)
 //   StdDev   = √Variance
 //
 // PARALLEL MERGE (Chan et al.):

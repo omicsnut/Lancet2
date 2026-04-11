@@ -5,42 +5,46 @@
 // Polar Coordinate Feature Engineering for Variant Classification
 //
 // Transforms Cartesian allele depth coordinates (AD_Ref, AD_Alt) into polar
-// coordinates (Radius, Angle) to orthogonalize biological identity from
-// sequencing depth for downstream ML-based variant filtering.
+// coordinates (Radius, Angle) to separate biological identity from
+// sequencing depth so that neither depends on the other.
 //
-// ── The Geometric Problem ───────────────────────────────────────────────────
+// ── Why Not DP and VAF? ─────────────────────────────────────────────────────
 //
-// When plotting AD_Ref (X) vs AD_Alt (Y), variant classes suffer two
-// geometric distortions in Cartesian space:
+// Standard VCF already has DP = AD_Ref + AD_Alt (depth) and
+// VAF = AD_Alt / DP (allele fraction). Both degrade ML classification:
 //
-//   1. The "Diagonal" Problem: Biologically identical variants (e.g.,
-//      heterozygous germline at 50% VAF) form elongated diagonals spanning
-//      (5,5) at low depth to (500,500) at high depth. Distance-based ML
-//      algorithms (K-Means, KNN) misinterpret opposite ends of this
-//      diagonal as different classes.
+//   DP is a simple sum (the L₁ norm) of the allele depth vector.
+//   It COUPLES the two allele counts: for a fixed DP, increasing Alt
+//   forces Ref down. A somatic AD=(95,5) and germline AD=(50,50) both
+//   get DP=100 despite representing fundamentally different signal
+//   geometries. Sequencing noise scatters reads equally in all
+//   directions around the true depth point, forming a circular zone
+//   of expected error — the Euclidean distance (L₂ norm) matches
+//   this shape; the simple-sum diagonal does not.
 //
-//   2. The "Wedge" (Fan) Problem: Variance in allele counts scales with
-//      depth. A 50% VAF at 10× has tight variance; at 1000× it fans out.
-//      This creates wedge-shaped clusters whose width constantly changes,
-//      preventing clean decision boundaries.
+//   VAF has depth-dependent precision: a 1-read fluctuation swings
+//   VAF by 10% at 10× but only 0.1% at 1000×. Two identical VAF=0.5
+//   points at different depths carry radically different reliability,
+//   but the number itself gives no indication. The ML model must learn
+//   the "fan" shape where VAF's meaning depends on DP — a hidden
+//   dependency that slows learning and hurts generalization.
 //
-// ── The Polar Transform Solution ────────────────────────────────────────────
+// ── The Polar Transform ─────────────────────────────────────────────────────
 //
-//   Angle (θ) = atan2(AD_Alt, AD_Ref):
-//     Isolates the IDENTITY of the variant — the allele fraction — by
-//     computing the ratio AD_Alt / AD_Ref. The entire problematic diagonal
-//     collapses into a single θ value regardless of depth.
+//   PANG = atan2(AD_Alt, AD_Ref): isolates IDENTITY (the allele fraction)
+//     as an angle. A germline het at 20× and 2000× both get PANG=0.785
+//     (45°) — the entire problematic diagonal collapses to a constant.
 //
-//   Radius (PRAD) = log10(1 + sqrt(AD_Ref² + AD_Alt²)):
-//     Isolates the MAGNITUDE — total signal strength / sequencing depth.
-//     The log10(1+r) compression reduces the 100× dynamic range of raw
-//     Euclidean magnitude to [0, ~3.5], enabling ML models trained at one
-//     coverage to generalize to another. The transform preserves the
-//     monotonic ordering while making inter-regime spacing uniform.
+//   PRAD = log10(1 + sqrt(AD_Ref² + AD_Alt²)): isolates MAGNITUDE (the
+//     signal strength) as a log-compressed Euclidean radius. The 100×
+//     dynamic range of raw radius compresses to [0, ~3.5].
 //
-//   Together, the flaring "wedge" in Cartesian space unrolls into a
-//   uniform rectangular strip in polar space, enabling simple flat
-//   decision boundaries for ML models.
+//   Together they make the noise spread UNIFORM across the feature space:
+//   the flaring Cartesian wedge (where variance grows with depth) unrolls
+//   into a rectangular strip with constant-width noise at every depth.
+//   PANG answers "what is it?" and PRAD answers "how sure are we?".
+//   These two questions are INDEPENDENT — the model learns each axis
+//   separately, converges faster, and generalizes across coverages.
 //
 // ── Biological Interpretation (Single-Sample) ───────────────────────────────
 //
@@ -105,6 +109,14 @@ namespace lancet::base {
 
 /// Polar Radius: log10-compressed Euclidean magnitude of the allele depth vector.
 ///
+/// In plain terms: PRAD replaces DP (read depth) as the "weight of evidence"
+/// metric. DP is just a sum (Ref + Alt) — it treats the two allele counts as
+/// interchangeable. PRAD uses the Euclidean distance (pythagorean formula),
+/// which treats them as independent dimensions of a vector. This matters
+/// because sequencing noise forms circular clouds around the true value, not
+/// diagonal lines — the Euclidean distance matches the noise shape. The log
+/// compression maps the entire practical range to [0, ~3.5].
+///
 ///   PRAD = log10(1 + sqrt(AD_Ref² + AD_Alt²))
 ///
 /// The raw Euclidean radius scales linearly with coverage (0→2800+ at 2000×),
@@ -127,6 +139,16 @@ namespace lancet::base {
 }
 
 /// Polar Angle: Fast branchless atan2 approximation, in radians.
+///
+/// In plain terms: PANG replaces VAF (Variant Allele Fraction) as the
+/// "what is this variant?" metric. Both encode the allele fraction, but
+/// VAF = Alt/(Ref+Alt) has depth-dependent precision: a 1-read error
+/// changes VAF by 10% at 10× depth but only 0.1% at 1000× — so its
+/// reliability depends on depth. PANG uses the angle of the allele
+/// depth vector, which is a pure ratio independent of magnitude. When
+/// paired with PRAD, the two form an independent pair: PANG says
+/// "what" (identity), PRAD says "how sure" (confidence), and neither
+/// depends on the other.
 ///
 ///   θ ≈ atan2(AD_Alt, AD_Ref)
 ///
@@ -154,6 +176,12 @@ namespace lancet::base {
 /// Output range for non-negative inputs: [0, π/2] radians.
 [[nodiscard]] inline auto PolarAngle(f64 const alt_depth, f64 const ref_depth) -> f64 {
   // ── Minimax polynomial coefficients ──────────────────────────────────────
+  //
+  // In plain terms: instead of computing the exact arctangent (which is
+  // slow), we use a fast approximation accurate to within 0.086° — far
+  // below what matters for ML classification. The coefficients come from
+  // an algorithm (Remez) that minimizes the worst-case error across the
+  // entire input range, rather than just being accurate near zero.
   //
   // The core idea: instead of evaluating atan2(y, x) directly (which requires
   // expensive polynomial expansion for full-precision results), we:

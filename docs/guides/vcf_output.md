@@ -14,7 +14,7 @@ Lancet2 operates in two modes that affect which INFO fields are present:
 | Mode | Inputs | INFO State Tags | QUAL Source |
 |:-----|:-------|:----------------|:------------|
 | **Tumor-Normal** (somatic) | ≥ 1 tumor AND ≥ 1 normal BAM/CRAM | `SHARED`, `NORMAL`, `TUMOR` | Somatic log odds ratio (SOLOR) |
-| **Normal-Only** (germline) | Normal BAM/CRAM only | *(none — state is UNKNOWN)* | Per-read evidence: min(PL[0]/DP, 100) |
+| **Normal-Only** (germline) | Normal BAM/CRAM only | *(none — state is UNKNOWN)* | Ref-hom PL (DM model, naturally asymptotes) |
 
 In tumor-normal mode, state tags classify each variant by ALT allele
 presence across sample types. In normal-only mode, state classification
@@ -71,7 +71,7 @@ BQCD, MQCD) are the coverage-stable alternatives.
 | **Bounded by ceiling** | RMQ ([0, 60]), GQ ([0, 99]) |
 | **Raw counts (not for ML)** | GT, AD, ADF, ADR, DP, PL |
 
-The FORMAT column header is: `GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ`
+The FORMAT column header is: `GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ`
 
 | Field | Number | Type | Description | Range | Interpretation |
 |:------|:-------|:-----|:------------|:------|:---------------|
@@ -92,8 +92,9 @@ The FORMAT column header is: `GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQC
 | `SDFC` | 1 | Float | Site Depth Fold Change | [0, ∞) | DP / window mean coverage. >2 = possible paralog collapse. See [details](alignment_annotations.md#site-depth-fold-change-sdfc). |
 | `PRAD` | 1 | Float | Polar Radius | [0, ~3.5] | log10(1 + sqrt(AD_Ref² + AD_Alt²)). Coverage-invariant signal magnitude. See [details](polar_features.md#polar-radius-prad). |
 | `PANG` | 1 | Float | Polar Angle | [0, π/2] | atan2(AD_Alt, AD_Ref) in radians. 0 = hom REF, π/4 = het, π/2 = hom ALT. See [details](polar_features.md#polar-angle-pang). |
-| `PL` | G | Integer | Phred-scaled genotype likelihoods | [0, ∞) | Lower = more likely genotype. PL[0]=RR, PL[1]=RA, PL[2]=AA. **Scales with coverage** — the QUAL column provides coverage-normalized versions. |
-| `GQ` | 1 | Integer | Genotype quality | [0, 99] | Second-lowest PL, capped at 99. Reaches cap quickly at ≥30×; effectively coverage-stable above this threshold. |
+| `CMLOD` | A | Float | Continuous Mixture LOD | [0, ∞) | Per-ALT base-quality-weighted log-odds score. Integrates exact per-read base qualities into a K-dimensional mixture model comparing the MLE frequency vs. a null hypothesis. See [details](variant_discovery_genotyping.md#continuous-mixture-log-odds-cmlod). |
+| `PL` | G | Integer | Phred-scaled genotype likelihoods | [0, ∞) | Lower = more likely genotype. Computed via the Dirichlet-Multinomial model — PLs plateau at high depth due to overdispersion. PL[0]=RR, PL[1]=RA, PL[2]=AA. |
+| `GQ` | 1 | Integer | Genotype quality | [0, 99] | Second-lowest DM PL, capped at 99. Reaches cap quickly at ≥30×; effectively coverage-stable above this threshold. |
 
 ### QUAL Column
 
@@ -106,9 +107,10 @@ The VCF QUAL field depends on operating mode:
   measures effect size, not statistical significance. Range: [0, ~10].
   `QUAL > 4` = strong somatic evidence at any coverage.
 
-- **Normal-Only mode**: Per-read evidence against hom-REF, computed as
-  `min(max(PL[0]/DP per sample), 100.00)`. Somewhat coverage-invariant:
-  Takes the maximum across samples (strongest evidence wins).
+- **Normal-Only mode**: Ref-hom PL directly (PL[0/0] from the DM model).
+  The Dirichlet-Multinomial overdispersion parameter causes PLs to asymptote
+  naturally at high depth — no artificial capping or depth-normalization is
+  needed. Takes the maximum across samples (strongest evidence wins).
 
 ---
 

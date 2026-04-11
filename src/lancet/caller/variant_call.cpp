@@ -102,27 +102,28 @@ void VariantCall::Finalize(SupportArray const& evidence, Samples samps, FeatureF
 // ============================================================================
 // BuildFormatFields: per-sample FORMAT strings and site quality.
 //
-// FORMAT: GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ
+// FORMAT: GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ
 //
-//   GT   - Genotype derived from minimum PL
-//   AD   - Number=R: allele depths (REF, ALT1, ALT2, ...)
-//   ADF  - Number=R: forward strand allele depths
-//   ADR  - Number=R: reverse strand allele depths
-//   DP   - Total depth
-//   RMQ  - Number=R: RMS mapping quality per allele
-//   NPBQ - Number=R: normalized posterior base quality per allele (PBQ/N)
-//   SB   - Number=1: Strand bias log odds ratio (Haldane-corrected)
-//   SCA  - Number=1: Soft Clip Asymmetry (ALT - REF soft-clip fraction)
-//   FLD  - Number=1: Fragment Length Delta (|mean ALT isize - mean REF isize|)
-//   RPCD - Number=1: Read Position Cohen's D (folded position effect size)
-//   BQCD - Number=1: Base Quality Cohen's D (base quality effect size)
-//   MQCD - Number=1: Mapping Quality Cohen's D (MAPQ effect size)
-//   ASMD - Number=1: Allele-Specific Mismatch Delta (mean ALT NM - mean REF NM)
-//   SDFC - Number=1: Site Depth Fold Change (DP / window mean coverage)
-//   PRAD - Number=1: Polar Radius log10(1 + sqrt(AD_Ref² + AD_Alt²))
-//   PANG - Number=1: Polar Angle atan2(AD_Alt, AD_Ref) in radians
-//   PL   - Number=G: Phred-scaled genotype likelihoods
-//   GQ   - Genotype quality (GATK: second-lowest PL, capped at 99)
+//   GT    - Genotype derived from minimum PL
+//   AD    - Number=R: allele depths (REF, ALT1, ALT2, ...)
+//   ADF   - Number=R: forward strand allele depths
+//   ADR   - Number=R: reverse strand allele depths
+//   DP    - Total depth
+//   RMQ   - Number=R: RMS mapping quality per allele
+//   NPBQ  - Number=R: normalized posterior base quality per allele (PBQ/N)
+//   SB    - Number=1: Strand bias log odds ratio (Haldane-corrected)
+//   SCA   - Number=1: Soft Clip Asymmetry (ALT - REF soft-clip fraction)
+//   FLD   - Number=1: Fragment Length Delta (|mean ALT isize - mean REF isize|)
+//   RPCD  - Number=1: Read Position Cohen's D (folded position effect size)
+//   BQCD  - Number=1: Base Quality Cohen's D (base quality effect size)
+//   MQCD  - Number=1: Mapping Quality Cohen's D (MAPQ effect size)
+//   ASMD  - Number=1: Allele-Specific Mismatch Delta (mean ALT NM - mean REF NM)
+//   SDFC  - Number=1: Site Depth Fold Change (DP / window mean coverage)
+//   PRAD  - Number=1: Polar Radius log10(1 + sqrt(AD_Ref² + AD_Alt²))
+//   PANG  - Number=1: Polar Angle atan2(AD_Alt, AD_Ref) in radians
+//   CMLOD - Number=A: Continuous Mixture LOD per ALT (quality-weighted)
+//   PL    - Number=G: Phred-scaled genotype likelihoods (Dirichlet-Multinomial)
+//   GQ    - Genotype quality (second-lowest PL from Dirichlet-Multinomial, capped at 99)
 // ============================================================================
 void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
                                     bool const tumor_normal_mode) {
@@ -163,11 +164,17 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     sample.mSiteDepthFoldChange = static_cast<f32>(SiteDepthFoldChange());
 
     // Polar coordinate features for ML variant classification
-    // PRAD/PANG orthogonalize allele identity from depth (see polar_coords.h)
+    // PRAD/PANG separate allele identity from depth (see polar_coords.h)
     auto const ad_ref = static_cast<f64>(support->TotalRefCov());
     auto const ad_alt = static_cast<f64>(support->TotalAltCov());
     sample.mPolarRadius = static_cast<f32>(base::PolarRadius(ad_ref, ad_alt));
     sample.mPolarAngle = static_cast<f32>(base::PolarAngle(ad_alt, ad_ref));
+
+    // Continuous Mixture LOD scores (CMLOD FORMAT field)
+    auto const cmlod_scores = support->ComputeContinuousMixtureLods();
+    sample.mContinuousMixtureLods.reserve(cmlod_scores.size());
+    sample.mContinuousMixtureLods.insert(sample.mContinuousMixtureLods.end(), cmlod_scores.cbegin(),
+                                         cmlod_scores.cend());
 
     sample.mPhredLikelihoods = pls;
     mSampleGenotypes.push_back(std::move(sample));
@@ -230,19 +237,34 @@ void VariantCall::AssignGenotype(SampleGenotypeData& sample, absl::Span<int cons
   sample.mGenotypeIndices = {static_cast<i16>(aidx), static_cast<i16>(jdx)};
 }
 
-void VariantCall::UpdateSiteQuality(core::SampleInfo const& sinfo, VariantSupport const* support,
+// ============================================================================
+// UpdateSiteQuality
+//
+// With DM-based PLs, the ref-hom PL naturally asymptotes at high depth
+// (overdispersion absorbs correlated errors). The legacy `PL / SAMPLE_DP`
+// normalization hack is fully deprecated — no artificial cap is needed.
+//
+// Germline mode: QUAL = ref-hom PL (PL[0/0]).
+//   Directly measures confidence that the site is non-reference.
+//   DM PLs asymptote via overdispersion — no artificial cap needed.
+//
+// Somatic mode:  QUAL = Somatic Log Odds Ratio (SOLOR).
+//   Coverage-invariant tumor-vs-normal enrichment metric.
+// ============================================================================
+void VariantCall::UpdateSiteQuality(core::SampleInfo const& sinfo,
+                                    [[maybe_unused]] VariantSupport const* support,
                                     SupportArray const& evidence, Samples samps,
                                     bool tumor_normal_mode, absl::Span<int const> pls) {
-  auto const somatic_lor = tumor_normal_mode ? SomaticLogOddsRatio(sinfo, evidence, samps) : 0.0;
-  auto const ref_hom_pl = pls.empty() ? 0 : pls[0];
-  auto const sample_dp = support->TotalSampleCov();
-  f64 per_read_qual = 0.0;
-  if (!pls.empty() && sample_dp > 0) {
-    per_read_qual = static_cast<f64>(ref_hom_pl) / static_cast<f64>(sample_dp);
-    per_read_qual = std::min(per_read_qual, 100.0);
+  if (tumor_normal_mode) {
+    auto const somatic_lor = SomaticLogOddsRatio(sinfo, evidence, samps);
+    mSiteQuality = std::max(mSiteQuality, somatic_lor);
+  } else {
+    // Ref-hom PL (index 0) = confidence the site is non-reference.
+    // DM PLs asymptote via overdispersion — no artificial cap needed.
+    auto const ref_hom_pl = pls.empty() ? 0 : pls[0];
+    auto const germline_qual = static_cast<f64>(ref_hom_pl);
+    mSiteQuality = std::max(mSiteQuality, germline_qual);
   }
-
-  mSiteQuality = std::max(mSiteQuality, tumor_normal_mode ? somatic_lor : per_read_qual);
 }
 
 // ============================================================================
@@ -410,7 +432,7 @@ auto VariantCall::AsVcfRecord() const -> std::string {
   std::vector<std::string> format_strings;
   format_strings.reserve(mSampleGenotypes.size() + 1);
   format_strings.emplace_back(
-      "GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ");
+      "GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ");
 
   for (auto const& sample : mSampleGenotypes) {
     format_strings.push_back(sample.RenderVcfString());
@@ -425,7 +447,7 @@ auto VariantCall::AsVcfRecord() const -> std::string {
 
 auto VariantCall::SampleGenotypeData::RenderVcfString() const -> std::string {
   if (mIsMissingSupport) {
-    return "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.";
+    return "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.";
   }
 
   auto const gt_str = (mGenotypeIndices.first == -1 && mGenotypeIndices.second == -1)
@@ -438,23 +460,36 @@ auto VariantCall::SampleGenotypeData::RenderVcfString() const -> std::string {
     absl::StrAppendFormat(out, "%.1F", val);
   };
 
+  auto const format_f64 = [](std::string* out, f64 const val) {
+    absl::StrAppendFormat(out, "%.4F", val);
+  };
+
   auto const ad_str = absl::StrJoin(mAlleleDepths, ",");
   auto const adf_str = absl::StrJoin(mFwdAlleleDepths, ",");
   auto const adr_str = absl::StrJoin(mRevAlleleDepths, ",");
   auto const rmq_str = absl::StrJoin(mRmsMappingQualities, ",", format_f32);
   auto const npbq_str = absl::StrJoin(mNormPosteriorBQs, ",", format_f32);
 
+  // CMLOD: Number=A — strip index 0 (REF LOD = 0.0 by definition), emit only ALT LODs
+  auto const cmlod_str = mContinuousMixtureLods.empty()
+                             ? std::string(".")
+                             : absl::StrJoin(mContinuousMixtureLods.begin() + 1,
+                                             mContinuousMixtureLods.end(), ",", format_f64);
+
   // clang-format off
   return fmt::format(
       "{GT}:{AD}:{ADF}:{ADR}:{DP}:{RMQ}:{NPBQ}:{SB:.3F}:{SCA:.4F}:{FLD:.1F}:{RPCD:.4F}:"
-      "{BQCD:.4F}:{MQCD:.4F}:{ASMD:.3F}:{SDFC:.2F}:{PRAD:.4F}:{PANG:.4F}:{PL}:{GQ}",
-      fmt::arg("GT",   gt_str),           fmt::arg("AD",   ad_str),               fmt::arg("ADF",  adf_str),
-      fmt::arg("ADR",  adr_str),          fmt::arg("DP",   mTotalDepth),          fmt::arg("RMQ",  rmq_str),
-      fmt::arg("NPBQ", npbq_str),         fmt::arg("SB",   mStrandBias),          fmt::arg("SCA",  mSoftClipAsym),
-      fmt::arg("FLD",  mFragLenDelta),    fmt::arg("RPCD", mReadPosCohenD),       fmt::arg("BQCD", mBaseQualCohenD),
-      fmt::arg("MQCD", mMapQualCohenD),   fmt::arg("ASMD", mAlleleMismatchDelta), fmt::arg("SDFC", mSiteDepthFoldChange),
-      fmt::arg("PRAD", mPolarRadius),     fmt::arg("PANG", mPolarAngle),          fmt::arg("PL",   pl_str),
-      fmt::arg("GQ",   mGenotypeQuality));
+      "{BQCD:.4F}:{MQCD:.4F}:{ASMD:.3F}:{SDFC:.2F}:{PRAD:.4F}:{PANG:.4F}:{CMLOD}:{PL}:{GQ}",
+      fmt::arg("GT",    gt_str),           fmt::arg("AD",    ad_str),
+      fmt::arg("ADF",   adf_str),          fmt::arg("ADR",   adr_str),
+      fmt::arg("DP",    mTotalDepth),      fmt::arg("RMQ",   rmq_str),
+      fmt::arg("NPBQ",  npbq_str),         fmt::arg("SB",    mStrandBias),
+      fmt::arg("SCA",   mSoftClipAsym),    fmt::arg("FLD",   mFragLenDelta),
+      fmt::arg("RPCD",  mReadPosCohenD),   fmt::arg("BQCD",  mBaseQualCohenD),
+      fmt::arg("MQCD",  mMapQualCohenD),   fmt::arg("ASMD",  mAlleleMismatchDelta),
+      fmt::arg("SDFC",  mSiteDepthFoldChange), fmt::arg("PRAD",  mPolarRadius),
+      fmt::arg("PANG",  mPolarAngle),      fmt::arg("CMLOD", cmlod_str),
+      fmt::arg("PL",    pl_str),           fmt::arg("GQ",    mGenotypeQuality));
   // clang-format on
 }
 

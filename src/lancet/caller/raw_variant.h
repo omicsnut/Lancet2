@@ -106,7 +106,7 @@ class RawVariant {
   // allocations for very small multiallelic blocks (as most sites have 1 or 2 alts max).
   std::vector<AltAllele> mAlts;
 
-  // ── Graph complexity metrics (ML-ready orthogonal features) ────────────
+  // ── Graph complexity metrics (ML-ready independent features) ────────────
   // Populated when --enable-graph-complexity-features is set.
   // 3 fields matching the GRAPH_CX VCF INFO tag.
   //
@@ -115,7 +115,7 @@ class RawVariant {
   // topology. All three are coverage-stable above 20×.
   //
   // Raw topology metrics (CC, BP, EdgeDensity, UnitigRatio, CoverageCv) are
-  // mathematically collinear and compressed into the Graph Entanglement Index.
+  // mathematically correlated and compressed into the Graph Entanglement Index.
   // Color-based metrics (UnsharedColorRatio, ColorDiscordantBranches) are not
   // topological and are captured by other biologically relevant annotations.
   struct GraphMetrics {

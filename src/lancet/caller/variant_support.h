@@ -174,42 +174,81 @@ class VariantSupport {
   //   0.0 if either group is empty.
   [[nodiscard]] auto AlleleMismatchDelta() const -> f64;
 
-  // ── Multi-Allelic Genotype Likelihoods ──
+  // ── Multi-Allelic Genotype Likelihoods (Dirichlet-Multinomial Model) ──
 
   // Computes Phred-scaled genotype likelihoods (PLs) for all possible diploid
-  // genotypes at a multi-allelic site.
+  // genotypes at a multi-allelic site using the Dirichlet-Multinomial (DM)
+  // distribution instead of the standard per-read binomial model.
   //
-  // For k alleles (0=REF, 1..k-1=ALTs), there are k*(k+1)/2 diploid genotypes.
-  // Uses the standard GATK per-read likelihood model:
+  // Intuition: for each possible genotype (e.g., REF/REF, REF/ALT, ALT/ALT),
+  // the DM model asks "given what this genotype predicts about allele counts,
+  // how well do the observed read counts match?" Unlike the standard model
+  // which treats each read as an independent coin flip, the DM model accounts
+  // for the reality that reads from the same sequencing run share correlated
+  // errors — so adding more reads gives diminishing returns in confidence,
+  // preventing extreme PL values at ultra-high depth.
   //
-  //   P(read | GT=(a1,a2)) = 0.5 * P(read|a1) + 0.5 * P(read|a2)
-  //   P(read | allele_a) = (1-ε) if read matches allele a, else ε/(k-1)
+  // The DM model generalizes the overdispersed Beta-Binomial to K dimensions,
+  // naturally absorbing correlated sequencing errors at ultra-high depths
+  // (2500x+). PLs plateau organically — no depth-division clamping needed.
   //
-  // Genotypes are ordered per VCF 4.3 spec §1.6.2:
-  //   GL_index(i,j) = j*(j+1)/2 + i  where i ≤ j
+  // For K alleles (0=REF, 1..K-1=ALTs), there are K*(K+1)/2 diploid genotypes.
+  // For each genotype (a1, a2), expected allele fractions μ_i are:
+  //   Homozygous (a1==a2):  μ[a1] = 1 − ε,     μ[other] = ε/(K−1)
+  //   Heterozygous:         μ[a1] = μ[a2] = (1−ε)/2, μ[other] = ε/(K−1)
   //
-  // Returns: vector of k*(k+1)/2 normalized Phred-scaled likelihoods (min PL=0)
+  // DM log-likelihood with precision M = (1−ρ)/ρ and α_i = M × μ_i:
+  //   ln P(counts | μ, M) = lnΓ(Σα) − lnΓ(N + Σα) + Σ[lnΓ(c_i + α_i) − lnΓ(α_i)]
   //
-  // Coverage stability: PL values scale linearly with depth (each read adds
-  // ~Q30 evidence). Raw PL values should NOT be used as direct ML features.
-  // The QUAL column provides coverage-normalized alternatives.
+  // Genotypes ordered per VCF 4.3 spec §1.6.2:
+  //   GL_index(i,j) = j*(j+1)/2 + i   where i ≤ j
   //
-  // References:
-  //   - Li, H. (2011). "A statistical framework for SNP calling..."
-  //   - Poplin, R. et al. (2018). GATK HaplotypeCaller
-  //   - VCF 4.3 specification, Section 1.6.2 (GL index formula)
+  // Returns: vector of K*(K+1)/2 Phred-scaled likelihoods (best genotype PL=0).
+  //
+  // See docs/guides/variant_discovery_genotyping.md for the full DM derivation.
   [[nodiscard]] auto ComputePLs() const -> std::vector<int>;
 
   // Genotype Quality (GQ): confidence in the called genotype.
-  // Defined as the difference between the second-lowest and lowest PL values,
-  // capped at 99. Standard GATK convention.
-  //   GQ = second_min(PLs) - min(PLs)    [min is always 0 after normalization]
+  // Second-smallest PL value, capped at 99. Standard GATK convention.
+  //   GQ = second_min(PLs) − min(PLs)   [min is always 0 after normalization]
   //
-  // Coverage stability: GQ reaches the 99 cap quickly (≥30× for clean variants).
-  // Above this threshold, GQ is effectively stable. Below 20×, GQ may vary
-  // but remains bounded in [0, 99].
+  // Value now derives from DM-based PLs, which plateau at high depth.
   // See: https://gatk.broadinstitute.org/hc/en-us/articles/360035531692
   [[nodiscard]] static auto ComputeGQ(std::vector<int> const& pls) -> int;
+
+  // ── Continuous Mixture Log-Odds (CMLOD FORMAT field) ──
+
+  // Computes a per-ALT-allele Log-Odds score comparing the likelihood of the
+  // observed read pileup under the MLE allele fractions vs. a null hypothesis
+  // where the target ALT fraction is forced to zero.
+  //
+  // Intuition: CMLOD asks "is there any evidence this variant is real?" by
+  // comparing two stories about the data — one where the variant exists at
+  // its observed frequency, and one where it doesn't exist at all. Each
+  // read's vote is weighted by its sequencing quality: a high-quality Q40
+  // read is a strong vote (~4 points), while a noisy Q10 read barely counts
+  // (~0.5 points). A higher CMLOD means more confident evidence that the
+  // variant is real. This is especially useful for detecting low-frequency
+  // variants (e.g., 2–15% VAF) where the standard PL model — which only
+  // considers 0%, 50%, and 100% — cannot represent the true frequency.
+  //
+  // Unlike DM-based PLs (which evaluate discrete diploid genotype states), the
+  // CMLOD operates over continuous frequency space and integrates exact per-read
+  // base qualities. This separates Q40 reads from Q10 noise natively, solving
+  // the identifiability problem where count-based models can't distinguish a 2%
+  // true mosaic from a 2% systematic artifact.
+  //
+  // For each read assigned to allele s with error probability ε:
+  //   P(read | f) = Σ_t f[t] × P(read called as s | true origin = t)
+  //   P(s|t) = (1−ε) if s==t, else ε/(K−1)
+  //
+  //   CMLOD[alt] = max(0, LL(f_MLE) − LL(f_null))   (log10 scale)
+  //
+  // Returns: vector of K f64 values. Index 0 (REF) is always 0.0.
+  //          Index i>0 is the CMLOD for ALT allele i.
+  //
+  // See docs/guides/variant_discovery_genotyping.md for the full derivation.
+  [[nodiscard]] auto ComputeContinuousMixtureLods() const -> std::vector<f64>;
 
   // Copy allele data from `src` allele `src_allele` into `dst_allele` slot
   // in this object. Used for multi-allelic merging: each bi-allelic variant

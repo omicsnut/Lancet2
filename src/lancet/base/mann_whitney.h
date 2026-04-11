@@ -4,7 +4,21 @@
 // ============================================================================
 // Mann-Whitney U Test — Effect Size (Cohen's d analog)
 //
-// Provides a non-parametric effect size measure for whether two independent
+// In plain terms: this test asks "do the reads supporting the ALT allele
+// look systematically different from the reads supporting the REF allele?"
+// For example, if ALT reads consistently have lower mapping quality, the
+// test detects this bias. The result is a single number — the effect size —
+// that measures how large the difference is, independent of how many reads
+// you have. A value near 0 means "no difference"; a value near ±0.5
+// means "substantial, consistent difference."
+//
+// The Z/√N normalization is key: without it, the raw test score inflates
+// with more reads (at 2000×, even a trivial 0.5-unit quality difference
+// would look "highly significant"). Dividing by √N cancels this inflation,
+// giving the same effect size at 20× and 2000×.
+//
+// Provides a non-parametric (no assumption about the shape of the data
+// distribution) effect size measure for whether two independent
 // samples are drawn from the same distribution, derived from the standard
 // Mann-Whitney U test (Wilcoxon Rank-Sum Test).
 //

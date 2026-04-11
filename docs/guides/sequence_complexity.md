@@ -1,6 +1,6 @@
 # Sequence Complexity (`SEQ_CX`)
 
-This optional INFO field captures 11 orthogonal sequence complexity features
+This optional INFO field captures 11 independent sequence complexity features
 distilled from raw multi-scale metrics (homopolymer runs, Shannon entropy,
 LongdustQ k-mer concentration, tandem repeat motifs). It requires
 `--enable-sequence-complexity-features` to enable.
@@ -17,11 +17,13 @@ regardless of whether 20 or 2000 reads cover it.
 ## Design: Context vs. Perturbation Paradigm
 
 Raw sequence complexity metrics at multiple scales (±5/10/20/50/100bp, full
-haplotype) are highly collinear — HRun at ±5bp, ±10bp, and ±20bp are ~0.95
-correlated. Additive ML models (EBMs/GAMs) split importance weight across
+haplotype) are highly correlated — HRun at ±5bp, ±10bp, and ±20bp are ~0.95
+correlated. Additive ML models — such as EBMs (Explainable Boosting Machines,
+which learn one feature's effect at a time, then combine them) and GAMs
+(Generalized Additive Models) — split importance weight across
 correlated features, producing noisy shape functions instead of confident ones.
 
-The distillation separates metrics into three orthogonal groups:
+The distillation separates metrics into three independent groups:
 
 1. **Context** (REF-only): "How brittle is the genome here, regardless of the variant?"
 2. **Deltas** (ALT−REF): "How did the variant alter the local complexity?"
@@ -40,8 +42,8 @@ rescues the call.
 | Index | Field | Type | Range | Description |
 |:------|:------|:-----|:------|:------------|
 | 0 | ContextHRun | Integer | [0, ∞) | Max homopolymer run in REF ±20bp. A poly-A of length 12 means any 1bp INDEL within 20bp is a stutter candidate. |
-| 1 | ContextEntropy | Float | [0.0, 2.0] | Shannon entropy H = −Σ pᵢ log₂(pᵢ) in REF ±20bp. 0 = single base type (homopolymer), 2.0 = perfectly balanced ACGT. Low entropy ≈ low sequence diversity ≈ harder to map uniquely. |
-| 2 | ContextFlankLQ | Float | [0.0, ~1.6] | log₁p-squashed LongdustQ (k=4) in REF ±50bp. Captures microsatellite density at a scale where k-mer statistics are reliable. The log₁p transform compresses heavy tails (telomeric LQ > 4.0 → ~1.6). |
+| 1 | ContextEntropy | Float | [0.0, 2.0] | Shannon entropy H = −Σ pᵢ log₂(pᵢ) in REF ±20bp. Measures sequence diversity: 0 = all one base (like AAAAAAA), 2.0 = perfectly balanced ACGT. Low entropy = inherently harder to align uniquely. |
+| 2 | ContextFlankLQ | Float | [0.0, ~1.6] | log₁p-squashed LongdustQ (k=4) in REF ±50bp. LongdustQ is a k-mer concentration score: it counts how many short DNA words (k-mers) repeat more often than expected by chance. Higher values = more repetitive DNA = more likely to cause sequencing and assembly errors. The log₁p transform compresses heavy tails (telomeric LQ > 4.0 → ~1.6). |
 | 3 | ContextHaplotypeLQ | Float | [0.0, ~1.6] | log₁p-squashed LongdustQ (k=7) on full REF haplotype. Captures macro-scale repetitive structure of the assembled contig. Only REF because a 5bp INDEL changes < 0.5% of a 1000bp k-mer distribution. |
 
 ### B. Deltas (3 features — ALT minus REF)

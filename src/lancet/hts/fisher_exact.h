@@ -11,6 +11,16 @@ namespace lancet::hts {
 /// if there are nonrandom associations between two categorical variables,
 /// organized in a 2x2 contingency table.
 ///
+/// In plain terms: Fisher's test answers "is there a real association
+/// between two categories, or could the observed pattern have happened by
+/// chance?" For variant calling, it tests whether the variant appears more
+/// often in one group (e.g., tumor) than another (e.g., normal) beyond
+/// what random sampling would produce. Unlike approximate tests (e.g.,
+/// chi-squared), Fisher's test computes the exact probability by
+/// enumerating all possible arrangements of the data while keeping the
+/// row and column totals fixed — giving the correct p-value even with
+/// very small sample sizes (e.g., 3 reads).
+///
 /// It calculates the probability distribution of data as extreme (or more)
 /// under the null hypothesis that the variables are independent of each other.
 ///
