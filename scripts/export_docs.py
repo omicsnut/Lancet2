@@ -116,10 +116,14 @@ def make_anchor(title: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Image embedding: convert relative image paths to base64 data URIs
+# Image handling: embed as base64 or flatten to co-located filenames
 # ---------------------------------------------------------------------------
-def embed_images(content: str, source_dir: Path) -> str:
-    """Replace image references with inline base64 data URIs.
+def process_images(content: str, source_dir: Path, *, embed: bool,
+                   referenced: set[str] | None = None) -> str:
+    """Process image references in markdown content.
+
+    When embed=True:  replace with inline base64 data URIs (self-contained).
+    When embed=False: rewrite paths to flat filenames (assume co-located).
 
     Handles:
       ![alt](../assets/foo.png)
@@ -129,7 +133,6 @@ def embed_images(content: str, source_dir: Path) -> str:
     def replacer(m: re.Match) -> str:
         alt = m.group(1)
         raw_path = m.group(2)
-        attrs = m.group(3) or ""
 
         # Strip MkDocs Material URL fragments (#only-light, #only-dark)
         clean_path = raw_path.split("#")[0]
@@ -143,14 +146,20 @@ def embed_images(content: str, source_dir: Path) -> str:
             print(f"  ⚠ Image not found: {img_path}", file=sys.stderr)
             return m.group(0)
 
-        mime, _ = mimetypes.guess_type(str(img_path))
-        if mime is None:
-            mime = "application/octet-stream"
+        if embed:
+            mime, _ = mimetypes.guess_type(str(img_path))
+            if mime is None:
+                mime = "application/octet-stream"
+            data = base64.b64encode(img_path.read_bytes()).decode("ascii")
+            return f"![{alt}](data:{mime};base64,{data})"
 
-        data = base64.b64encode(img_path.read_bytes()).decode("ascii")
-        # Skip MkDocs Material { attrs } — they don't work in vanilla markdown
-        return f"![{alt}](data:{mime};base64,{data})"
+        # Flatten: use just the filename, track for manifest
+        filename = img_path.name
+        if referenced is not None:
+            referenced.add(str(img_path))
+        return f"![{alt}]({filename})"
 
+    # Strip MkDocs Material { attrs } — they don't work in vanilla markdown
     return re.sub(r"!\[(.*?)\]\((.*?)\)(\{.*?\})?", replacer, content)
 
 
@@ -205,11 +214,15 @@ def rewrite_internal_links(content: str, file_map: dict[str, str]) -> str:
     return re.sub(r"\[(.*?)\]\((.*?)\)", replacer, content)
 
 
-def build_document(entries: list[NavEntry]) -> str:
-    """Assemble the combined markdown document from nav entries."""
+def build_document(entries: list[NavEntry], *, embed_images: bool = True) -> tuple[str, set[str]]:
+    """Assemble the combined markdown document from nav entries.
+
+    Returns (document_text, set_of_referenced_image_absolute_paths).
+    """
     parts: list[str] = []
     version = get_version_info()
     file_map = build_file_to_title_map(entries)
+    referenced_images: set[str] = set()
 
     # Title page
     parts.append("# Lancet2 — Complete Documentation\n")
@@ -241,8 +254,9 @@ def build_document(entries: list[NavEntry]) -> str:
         raw = src.read_text(encoding="utf-8")
         content = strip_frontmatter(raw)
 
-        # Embed images as base64 (resolve relative to the source file's directory)
-        content = embed_images(content, src.parent)
+        # Process images (embed as base64 or flatten to co-located filenames)
+        content = process_images(content, src.parent, embed=embed_images,
+                                 referenced=referenced_images)
 
         # Rewrite internal .md links to #anchors
         content = rewrite_internal_links(content, file_map)
@@ -260,13 +274,16 @@ def build_document(entries: list[NavEntry]) -> str:
         parts.append(bumped)
         parts.append("")
 
-    return "\n".join(parts)
+    return "\n".join(parts), referenced_images
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export Lancet2 docs to a single Markdown file")
     parser.add_argument("-o", "--output", default=None,
                         help="Output file path (default: stdout)")
+    parser.add_argument("--no-embed-images", action="store_true",
+                        help="Don't embed images as base64. Instead, rewrite paths to flat "
+                             "filenames and print the required image manifest to stderr.")
     args = parser.parse_args()
 
     if not MKDOCS_YML.exists():
@@ -280,7 +297,7 @@ def main() -> None:
         sys.exit("No 'nav' key found in mkdocs.yml")
 
     entries = parse_nav(nav_list)
-    document = build_document(entries)
+    document, referenced = build_document(entries, embed_images=not args.no_embed_images)
 
     if args.output:
         output_path = Path(args.output)
@@ -289,6 +306,11 @@ def main() -> None:
         print(f"✓ Written {output_path.name} ({size_kb:.0f} KB, {len(entries)} sections)", file=sys.stderr)
     else:
         sys.stdout.write(document)
+
+    if args.no_embed_images and referenced:
+        print(f"\n📎 {len(referenced)} image(s) expected in the same directory as the markdown file:", file=sys.stderr)
+        for img in sorted(referenced):
+            print(f"   {img}", file=sys.stderr)
 
 
 if __name__ == "__main__":
