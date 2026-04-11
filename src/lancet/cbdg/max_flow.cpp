@@ -41,10 +41,12 @@ auto MaxFlow::ReconstructWalk(std::vector<WalkTreeNode> const& arena, u32 const 
     -> Walk {
   Walk edges;
   u32 idx = leaf_idx;
+
   while (idx != TraversalIndex::NO_PARENT) {
     edges.push_back(mIndex->mOrigEdges[arena[idx].mEdgeOrdinal]);
     idx = arena[idx].mParentIdx;
   }
+
   std::ranges::reverse(edges);
   return edges;
 }
@@ -166,9 +168,7 @@ auto MaxFlow::NextPath() -> Result {
 
   while (!frontier.empty()) {
     nvisits++;
-    if (nvisits > Graph::DEFAULT_GRAPH_TRAVERSAL_LIMIT) {
-      break;
-    }
+    if (nvisits > Graph::DEFAULT_GRAPH_TRAVERSAL_LIMIT) break;
 
     u32 const arena_idx = frontier.front();
     frontier.pop_front();
@@ -176,9 +176,8 @@ auto MaxFlow::NextPath() -> Result {
 
     // --- Sink reached: check if this walk has any new edges ---
     if (mIndex->IsSinkState(node.mDstState)) {
-      if (node.mScore == 0) {
-        continue;  // Only traversed edges → skip this walk
-      }
+      // Only traversed edges → skip this walk
+      if (node.mScore == 0) continue;
 
       // Accept first walk with score > 0. Because BFS explores by path length,
       // and we natively rank branches descending by Read Support coverage locally,
@@ -198,6 +197,7 @@ auto MaxFlow::NextPath() -> Result {
   // Walk the arena parent chain to collect ordinals directly — no linear scan.
   Walk const path = ReconstructWalk(arena, *best_leaf);
   u32 mark_idx = *best_leaf;
+
   while (mark_idx != TraversalIndex::NO_PARENT) {
     mTraversedOrdinals.insert(arena[mark_idx].mEdgeOrdinal);
     mark_idx = arena[mark_idx].mParentIdx;
@@ -227,9 +227,7 @@ void MaxFlow::EnqueueOutgoingEdges(u32 const state_idx, u32 const parent_ai, u32
                                    std::vector<WalkTreeNode>& arena,
                                    absl::chunked_queue<u32, 256, 1024>& frontier) const {
   auto const& range = mIndex->mAdjRanges[state_idx];
-  if (range.mCount == 0) {
-    return;
-  }
+  if (range.mCount == 0) return;
 
   // Materialize edges into stack array to sort them by destination read support
   absl::InlinedVector<TraversalIndex::OutEdge, 8> out_edges;
@@ -238,26 +236,25 @@ void MaxFlow::EnqueueOutgoingEdges(u32 const state_idx, u32 const parent_ai, u32
     out_edges.push_back(mIndex->mAdjList[range.mStart + i]);
   }
 
-  // Sort edges descending by the destination node's TotalReadSupport to organically traverse
-  // high-confidence paths first
-  std::ranges::sort(
-      out_edges,
-      [this](TraversalIndex::OutEdge const& lhs, TraversalIndex::OutEdge const& rhs) -> bool {
-        auto const lhs_cov =
-            this->mIndex->mNodes[TraversalIndex::NodeIdxOf(lhs.mDstState)]->TotalReadSupport();
-        auto const rhs_cov =
-            this->mIndex->mNodes[TraversalIndex::NodeIdxOf(rhs.mDstState)]->TotalReadSupport();
-        return lhs_cov > rhs_cov;
-      });
+  auto const pred = [&](TraversalIndex::OutEdge const& lhs,
+                        TraversalIndex::OutEdge const& rhs) -> bool {
+    auto const lhs_dst_nidx = TraversalIndex::NodeIdxOf(lhs.mDstState);
+    auto const rhs_dst_nidx = TraversalIndex::NodeIdxOf(rhs.mDstState);
+    auto const lhs_cov = this->mIndex->mNodes[lhs_dst_nidx]->TotalReadSupport();
+    auto const rhs_cov = this->mIndex->mNodes[rhs_dst_nidx]->TotalReadSupport();
+    return lhs_cov > rhs_cov;
+  };
+
+  // Sort edges descending by the destination node's TotalReadSupport
+  // to organically traverse high-confidence paths first
+  std::ranges::sort(out_edges, pred);
 
   // Pass 1: untraversed edges (high priority — extend walk score)
   for (auto const& out : out_edges) {
-    if (mTraversedOrdinals.contains(out.mEdgeOrdinal)) {
-      continue;
-    }
+    if (mTraversedOrdinals.contains(out.mEdgeOrdinal)) continue;
 
-    // For source edges, parent_score is technically 0, but since this edge is untraversed, score
-    // is 1.
+    // For source edges, parent_score is technically 0,
+    // but since this edge is untraversed, score becomes 1.
     auto const child_ai = static_cast<u32>(arena.size());
     arena.emplace_back(out.mEdgeOrdinal, out.mDstState, parent_ai, parent_score + 1);
     frontier.push_back(child_ai);
@@ -265,9 +262,7 @@ void MaxFlow::EnqueueOutgoingEdges(u32 const state_idx, u32 const parent_ai, u32
 
   // Pass 2: already-traversed edges (low priority — no score increase)
   for (auto const& out : out_edges) {
-    if (!mTraversedOrdinals.contains(out.mEdgeOrdinal)) {
-      continue;
-    }
+    if (!mTraversedOrdinals.contains(out.mEdgeOrdinal)) continue;
 
     auto const child_ai = static_cast<u32>(arena.size());
     arena.emplace_back(out.mEdgeOrdinal, out.mDstState, parent_ai, parent_score);

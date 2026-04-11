@@ -134,26 +134,29 @@ class VariantBubble {
   // participating alleles simultaneously. You cannot over-trim the REF if one strict ALT block
   // needs bounding anchor integrity (e.g. an Indel becoming empty).
   void NormalizeVcfParsimony() {
-    if (mAltAllelesToHaps.empty() || mRefAllele.empty()) {
-      return;
-    }
+    if (mAltAllelesToHaps.empty() || mRefAllele.empty()) return;
+
+    static constexpr auto CAN_MATCH_RIGHT = [](std::string_view refseq,
+                                               std::string_view altseq) -> bool {
+      return altseq.length() > 1 && altseq.back() == refseq.back();
+    };
+
+    static constexpr auto CAN_MATCH_LEFT = [](std::string_view refseq,
+                                              std::string_view altseq) -> bool {
+      return altseq.length() > 1 && altseq.front() == refseq.front();
+    };
+
+    static constexpr auto DO_TRIM_RIGHT = [](std::string& tseq) -> void { tseq.pop_back(); };
+    static constexpr auto DO_TRIM_LEFT = [](std::string& tseq) -> void { tseq.erase(0, 1); };
 
     // Right Trim (eg. REF: "ATCG", ALTS: ["ACCG", "AGGG"] => "ATC", ["ACC", "AGG"])
-    // Erases rightward bloat first allowing indels to left-align against leftward structural
-    // boundaries.
-    ApplyUnifiedTrim(
-        [](std::string_view rseq, std::string_view aseq) -> bool {
-          return aseq.length() > 1 && aseq.back() == rseq.back();
-        },
-        [](std::string& tseq) -> void { tseq.pop_back(); });
+    // Erases rightward bloat first allowing indels to
+    // left-align against leftward structural boundaries.
+    ApplyUnifiedTrim(CAN_MATCH_RIGHT, DO_TRIM_RIGHT);
 
-    // Left Trim (e.g. REF: "TTC", ALTS: ["TGC"] => "TC", ["GC"])
     usize const initial_ref_len = mRefAllele.length();
-    ApplyUnifiedTrim(
-        [](std::string_view rseq, std::string_view aseq) -> bool {
-          return aseq.length() > 1 && aseq.front() == rseq.front();
-        },
-        [](std::string& tseq) -> void { tseq.erase(0, 1); });
+    // Left Trim (e.g. REF: "TTC", ALTS: ["TGC"] => "TC", ["GC"])
+    ApplyUnifiedTrim(CAN_MATCH_LEFT, DO_TRIM_LEFT);
 
     // Correcting Start Pos! Every left character dropped dynamically sweeps Genomic Start `+1`.
     mGenomeStartPos += (initial_ref_len - mRefAllele.length());
@@ -167,24 +170,17 @@ class VariantBubble {
   void ApplyUnifiedTrim(CanTrimFunc can_trim, DoTrimFunc do_trim) {
     // Guard ensuring bounding box doesn't evaporate completely!
     while (mRefAllele.length() > 1) {
-      bool unanimously_shared = true;
       std::string_view const ref_view(mRefAllele);
 
-      // NOLINTNEXTLINE(readability-identifier-length)
-      for (auto const& [alt_seq, _] : mAltAllelesToHaps) {
-        if (!can_trim(ref_view, std::string_view(alt_seq))) {
-          unanimously_shared = false;
-          // Any deviation stops the trimming
-          // completely across ALL alleles globally
-          break;
-        }
-      }
+      // Any deviation stops the trimming completely across ALL alleles globally
+      bool const is_trimmable = std::ranges::all_of(mAltAllelesToHaps, [&](auto const& pair) {
+        return can_trim(ref_view, std::string_view(pair.first));
+      });
 
-      if (!unanimously_shared) {
-        break;
-      }
+      if (!is_trimmable) break;
 
-      // Once verified unconditionally, physically mutate all tracking memories uniformly
+      // Once verified unconditionally, physically
+      // mutate all tracking memories uniformly
       do_trim(mRefAllele);
 
       // Flat Hash Maps utilize const `Keys` protecting structural hash-index legitimacy.
@@ -192,10 +188,12 @@ class VariantBubble {
       // hashmap natively and populate it exploiting `std::move` to skip memory reallocations
       // of the heavy `std::vector<usize>` properties!
       absl::flat_hash_map<std::string, std::vector<usize>> rehashed_map;
+      rehashed_map.reserve(mAltAllelesToHaps.size());
+
       for (auto& [alt_seq, haps] : mAltAllelesToHaps) {
         std::string new_alt = alt_seq;
         do_trim(new_alt);
-        rehashed_map[std::move(new_alt)] = std::move(haps);
+        rehashed_map.try_emplace(std::move(new_alt), std::move(haps));
       }
 
       mAltAllelesToHaps = std::move(rehashed_map);
@@ -240,6 +238,7 @@ class VariantExtractor {
     // Instantiate graph memory maps matching natively biological pathways.
     mActivePtrs.assign(mNumSeqs, nullptr);
     mNodeToRank.assign(mGraph.nodes().size(), std::numeric_limits<u32>::max());
+
     for (u32 rank = 0; rank < topological_order.size(); ++rank) {
       mNodeToRank[topological_order[rank]->id] = rank;
     }
@@ -413,11 +412,8 @@ class VariantExtractor {
   [[nodiscard]] auto FindLowestActiveRank() const -> u32 {
     u32 min_rank = std::numeric_limits<u32>::max();
     for (auto const* nptr : mActivePtrs) {
-      if (nptr != nullptr) {
-        min_rank = std::min(min_rank, mNodeToRank.at(nptr->id));
-      }
+      if (nptr != nullptr) min_rank = std::min(min_rank, mNodeToRank.at(nptr->id));
     }
-
     return min_rank;
   }
 

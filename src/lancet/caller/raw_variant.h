@@ -119,11 +119,12 @@ class RawVariant {
   // Color-based metrics (UnsharedColorRatio, ColorDiscordantBranches) are not
   // topological and are captured by other biologically relevant annotations.
   struct GraphMetrics {
-    f64 mGraphEntanglementIndex = 0.0;  ///< GEI: log₁₀(1 + CC×BP×CovCV / UnitigRatio)
-    f64 mTipToPathCovRatio =
-        0.0;  ///< assembly tearing: tip cov / unitig cov (ratio, self-normalizing)
-    usize mMaxSingleDirDegree =
-        0;  ///< hub k-mer detection: max outgoing edges (topology, invariant)
+    /// GEI: log₁₀(1 + CC×BP×CovCV / UnitigRatio)
+    f64 mGraphEntanglementIndex = 0.0;
+    /// assembly tearing: tip cov / unitig cov (ratio, self-normalizing)
+    f64 mTipToPathCovRatio = 0.0;
+    /// hub k-mer detection: max outgoing edges (topology, invariant)
+    usize mMaxSingleDirDegree = 0;
 
     /// Format as 3 comma-separated values for VCF GRAPH_CX INFO tag.
     [[nodiscard]] auto FormatVcfValue() const -> std::string {
@@ -176,10 +177,13 @@ class RawVariant {
   friend auto operator!=(RawVariant const& lhs, RawVariant const& rhs) -> bool {
     return !(rhs == lhs);
   }
+
   friend auto operator>(RawVariant const& lhs, RawVariant const& rhs) -> bool { return rhs < lhs; }
+
   friend auto operator<=(RawVariant const& lhs, RawVariant const& rhs) -> bool {
     return !(rhs < lhs);
   }
+
   friend auto operator>=(RawVariant const& lhs, RawVariant const& rhs) -> bool {
     return !(lhs < rhs);
   }
@@ -224,6 +228,7 @@ class RawVariant {
 // =========================================================================================
 inline auto RawVariant::ClassifyVariant(std::string_view ref, std::string_view alt) -> Type {
   usize start_match = 0;
+
   while (start_match < ref.length() &&
          start_match < alt.length() &&
          ref[start_match] == alt[start_match]) {
@@ -234,8 +239,8 @@ inline auto RawVariant::ClassifyVariant(std::string_view ref, std::string_view a
     return Type::REF;
   }
 
-  usize end_match =
-      0;  // Ensures bounding pointers do not violently overlap or double-count characters
+  // Ensures bounding pointers do not violently overlap or double-count characters
+  usize end_match = 0;
   while (end_match < (ref.length() - start_match) &&
          end_match < (alt.length() - start_match) &&
          ref[ref.length() - 1 - end_match] == alt[alt.length() - 1 - end_match]) {
@@ -245,19 +250,15 @@ inline auto RawVariant::ClassifyVariant(std::string_view ref, std::string_view a
   auto const ref_core_len = ref.length() - start_match - end_match;
   auto const alt_core_len = alt.length() - start_match - end_match;
 
-  if (ref_core_len == 0 && alt_core_len > 0) {
-    return Type::INS;
-  }
-  if (ref_core_len > 0 && alt_core_len == 0) {
-    return Type::DEL;
-  }
-  if (ref_core_len > 0 && alt_core_len > 0) {
-    if (ref_core_len == alt_core_len) {
-      return (ref_core_len == 1) ? Type::SNV : Type::MNP;
-    }
-    return Type::CPX;  // Mixed/Complex concurrent insertion and deletion architectures
-  }
-  return Type::REF;
+  if (ref_core_len == 0 && alt_core_len > 0) return Type::INS;
+  if (ref_core_len > 0 && alt_core_len == 0) return Type::DEL;
+  if (ref_core_len == 0 || alt_core_len == 0) return Type::REF;
+
+  // Mixed/Complex concurrent INS/DEL architectures
+  if (ref_core_len != alt_core_len) return Type::CPX;
+
+  // SNV/MNP architectures
+  return (ref_core_len == 1) ? Type::SNV : Type::MNP;
 }
 
 }  // namespace lancet::caller

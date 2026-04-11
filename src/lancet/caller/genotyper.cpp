@@ -36,54 +36,67 @@ constexpr int SCORING_MATCH = 1;
 constexpr int SCORING_MISMATCH = 4;
 constexpr int SCORING_GAP_OPEN = 12;
 constexpr int SCORING_GAP_EXTEND = 3;
-constexpr i8 ALPHABET_SIZE = 5;
 
-// 5×5 scoring matrix for ComputeLocalScore: A=0, C=1, G=2, T=3, N=4
-constexpr auto MakeScoringMatrix() -> std::array<i8, 25> {
-  std::array<i8, 25> mat{};
-  for (i8 i = 0; i < ALPHABET_SIZE; ++i) {
-    for (i8 j = 0; j < ALPHABET_SIZE; ++j) {
-      if (i == ALPHABET_SIZE - 1 || j == ALPHABET_SIZE - 1) {
-        mat[(i * ALPHABET_SIZE) + j] = 0;
-      } else {
-        mat[(i * ALPHABET_SIZE) + j] =
-            (i == j) ? static_cast<i8>(SCORING_MATCH) : static_cast<i8>(-SCORING_MISMATCH);
-      }
-    }
-  }
-  return mat;
-}
+// clang-format off
+// ┌───────────────────────────────────────────────┐
+// │ 5×5 Scoring Matrix for ComputeLocalScore      │
+// │ Target (R) × Query (C) | A=0 C=1 G=2 T=3 N=4  │
+// ├───────┬───────┬───────┬───────┬───────┬───────┤
+// │       │  A(0) │  C(1) │  G(2) │  T(3) │  N(4) │
+// ├───────┼───────┼───────┼───────┼───────┼───────┤
+// │  A(0) │    1  │   -4  │   -4  │   -4  │    0  │
+// │  C(1) │   -4  │    1  │   -4  │   -4  │    0  │
+// │  G(2) │   -4  │   -4  │    1  │   -4  │    0  │
+// │  T(3) │   -4  │   -4  │   -4  │    1  │    0  │
+// │  N(4) │    0  │    0  │    0  │    0  │    0  │
+// └───────┴───────┴───────┴───────┴───────┴───────┘
+constexpr std::array<i8, 25> SCORING_MATRIX = {
+     1, -4, -4, -4,  0,
+    -4,  1, -4, -4,  0,
+    -4, -4,  1, -4,  0,
+    -4, -4, -4,  1,  0,
+     0,  0,  0,  0,  0
+};
 
-constexpr std::array<i8, 25> SCORING_MATRIX = MakeScoringMatrix();
-
-// ASCII → numeric base encoding: A/a→0, C/c→1, G/g→2, T/t→3, else→4 (N)
-constexpr auto MakeEncodingTable() -> std::array<u8, 256> {
-  std::array<u8, 256> tbl{};
-  for (auto& val : tbl) {
-    val = 4;
-  }
-  tbl['A'] = 0;
-  tbl['a'] = 0;
-  tbl['C'] = 1;
-  tbl['c'] = 1;
-  tbl['G'] = 2;
-  tbl['g'] = 2;
-  tbl['T'] = 3;
-  tbl['t'] = 3;
-  return tbl;
-}
-
-constexpr std::array<u8, 256> ENCODE_TABLE = MakeEncodingTable();
+// ┌─────────────────────────────────────────────────────────────┐
+// │ ASCII → Numeric Base Encoding Table                         │
+// │ A/a → 0, C/c → 1, G/g → 2, T/t → 3, everything else → 4 (N) │
+// │ Layout: 256 bytes total (16 rows × 16 hex columns)          │
+// └─────────────────────────────────────────────────────────────┘
+constexpr std::array<u8, 256> ENCODE_TABLE = {
+    // 0x0_ (NUL .. SI)
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x1_ (DLE .. US)
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x2_ (SP .. /)
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x3_ (0 .. ?)
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x4_ (@ A B C D E F G H I J K L M N O)
+    4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x5_ (P Q R S T U V W X Y Z [ \ ] ^ _)
+    4, 4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x6_ (` a b c d e f g h i j k l m n o)
+    4, 0, 4, 1, 4, 4, 4, 2, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x7_ (p q r s t u v w x y z { | } ~ DEL)
+    4, 4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    // 0x8_ - 0xF_ (Extended ASCII blocks / unused)
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+    4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4,
+};
+// clang-format on
 
 // Free minimap2 alignment results (mm_reg1_t array)
 // NOLINTBEGIN(cppcoreguidelines-no-malloc)
 inline void FreeMm2Alignment(mm_reg1_t* regs, int const num_regs) {
-  if (regs == nullptr) {
-    return;
-  }
-  for (int idx = 0; idx < num_regs; ++idx) {
-    std::free(regs[idx].p);
-  }
+  if (regs == nullptr) return;
+  for (int idx = 0; idx < num_regs; ++idx) std::free(regs[idx].p);
   std::free(regs);
 }
 // NOLINTEND(cppcoreguidelines-no-malloc)

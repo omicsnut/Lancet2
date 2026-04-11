@@ -42,17 +42,15 @@ void VariantAnnotator::AnnotateSequenceComplexity(caller::VariantSet const& vset
 
   for (auto const& var : vset) {
     auto const ref_pos = var.mLocalRefStart0Idx;
-    if (ref_pos == std::numeric_limits<usize>::max() || REF_HAP_IDX >= haplotypes.size()) {
-      continue;
-    }
+    if (ref_pos == std::numeric_limits<usize>::max() || REF_HAP_IDX >= haplotypes.size()) continue;
 
     auto const& ref_hap = haplotypes[REF_HAP_IDX];
     auto const ref_len = var.mRefAllele.size();
 
     bool scored_any_alt = false;
 
-    // Score each haplotype backing every distinct ALT, dynamically merging the worst-case
-    // complexity
+    // Score each haplotype backing every distinct ALT,
+    // dynamically merging the worst-case complexity
     for (auto const& alt : var.mAlts) {
       auto const alt_len = std::max(ref_len, alt.mSequence.size());
 

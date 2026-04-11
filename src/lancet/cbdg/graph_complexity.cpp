@@ -49,14 +49,10 @@ auto ComputeGraphComplexity(Graph const& graph, usize const component_id) -> Gra
     cplx.mMaxSingleDirDegree = std::max(cplx.mMaxSingleDirDegree, max_dir);
 
     bool const is_branch = (dflt_dir_edges >= 2 || oppo_dir_edges >= 2);
-    if (is_branch) {
-      cplx.mNumBranchPoints++;
-    }
+    if (is_branch) cplx.mNumBranchPoints++;
 
     // Unitig ratio: nodes with exactly 1-in and 1-out (linear chain)
-    if (dflt_dir_edges == 1 && oppo_dir_edges == 1) {
-      unitig_nodes++;
-    }
+    if (dflt_dir_edges == 1 && oppo_dir_edges == 1) unitig_nodes++;
 
     // Coverage for CV calculation
     auto const cov = static_cast<f64>(node_ptr->TotalReadSupport());
@@ -82,22 +78,26 @@ auto ComputeGraphComplexity(Graph const& graph, usize const component_id) -> Gra
   if (!coverages.empty()) {
     f64 const sum = std::accumulate(coverages.begin(), coverages.end(), 0.0);
     f64 const mean = sum / static_cast<f64>(coverages.size());
+
     if (mean > 0.0) {
       f64 sq_sum = 0.0;
       for (f64 const cov_val : coverages) {
         f64 const diff = cov_val - mean;
         sq_sum += diff * diff;
       }
+
       cplx.mCoverageCv = std::sqrt(sq_sum / static_cast<f64>(coverages.size())) / mean;
     }
   }
 
   // Tip-to-path coverage ratio
   if (!tip_coverages.empty() && !unitig_coverages.empty()) {
-    f64 const tip_mean = std::accumulate(tip_coverages.begin(), tip_coverages.end(), 0.0) /
-                         static_cast<f64>(tip_coverages.size());
-    f64 const unitig_mean = std::accumulate(unitig_coverages.begin(), unitig_coverages.end(), 0.0) /
-                            static_cast<f64>(unitig_coverages.size());
+    auto const tip_sum = std::accumulate(tip_coverages.begin(), tip_coverages.end(), 0.0);
+    auto const unitig_sum = std::accumulate(unitig_coverages.begin(), unitig_coverages.end(), 0.0);
+
+    f64 const tip_mean = tip_sum / static_cast<f64>(tip_coverages.size());
+    f64 const unitig_mean = unitig_sum / static_cast<f64>(unitig_coverages.size());
+
     cplx.mTipToPathCovRatio = unitig_mean > 0.0 ? tip_mean / unitig_mean : 0.0;
   }
 

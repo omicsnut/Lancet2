@@ -137,7 +137,6 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     }
 
     mTotalSampleCov += support->TotalSampleCov();
-
     auto const pls = support->ComputePLs();
     SampleGenotypeData sample;
     sample.mIsMissingSupport = false;
@@ -237,10 +236,12 @@ void VariantCall::UpdateSiteQuality(core::SampleInfo const& sinfo, VariantSuppor
   auto const somatic_lor = tumor_normal_mode ? SomaticLogOddsRatio(sinfo, evidence, samps) : 0.0;
   auto const ref_hom_pl = pls.empty() ? 0 : pls[0];
   auto const sample_dp = support->TotalSampleCov();
-  auto const per_read_qual =
-      (!pls.empty() && sample_dp > 0)
-          ? std::min(static_cast<f64>(ref_hom_pl) / static_cast<f64>(sample_dp), 10.0)
-          : 0.0;
+  f64 per_read_qual = 0.0;
+  if (!pls.empty() && sample_dp > 0) {
+    per_read_qual = static_cast<f64>(ref_hom_pl) / static_cast<f64>(sample_dp);
+    per_read_qual = std::min(per_read_qual, 10.0);
+  }
+
   mSiteQuality = std::max(mSiteQuality, tumor_normal_mode ? somatic_lor : per_read_qual);
 }
 
@@ -410,6 +411,7 @@ auto VariantCall::AsVcfRecord() const -> std::string {
   format_strings.reserve(mSampleGenotypes.size() + 1);
   format_strings.emplace_back(
       "GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ");
+
   for (auto const& sample : mSampleGenotypes) {
     format_strings.push_back(sample.RenderVcfString());
   }

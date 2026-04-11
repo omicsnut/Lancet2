@@ -26,9 +26,7 @@ void VariantSupport::AddEvidence(ReadEvidence const& evidence) {
 
   // Deduplicate by read name hash: only first-seen strand counts.
   auto const [iter, inserted] = data.mNameHashes.try_emplace(evidence.mRnameHash, evidence.mStrand);
-  if (!inserted) {
-    return;
-  }
+  if (!inserted) return;
 
   // Each read contributes exactly one representative base quality value.
   // For indels, this is already collapsed to min(PBQ) across the variant region
@@ -43,9 +41,7 @@ void VariantSupport::AddEvidence(ReadEvidence const& evidence) {
   data.mAlnScores.push_back(evidence.mAlnScore);
 
   // Track soft-clip status from original alignment (for SCA FORMAT tag)
-  if (evidence.mIsSoftClipped) {
-    ++data.mSoftClipCount;
-  }
+  if (evidence.mIsSoftClipped) ++data.mSoftClipCount;
 
   // Track insert sizes from properly-paired reads (for FLD FORMAT tag)
   if (evidence.mIsProperPair && evidence.mInsertSize != 0) {
@@ -73,38 +69,42 @@ void VariantSupport::AddEvidence(ReadEvidence const& evidence) {
 // ============================================================================
 void VariantSupport::MergeAlleleFrom(VariantSupport const& src, AlleleIndex const src_allele,
                                      AlleleIndex const dst_allele) {
-  if (src_allele >= src.mAlleleData.size()) {
-    return;
-  }
-  EnsureAlleleSlot(dst_allele);
+  if (src_allele >= src.mAlleleData.size()) return;
 
+  EnsureAlleleSlot(dst_allele);
   auto const& src_data = src.mAlleleData[src_allele];
   auto& dst_data = mAlleleData[dst_allele];
 
   for (auto const& [rname_hash, strand] : src_data.mNameHashes) {
     auto const [iter, inserted] = dst_data.mNameHashes.try_emplace(rname_hash, strand);
-    if (!inserted) {
-      continue;  // already seen this read in dst
-    }
+    // already seen this read in dst
+    if (!inserted) continue;
   }
 
   // Append PBQ, RMQ, and alignment scores (reads already deduped above by mNameHashes,
   // but the qual vectors are append-only during AddEvidence, so we append here too).
   dst_data.mFwdBaseQuals.insert(dst_data.mFwdBaseQuals.end(), src_data.mFwdBaseQuals.begin(),
                                 src_data.mFwdBaseQuals.end());
+
   dst_data.mRevBaseQuals.insert(dst_data.mRevBaseQuals.end(), src_data.mRevBaseQuals.begin(),
                                 src_data.mRevBaseQuals.end());
+
   dst_data.mMapQuals.insert(dst_data.mMapQuals.end(), src_data.mMapQuals.begin(),
                             src_data.mMapQuals.end());
+
   dst_data.mAlnScores.insert(dst_data.mAlnScores.end(), src_data.mAlnScores.begin(),
                              src_data.mAlnScores.end());
+
   dst_data.mSoftClipCount += src_data.mSoftClipCount;
+
   dst_data.mProperPairIsizes.insert(dst_data.mProperPairIsizes.end(),
                                     src_data.mProperPairIsizes.begin(),
                                     src_data.mProperPairIsizes.end());
+
   dst_data.mFoldedReadPositions.insert(dst_data.mFoldedReadPositions.end(),
                                        src_data.mFoldedReadPositions.begin(),
                                        src_data.mFoldedReadPositions.end());
+
   dst_data.mRefNmValues.insert(dst_data.mRefNmValues.end(), src_data.mRefNmValues.begin(),
                                src_data.mRefNmValues.end());
 }
@@ -113,16 +113,12 @@ void VariantSupport::MergeAlleleFrom(VariantSupport const& src, AlleleIndex cons
 // Per-Allele Accessors
 // ============================================================================
 auto VariantSupport::FwdCount(AlleleIndex const idx) const -> usize {
-  if (idx >= mAlleleData.size()) {
-    return 0;
-  }
+  if (idx >= mAlleleData.size()) return 0;
   return mAlleleData[idx].mFwdBaseQuals.size();
 }
 
 auto VariantSupport::RevCount(AlleleIndex const idx) const -> usize {
-  if (idx >= mAlleleData.size()) {
-    return 0;
-  }
+  if (idx >= mAlleleData.size()) return 0;
   return mAlleleData[idx].mRevBaseQuals.size();
 }
 
@@ -169,9 +165,7 @@ auto VariantSupport::TotalAltCov() const -> usize {
 // by allele_depth to produce NPBQ (per-read quality) for VCF output.
 // ============================================================================
 auto VariantSupport::RawPosteriorBaseQual(AlleleIndex const idx) const -> f64 {
-  if (idx >= mAlleleData.size()) {
-    return 0.0;
-  }
+  if (idx >= mAlleleData.size()) return 0.0;
 
   auto const& data = mAlleleData[idx];
   // Per-read representative base quality at the variant position, split by
@@ -180,9 +174,7 @@ auto VariantSupport::RawPosteriorBaseQual(AlleleIndex const idx) const -> f64 {
   auto const& fwd_bq = data.mFwdBaseQuals;
   auto const& rev_bq = data.mRevBaseQuals;
 
-  if (fwd_bq.empty() && rev_bq.empty()) {
-    return 0.0;
-  }
+  if (fwd_bq.empty() && rev_bq.empty()) return 0.0;
 
   f64 log_err = 0.0;  // Σ log10(ε_i)
   f64 log_ok = 0.0;   // Σ log10(1 - ε_i)
@@ -217,16 +209,14 @@ auto VariantSupport::RawPosteriorBaseQual(AlleleIndex const idx) const -> f64 {
 //   RMQ = sqrt( Σ(mapq_i²) / N )
 // ============================================================================
 auto VariantSupport::RmsMappingQual(AlleleIndex const idx) const -> f64 {
-  if (idx >= mAlleleData.size() || mAlleleData[idx].mMapQuals.empty()) {
-    return 0.0;
-  }
+  if (idx >= mAlleleData.size() || mAlleleData[idx].mMapQuals.empty()) return 0.0;
 
   auto const& mqs = mAlleleData[idx].mMapQuals;
-  f64 const sum_sq =
-      std::accumulate(mqs.cbegin(), mqs.cend(), 0.0, [](f64 const acc, u8 const mapq) -> f64 {
-        return acc + (static_cast<f64>(mapq) * static_cast<f64>(mapq));
-      });
+  auto const square_summer = [](f64 const acc, u8 const mapq) -> f64 {
+    return acc + (static_cast<f64>(mapq) * static_cast<f64>(mapq));
+  };
 
+  f64 const sum_sq = std::accumulate(mqs.cbegin(), mqs.cend(), 0.0, square_summer);
   return std::sqrt(sum_sq / static_cast<f64>(mqs.size()));
 }
 
@@ -277,9 +267,7 @@ auto VariantSupport::StrandBiasLogOR() const -> f64 {
 // MeanAlnScore
 // ============================================================================
 auto VariantSupport::MeanAlnScore(AlleleIndex const idx) const -> f64 {
-  if (idx >= mAlleleData.size() || mAlleleData[idx].mAlnScores.empty()) {
-    return 0.0;
-  }
+  if (idx >= mAlleleData.size() || mAlleleData[idx].mAlnScores.empty()) return 0.0;
 
   auto const& scores = mAlleleData[idx].mAlnScores;
   f64 const sum = std::accumulate(scores.cbegin(), scores.cend(), 0.0);
@@ -301,14 +289,15 @@ auto VariantSupport::SoftClipAsymmetry() const -> f64 {
   // ALT soft-clip fraction (summed across all non-REF alleles)
   usize alt_sc = 0;
   usize alt_total = 0;
+
   for (usize i = 1; i < mAlleleData.size(); ++i) {
     alt_sc += mAlleleData[i].mSoftClipCount;
     alt_total += TotalAlleleCov(static_cast<AlleleIndex>(i));
   }
 
   // REF soft-clip fraction
-  auto const ref_sc =
-      (REF_ALLELE_IDX < mAlleleData.size()) ? mAlleleData[REF_ALLELE_IDX].mSoftClipCount : usize{0};
+  auto const has_ref = REF_ALLELE_IDX < mAlleleData.size();
+  auto const ref_sc = has_ref ? mAlleleData[REF_ALLELE_IDX].mSoftClipCount : usize{0};
   auto const ref_total = TotalAlleleCov(REF_ALLELE_IDX);
 
   f64 const alt_frac = alt_total > 0 ? static_cast<f64>(alt_sc) / static_cast<f64>(alt_total) : 0.0;
@@ -332,6 +321,7 @@ auto VariantSupport::FragLengthDelta() const -> f64 {
   // ALT mean insert size (summed across all non-REF alleles)
   f64 alt_isize_sum = 0.0;
   usize alt_pairs = 0;
+
   for (usize i = 1; i < mAlleleData.size(); ++i) {
     for (auto const isize : mAlleleData[i].mProperPairIsizes) {
       alt_isize_sum += isize;
@@ -342,6 +332,7 @@ auto VariantSupport::FragLengthDelta() const -> f64 {
   // REF mean insert size
   f64 ref_isize_sum = 0.0;
   usize ref_pairs = 0;
+
   if (REF_ALLELE_IDX < mAlleleData.size()) {
     for (auto const isize : mAlleleData[REF_ALLELE_IDX].mProperPairIsizes) {
       ref_isize_sum += isize;
@@ -462,8 +453,8 @@ auto VariantSupport::AlleleMismatchDelta() const -> f64 {
   if (REF_ALLELE_IDX < mAlleleData.size()) {
     auto const& ref_nms = mAlleleData[REF_ALLELE_IDX].mRefNmValues;
     if (!ref_nms.empty()) {
-      ref_mean =
-          std::accumulate(ref_nms.begin(), ref_nms.end(), 0.0) / static_cast<f64>(ref_nms.size());
+      auto const ref_sum = std::accumulate(ref_nms.begin(), ref_nms.end(), 0.0);
+      ref_mean = ref_sum / static_cast<f64>(ref_nms.size());
     }
   }
 
@@ -562,6 +553,7 @@ auto NormalizeLogLikelihoodsToPLs(std::vector<f64> const& gt_log_lks) -> std::ve
     f64 const raw_pl = -10.0 * (gt_log_lks[idx] - best_ll);
     pls[idx] = static_cast<int>(std::round(std::min(raw_pl, PL_CAP)));
   }
+
   return pls;
 }
 
@@ -569,9 +561,7 @@ auto NormalizeLogLikelihoodsToPLs(std::vector<f64> const& gt_log_lks) -> std::ve
 
 auto VariantSupport::ComputePLs() const -> std::vector<int> {
   auto const num_alleles = static_cast<int>(mAlleleData.size());
-  if (num_alleles == 0) {
-    return {};
-  }
+  if (num_alleles == 0) return {};
 
   auto const num_genotypes = num_alleles * (num_alleles + 1) / 2;
   std::vector<f64> gt_log_lks(num_genotypes, 0.0);
@@ -605,9 +595,7 @@ auto VariantSupport::ComputePLs() const -> std::vector<int> {
 // See: https://gatk.broadinstitute.org/hc/en-us/articles/360035531692
 // ============================================================================
 auto VariantSupport::ComputeGQ(std::vector<int> const& pls) -> int {
-  if (pls.size() < 2) {
-    return 0;
-  }
+  if (pls.size() < 2) return 0;
 
   // Find minimum and second-minimum PL values
   int min1 = std::numeric_limits<int>::max();
@@ -630,39 +618,38 @@ auto VariantSupport::ComputeGQ(std::vector<int> const& pls) -> int {
 // EnsureAlleleSlot
 // ============================================================================
 void VariantSupport::EnsureAlleleSlot(AlleleIndex const idx) {
-  if (idx >= mAlleleData.size()) {
-    mAlleleData.resize(idx + 1);
-  }
+  if (idx >= mAlleleData.size()) mAlleleData.resize(idx + 1);
 }
 
 // ============================================================================
 // SupportArray Accessors
 // ============================================================================
 auto SupportArray::Find(std::string_view sample_name) const -> VariantSupport const* {
-  auto const* const iter = std::ranges::find_if(
-      mItems, [&](auto const& item) -> bool { return item.mSampleName == sample_name; });
+  auto const pred = [&](auto const& item) -> bool { return item.mSampleName == sample_name; };
+  auto const* const iter = std::ranges::find_if(mItems, pred);
   return iter != mItems.end() ? iter->mData.get() : nullptr;
 }
 
 auto SupportArray::FindOrCreate(std::string_view sample_name) -> VariantSupport& {
-  auto* const iter = std::ranges::find_if(
-      mItems, [&](auto const& item) -> bool { return item.mSampleName == sample_name; });
-  if (iter != mItems.end()) {
-    return *iter->mData;
-  }
+  auto const pred = [&](auto const& item) -> bool { return item.mSampleName == sample_name; };
+  auto* const iter = std::ranges::find_if(mItems, pred);
+  if (iter != mItems.end()) return *iter->mData;
+
   mItems.push_back(
       NamedSupport{.mSampleName = sample_name, .mData = std::make_unique<VariantSupport>()});
+
   return *mItems.back().mData;
 }
 
 auto SupportArray::Extract(std::string_view sample_name) -> std::unique_ptr<VariantSupport> {
-  auto* const iter = std::ranges::find_if(
-      mItems, [&](auto const& item) -> bool { return item.mSampleName == sample_name; });
+  auto const pred = [&](auto const& item) -> bool { return item.mSampleName == sample_name; };
+  auto* const iter = std::ranges::find_if(mItems, pred);
   if (iter != mItems.end()) {
     auto extracted_data = std::move(iter->mData);
     mItems.erase(iter);
     return extracted_data;
   }
+
   return nullptr;
 }
 
