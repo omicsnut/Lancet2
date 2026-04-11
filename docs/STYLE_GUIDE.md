@@ -577,6 +577,46 @@ The naming convention is enforced by `readability-identifier-naming` checks:
 
 **Ignored patterns:** Type aliases `i8`, `u32`, `f64`, `usize` are exempted. Include guard macros (`SRC_LANCET_*_H_`) are exempted. STL iterator methods (`begin`, `end`, `cbegin`, `cend`) are exempted.
 
+### Struct/Class Memory Layout
+
+All struct and class member variables **must** be declared in descending order of alignment size to minimize compiler-inserted padding. This is not enforced by clang-format or clang-tidy — it is enforced in code review.
+
+**Alignment tiers** (largest → smallest):
+
+| Tier | Size | Types |
+|:-----|:-----|:------|
+| 8B | 8 bytes | `i64`, `u64`, `usize`, `f64`, pointers (`T*`), `std::string`, `std::vector<T>`, `absl::flat_hash_map`, `std::unique_ptr<T>`, `absl::InlinedVector<T,N>` |
+| 4B | 4 bytes | `i32`, `u32`, `f32`, `std::array<T,N>` where T is 4B |
+| 2B | 2 bytes | `i16`, `u16` |
+| 1B | 1 byte | `i8`, `u8`, `bool`, `enum class : i8` |
+
+**Constructor initializer lists** must match declaration order. The compiler warns (`-Wreorder`) if the initializer list order doesn't match — always write initializer lists in declaration order.
+
+```cpp
+// ✅ Correct — declaration and init list both follow 8B → 4B → 1B
+struct ReadEvidence {
+  f64 mScore;       // 8B
+  i32 mCount;       // 4B
+  u8 mQuality;      // 1B
+  bool mIsForward;  // 1B
+
+  ReadEvidence(f64 s, i32 c, u8 q, bool f)
+      : mScore(s), mCount(c), mQuality(q), mIsForward(f) {}
+};
+
+// ❌ Wrong — bool before f64 wastes 7 bytes of padding
+struct BadLayout {
+  bool mIsForward;  // 1B + 7B padding before f64
+  f64 mScore;       // 8B
+  u8 mQuality;      // 1B + 3B padding before i32
+  i32 mCount;       // 4B
+};
+```
+
+When using designated initializers or named field assignment (e.g., `result.mScore = x`), order doesn't matter for correctness, but **declaration order still determines padding** — so the declaration must follow the tier ordering.
+
+Size annotations (`// 8B`, `// 4B`, etc.) on member variables serve double duty: they document the field and make alignment compliance visible at a glance. See [Member Variable Comments](#member-variable-comments) in Part 2.
+
 ### Check Categories
 
 The following check families are enabled (with curated exclusions documented in `.clang-tidy`):
@@ -697,6 +737,7 @@ Before merging any change, verify:
 - [ ] `python3 scripts/run_clang_tidy.py` reports zero warnings
 - [ ] All new identifiers follow the naming convention table
 - [ ] East const is used throughout (`int const x`, not `const int x`)
+- [ ] New/modified structs declare members in descending alignment order (8B → 4B → 2B → 1B)
 - [ ] All NOLINT suppressions are scoped and have rationale comments
 - [ ] No bare `NOLINT` — always specify the check name
 
