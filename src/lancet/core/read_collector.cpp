@@ -33,6 +33,28 @@ using CountMap = absl::flat_hash_map<u32, u32>;
 
 namespace {
 
+// ============================================================================
+// ParseMd — extract mismatch positions from the MD:Z auxiliary tag
+//
+// PURPOSE: Detects positions where ≥2 reads disagree with the reference,
+// which signals an active region worth assembling. This is a lightweight
+// pre-filter before the full de Bruijn graph assembly.
+//
+// MD:Z FORMAT (SAM spec §1.5):
+//   Concatenation of: [0-9]+ (matching run) | [ACGT] (mismatch base) | ^[ACGT]+ (deletion)
+//   Example: "10A5^AC6"  →  10 matches, A→? mismatch, 5 matches, 2bp deletion, 6 matches
+//
+// STATE MACHINE:
+//   ┌──────────┐  digit   ┌──────────────┐
+//   │ scanning ├─────────►│ accumulating │
+//   │          │◄─────────┤ match-run len│
+//   └────┬─────┘  letter  └──────────────┘
+//        │ (mismatch base A/C/G/T)
+//        ▼
+//   record genome_pos in result map; if count reaches 2 → return true
+//
+// Returns true as soon as any genome position has ≥2 mismatches (early exit).
+// ============================================================================
 inline auto ParseMd(std::string_view md_val, absl::Span<u8 const> quals, i64 const start,
                     CountMap* result) -> bool {
   if (start < 0) return false;
@@ -57,9 +79,7 @@ inline auto ParseMd(std::string_view md_val, absl::Span<u8 const> quals, i64 con
 
     auto const base = absl::ascii_toupper(static_cast<unsigned char>(character));
     if (base == 'A' || base == 'C' || base == 'T' || base == 'G') {
-      if (++(*result)[genome_pos] == 2) {
-        return true;
-      }
+      if (++(*result)[genome_pos] == 2) return true;
     }
   }
 

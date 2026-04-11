@@ -14,6 +14,17 @@
 
 namespace lancet::core {
 
+// ============================================================================
+// AsyncWorker::Process — thread pool worker loop
+//
+// Each AsyncWorker runs in its own std::jthread, pulling windows from a
+// lock-free MPMC queue (moodycamel::BlockingConcurrentQueue).  The loop:
+//   1. Check stop_token — cooperative cancellation from the main thread
+//   2. Dequeue a window (10ms timeout — prevents busy-spinning)
+//   3. Run VariantBuilder::ProcessWindow → assemble, call, genotype
+//   4. Push result back to the output queue for progress reporting
+// ============================================================================
+
 // NOLINTNEXTLINE(performance-unnecessary-value-param)
 void AsyncWorker::Process(std::stop_token stop_token,
                           moodycamel::ProducerToken const& /*in_token*/) {
@@ -28,13 +39,10 @@ void AsyncWorker::Process(std::stop_token stop_token,
   constexpr auto QUEUE_TIMEOUT = std::chrono::milliseconds(10);
 
   while (true) {
-    // Check if stop is requested for this thread by the RunMain/caller thread
     if (stop_token.stop_requested()) break;
 
-    // Get the next available unprocessed window from the RunMain/caller thread.
-    // NOTE: wait_dequeue_timed serves as a blocking futex call preventing hardware thread-spin.
-    // If the timeout triggers without a payload, we seamlessly `continue` the loop,
-    // structurally allowing the top-level stop_token evaluation to re-poll state.
+    // Blocking dequeue with timeout — prevents busy-spinning while allowing
+    // periodic re-check of the stop_token.
     if (!mInPtr->wait_dequeue_timed(window_ptr, QUEUE_TIMEOUT)) continue;
 
     timer.Reset();

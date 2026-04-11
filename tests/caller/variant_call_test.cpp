@@ -6,6 +6,7 @@
 
 namespace lancet::caller::tests {
 
+// FORMAT field order: GT:AD:ADF:ADR:DP:RMSQ:BQNP:SB:SA:FL:RPD:BQD:MQD:MMA:DFC:PR:PA:PL:GQ
 TEST_CASE("SampleGenotypeData compactly serializes VCF genotype structure strings precisely",
           "[lancet][caller][VariantCall]") {
   VariantCall::SampleGenotypeData sample;

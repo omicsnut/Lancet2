@@ -5,7 +5,11 @@
 #include <memory>
 #include <string>
 #include <thread>
-#include <unistd.h>
+
+// POSIX header — not part of the C/C++ standard library
+extern "C" {
+#include "unistd.h"
+}
 
 #include <cstdio>
 #include <cstdlib>
@@ -49,10 +53,8 @@ class CliExistingUriOrFile : public CLI::Validator {
   CliExistingUriOrFile() {
     name_ = "EXISTING_URI_OR_FILE";
     func_ = [](std::string const& str) -> std::string {
-      // By natively injecting HTSlib remote read pings here, we decouple the strict
-      // local filepath assertions baked inherently into CLI::ExistingFile checking logic.
-      // This allows Lancet2 pipeline execution to gracefully accept and validate
-      // network streams (S3/GCS paths) uniformly alongside traditional local system binaries.
+      // Accept cloud/web URIs (s3://, gs://, http://) by checking with htslib's
+      // hopen() instead of local filesystem existence.
       if (absl::StartsWith(str, "gs://") ||
           absl::StartsWith(str, "s3://") ||
           absl::StartsWith(str, "http://") ||
@@ -79,9 +81,8 @@ class CliNonexistentUriOrPath : public CLI::Validator {
   CliNonexistentUriOrPath() {
     name_ = "NONEXISTENT_URI_OR_PATH";
     func_ = [](std::string const& str) -> std::string {
-      // Skips native CLI11 filesystem bounds checking specifically for cloud output schemas
-      // ensuring that Lancet2 doesn't immediately abort if `--out-vcfgz` points completely
-      // off-disk.
+      // Skip filesystem check for cloud output paths (s3://, gs://) — the path
+      // doesn't need to exist locally.
       if (absl::StartsWith(str, "gs://") ||
           absl::StartsWith(str, "s3://") ||
           absl::StartsWith(str, "http://") ||

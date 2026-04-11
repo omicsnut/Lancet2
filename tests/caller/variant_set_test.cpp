@@ -7,10 +7,11 @@
 #include "spoa/spoa.hpp"
 
 // =========================================================================================
-// CATCH2 COMPREHENSIVE ALGORITHM TEST SUITE
+// VariantSet::ExtractVariantsFromGraph — algorithm test suite
 // -----------------------------------------------------------------------------------------
-// Asserts that the FSM VariantExtractor properly mitigates, sinks, parses, and formats natively
-// raw sequences utilizing dynamically generated topological networks mapping real complex bounds.
+// Validates SNV, INS, DEL, MNP, complex, and multiallelic extraction from SPOA
+// graph topologies. Each SECTION builds a controlled graph from string pairs and
+// verifies that the extracted VCF records have correct REF, ALT, and POS fields.
 // =========================================================================================
 
 namespace lancet::caller::tests {
@@ -18,8 +19,7 @@ namespace lancet::caller::tests {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload Sets",
           "[lancet][caller][VariantSet]") {
-  // We bind a linear Smith-Waterman engine to dynamically forge graphs universally natively out of
-  // strings. The graph topology will authentically mimic organic topological sequencing branches.
+  // Build SPOA graphs from string pairs to create controlled graph topologies for testing.
   auto alignment_engine = spoa::AlignmentEngine::Create(spoa::AlignmentType::kNW, 3, -5, -3);
 
   SECTION(
@@ -34,17 +34,14 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     VariantSet caller_set;
     caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
 
-    // Verification Check: Our sweep relies on universal matching. A match generated 'AT'/'AG'
-    // originally natively encompassing the anchor bounds identically. Then, the left-truncation
-    // algorithm strips away universally useless left-alignment bases because no element resulted in
-    // a critical empty string violating bounds rules!
+    // Left-trimming strips the shared 'A' prefix, leaving the minimal REF='T', ALT='G'
+    // representation. Position shifts +1 from the window start (100 → 101).
     REQUIRE(caller_set.Count() == 1);
     auto var = *caller_set.begin();
     REQUIRE(var.mRefAllele == "T");
     REQUIRE(var.mAlts.size() == 1);
     REQUIRE(var.mAlts[0].mSequence == "G");
-    REQUIRE(var.mGenomeChromPos1 ==
-            101);  // Biologically validated string coordinate slid 1 index to the right
+    REQUIRE(var.mGenomeChromPos1 == 101);
   }
 
   SECTION("Maintains obligatory Left Anchor Bounds for strict mathematical VCF Deletions") {
@@ -59,9 +56,8 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     VariantSet caller_set;
     caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
 
-    // Critical Test Constraint:
-    // Under no circumstances can Deletions be left-trimmed so aggressively they turn into native
-    // "" empty strings (violating VCF configuration specifications permanently downstream!)
+    // Deletions must retain the left anchor base — empty REF/ALT is invalid VCF.
+    // REF='ATC', ALT='A' preserves the mandatory anchor.
     REQUIRE(caller_set.Count() == 1);
     auto var = *caller_set.begin();
     REQUIRE(var.mRefAllele == "ATC");
@@ -78,11 +74,9 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     // [ALT2]:   A - - - G C     => (DEL TGT->-)
     // [ALT3]:   A T G T A C     => (SNV G->A) at downstream position
     //
-    // Our Synchronous-Sink sweeps ALL paths identically concurrently natively. Because ALT1 and
-    // ALT2 topologically branch entirely off mathematically contiguous identical 'A' Anchor Nodes,
-    // they are fundamentally synthesized together merging continuously until they natively
-    // intuitively rendezvous! Downstream SNVs act perfectly independent from anterior topological
-    // structures.
+    // ALT1 (SNV T→C) and ALT2 (DEL TGT) share the same anchor node 'A', so they merge
+    // into a single multiallelic record. The downstream G→A SNV (ALT3) is also fused because
+    // the deletion spans into its position.
 
     spoa::Graph graph{};
     std::vector<std::string> const seqs = {"ATGTGC", "ACGTGC", "AGC", "ATGTAC"};
@@ -91,9 +85,8 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     VariantSet caller_set;
     caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
 
-    // The Topological Sink now perfectly recognizes that the TGT Deletion mathematically spans
-    // completely adjacent to the G->A SNV! This seamlessly fuses ALL of them natively into ONE
-    // massive multi-allelic block!
+    // The TGT deletion spans up to the G→A SNV position, so all three ALTs fuse into
+    // one multiallelic record.
     REQUIRE(caller_set.Count() == 1);
 
     auto first_var = *caller_set.begin();
@@ -138,11 +131,12 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
 
     REQUIRE(caller_set.Count() == 1);
     auto var = *caller_set.begin();
-    REQUIRE(var.mRefAllele ==
-            "T");  // Universal VCF Left-Alignment rule binds floating inserts correctly!
+    // VCF left-alignment: floating inserts anchor to the preceding base
+    REQUIRE(var.mRefAllele == "T");
     REQUIRE(var.mAlts.size() == 1);
     REQUIRE(var.mAlts[0].mSequence == "TAA");
-    REQUIRE(var.mGenomeChromPos1 == 101);  // Mapped accurately to the true 'T' anchor position
+    // Mapped accurately to the true 'T' anchor position
+    REQUIRE(var.mGenomeChromPos1 == 101);
   }
 
   SECTION("Safeguards symmetrical boundaries against MNP shattering properly natively") {
@@ -227,8 +221,8 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     VariantSet caller_set;
     caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
 
-    // They must all uniformly synthesize precisely simultaneously natively into a strictly
-    // evaluated multiallelic VCF payload seamlessly bounded.
+    // All three ALTs (G, A, and deletion) merge into a single triallelic VCF record
+    // with REF='AT' (anchor + deleted base).
     REQUIRE(caller_set.Count() == 1);
     auto var = *caller_set.begin();
 

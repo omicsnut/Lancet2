@@ -99,8 +99,7 @@ void VariantStore::FlushAllVariantsInStore(std::ostream& out) {
 
 void VariantStore::FlushExtractedVariants(std::vector<Value>& variants_to_write,
                                           std::ostream& out) {
-  // 1. Sort the extracted variants topologically. This mathematically guarantees that
-  // the execution loop steps `curr_start` strictly progressively monotonically upwards!
+  // Sort by genomic position (CHROM, POS) so VCF output is coordinate-ordered.
   std::ranges::sort(variants_to_write,
                     [](Value const& lhs, Value const& rhs) -> bool { return *lhs < *rhs; });
 

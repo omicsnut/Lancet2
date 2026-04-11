@@ -170,11 +170,14 @@ auto Reference::FetchSeq(std::string const& chrom, OneBasedClosedInterval const&
     throw std::runtime_error(err_msg);
   }
 
+  // Non-ACGT bases (IUPAC ambiguity codes like R/Y/W, lowercase soft-masks) are normalized
+  // to N so the de Bruijn graph operates strictly on the 4-base DNA alphabet.
   auto const sequence_length = static_cast<usize>(parsed_len);
   std::string result_seq(sequence_length, 'N');
   for (usize base_idx = 0; base_idx < sequence_length; ++base_idx) {
-    auto const base = absl::ascii_toupper(
-        static_cast<unsigned char>(raw_seq[base_idx]));  // NOLINT(bugprone-signed-char-misuse)
+    // htslib returns char*, need unsigned for toupper
+    // NOLINTNEXTLINE(bugprone-signed-char-misuse)
+    auto const base = absl::ascii_toupper(static_cast<unsigned char>(raw_seq[base_idx]));
     switch (base) {
       case 'A':
       case 'C':

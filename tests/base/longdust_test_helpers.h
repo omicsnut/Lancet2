@@ -46,9 +46,9 @@ extern "C" {
 #include "kdq.h"       // kdq_t — longdust's internal deque macro
 #include "longdust.h"  // ld_opt_t, ld_data_t, ld_intv_t, public API
 
-#include <math.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 // ============================================================================
 // Replicated internal struct: ld_data_s (longdust.c lines 131-149)

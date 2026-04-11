@@ -32,6 +32,33 @@ static constexpr auto AlmostEq(T1 first, T2 second) -> bool {
 template <typename T>
 concept Number = std::integral<T> || std::floating_point<T>;
 
+// ============================================================================
+// OnlineStats — Welford's online algorithm for numerically stable statistics
+//
+// WHY WELFORD'S: The naive formula Var = E[x²] − (E[x])² suffers from
+// catastrophic cancellation when the mean is large relative to the spread
+// (e.g., base qualities with mean ~35 and σ ~2).  Welford's recurrence
+// maintains a running mean (m1) and sum-of-squared-deviations (m2)
+// updated per observation, avoiding subtraction of nearly equal quantities.
+//
+// RECURRENCE (Add):
+//   n ← n + 1
+//   δ = x − m1                     // deviation from current mean
+//   m1 ← m1 + δ/n                  // updated mean
+//   m2 ← m2 + δ × (δ/n) × (n−1)   // Σ(xᵢ − mean)² accumulator
+//
+// FINAL STATISTICS:
+//   Mean     = m1
+//   Variance = m2 / (n − 1)    ← Bessel's correction (unbiased estimator)
+//   StdDev   = √Variance
+//
+// PARALLEL MERGE (Chan et al.):
+//   Two independent OnlineStats (n₁, m1₁, m2₁) and (n₂, m1₂, m2₂) merge as:
+//   m2_combined = m2₁ + m2₂ + δ² × n₁ × n₂ / (n₁ + n₂)
+//   where δ = m1₂ − m1₁
+//
+// PROPERTIES: O(1) memory, O(1) per update, single-pass, mergeable.
+// ============================================================================
 class OnlineStats {
  public:
   OnlineStats() = default;

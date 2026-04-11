@@ -235,6 +235,16 @@ auto Extractor::ParseSampleName(sam_hdr_t* raw_hdr, std::string_view aln_path) -
   return result;
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// EnsureValidBamOrCram — HTS file validation pipeline
+//
+//   hts_open → format.category check → format.format check → hts_check_EOF
+//
+// Each step validates one layer of the opened file handle:
+// 1. category == sequence_data  →  reject non-alignment files (e.g. VCF)
+// 2. format == bam || cram      →  reject SAM, unknown, or unrecognized formats
+// 3. hts_check_EOF == 1         →  reject truncated files missing the BGZF EOF block
+// ──────────────────────────────────────────────────────────────────────────────
 void Extractor::EnsureValidBamOrCram(htsFile* raw_fp, std::string_view aln_path) {
   if (raw_fp->format.category != sequence_data) {
     auto const err_msg = fmt::format("Cannot read alignment from non-mDfltSeq data: {}", aln_path);
@@ -245,7 +255,8 @@ void Extractor::EnsureValidBamOrCram(htsFile* raw_fp, std::string_view aln_path)
     auto* format_description = hts_format_description(&raw_fp->format);
     auto const err_msg =
         fmt::format("Got unexpected alignment file with format: {}", format_description);
-    std::free(format_description);  // NOLINT(cppcoreguidelines-no-malloc)
+    // NOLINTNEXTLINE(cppcoreguidelines-no-malloc) -- htslib allocates with malloc
+    std::free(format_description);
     throw std::invalid_argument(err_msg);
   }
 

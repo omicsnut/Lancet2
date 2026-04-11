@@ -11,6 +11,7 @@
 
 namespace {
 
+/// Generate a 5000bp random DNA sequence for Hamming distance fuzz testing.
 inline auto GenerateRandomDnaSequence() -> std::string {
   static constexpr std::array<char, 4> BASES = {'A', 'C', 'G', 'T'};
 
@@ -31,6 +32,10 @@ inline auto GenerateRandomDnaSequence() -> std::string {
 
 }  // namespace
 
+// ============================================================================
+//  Hamming distance: randomized correctness (naive vs word64)
+// ============================================================================
+
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST_CASE("Can calculate hamming distance correctly for random strings", "[lancet][base][repeat]") {
   static constexpr usize NUM_ITERATIONS = 1000;
@@ -50,6 +55,10 @@ TEST_CASE("Can calculate hamming distance correctly for random strings", "[lance
     }
   }
 }
+
+// ============================================================================
+//  Hamming distance: small known-answer tests
+// ============================================================================
 
 TEST_CASE("Can calculate hamming distance correctly for small test", "[lancet][base][repeat]") {
   std::string_view const test = "aaaa";

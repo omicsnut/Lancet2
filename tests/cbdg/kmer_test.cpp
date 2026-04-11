@@ -21,6 +21,7 @@ using lancet::cbdg::RevEdgeKind;
 
 namespace {
 
+/// Generate a random DNA sequence of the given length for fuzz testing.
 inline auto GenerateRandomDnaSequence(usize const seq_len) -> std::string {
   static constexpr std::array<char, 4> BASES = {'A', 'C', 'G', 'T'};
 
@@ -37,11 +38,13 @@ inline auto GenerateRandomDnaSequence(usize const seq_len) -> std::string {
   return result;
 }
 
+/// Return true if `result` matches either of the two expected values (fwd or revcomp).
 inline auto MatchesOneOfTwo(std::string_view result, std::array<std::string_view, 2> const& values)
     -> bool {
   return (result == values[0]) || (result == values[1]);
 }
 
+/// Decompose a sequence into a sliding window of Kmers for merge testing.
 [[nodiscard]] inline auto SlidingKmers(std::string_view seq, usize const window)
     -> absl::FixedArray<Kmer> {
   if (seq.length() < window) {

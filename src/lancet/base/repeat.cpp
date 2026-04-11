@@ -10,7 +10,26 @@
 #include <memory>
 #include <string_view>
 
-// Based off of https://github.com/Daniel-Liu-c0deb0t/triple_accel/blob/master/src/hamming.rs
+// ============================================================================
+// HammingDistWord64 — SWAR (SIMD Within A Register) Hamming distance
+//
+// Computes the number of byte-level mismatches between two equal-length strings
+// by processing 8 bytes at a time.  Based on the triple_accel Rust crate:
+// https://github.com/Daniel-Liu-c0deb0t/triple_accel/blob/master/src/hamming.rs
+//
+// ALGORITHM (per 8-byte word):
+//   1. XOR the two words: differing bytes produce non-zero byte lanes
+//   2. Fold each byte lane into a single bit via shift+OR+mask:
+//        val |= val >> 4;  val &= 0x0F...  (collapse each byte's top nibble)
+//        val |= val >> 2;  val &= 0x33...  (collapse 4-bit → 2-bit)
+//        val |= val >> 1;  val &= 0x55...  (collapse 2-bit → 1-bit)
+//      After folding, each byte lane is 0 (match) or 1 (mismatch).
+//   3. popcount gives the number of mismatching bytes in this word.
+//
+// The tail loop handles the final <8 bytes by masking out-of-bounds bits.
+// reinterpret_cast to u64* is safe because we only read (no alignment issues
+// on x86-64, and string_view data is at least byte-aligned).
+// ============================================================================
 auto HammingDistWord64(std::string_view first, std::string_view second) -> usize {
   LANCET_ASSERT(first.length() == second.length())
   usize result = 0;
