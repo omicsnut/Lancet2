@@ -6,7 +6,8 @@ The core engine (`lancet2 pipeline`) dispatches windows to a lock-free thread po
 
 ## The High-Level Engine Workflow
 
-![Lancet2 Pipeline Architecture](../assets/pipeline_architecture.png)
+![Lancet2 Pipeline Architecture](../assets/pipeline_architecture.png#only-light)
+![Lancet2 Pipeline Architecture](../assets/pipeline_architecture_dark.png#only-dark)
 
 ## 1. Sequence Ingestion & Downsampling
 
