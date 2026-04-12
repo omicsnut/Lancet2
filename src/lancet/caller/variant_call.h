@@ -43,12 +43,12 @@ using VariantID = u64;
 //   NPBQ - Number=R: normalized posterior base quality per allele (PBQ/N)
 //   SB   - Number=1: Strand bias log odds ratio (Haldane-corrected)
 //   SCA  - Number=1: Soft Clip Asymmetry (ALT - REF soft-clip fraction)
-//   FLD  - Number=1: Fragment Length Delta (|mean ALT isize - mean REF isize|)
+//   FLD  - Number=1: Fragment Length Delta (mean ALT isize − mean REF isize, signed)
 //   RPCD - Number=1: Read Position Cohen's D (folded position effect size)
 //   BQCD - Number=1: Base Quality Cohen's D (base quality effect size)
 //   MQCD - Number=1: Mapping Quality Cohen's D (MAPQ effect size)
-//   ASMD - Number=1: Allele-Specific Mismatch Delta (mean ALT NM - mean REF NM)
-//   SDFC - Number=1: Site Depth Fold Change (DP / window mean coverage)
+//   ASMD - Number=1: Allele-Specific Mismatch Delta (mean ALT NM − mean REF NM − variant_length)
+//   SDFC - Number=1: Site Depth Fold Change (sample DP / per-sample window mean coverage)
 //   PRAD - Number=1: Polar Radius log10(1 + sqrt(AD_Ref² + AD_Alt²))
 //   PANG - Number=1: Polar Angle atan2(AD_Alt, AD_Ref) in radians
 //   CMLOD - Number=A: Continuous Mixture LOD per ALT (quality-weighted)
@@ -106,8 +106,9 @@ class VariantCall {
 
   // Native multi-allelic constructor
   using SupportsByVariant = absl::flat_hash_map<RawVariant const*, SupportArray>;
+  using PerSampleCov = absl::flat_hash_map<std::string_view, f64>;
   VariantCall(RawVariant const* var, SupportsByVariant const& all_supports, Samples samps,
-              FeatureFlags features, f64 window_cov);
+              FeatureFlags features, PerSampleCov per_sample_cov);
 
   [[nodiscard]] auto ChromIndex() const -> usize { return mChromIndex; }
   [[nodiscard]] auto ChromName() const -> std::string_view { return mChromName; }
@@ -204,7 +205,8 @@ class VariantCall {
   usize mStartPos1;
   usize mTotalSampleCov{0};
   f64 mSiteQuality{0};
-  f64 mWindowCov;
+
+  PerSampleCov mPerSampleCov;
 
   std::string mChromName;
   std::string mRefAllele;
@@ -228,10 +230,13 @@ class VariantCall {
   bool mIsMultiallelic = false;
   bool mHasAltSupport = false;
 
-  /// Site Depth Fold Change: DP / window mean coverage.
+  /// Site Depth Fold Change: sample DP / per-sample window mean coverage.
   /// Spikes indicate collapsed paralogous mappings; dips indicate mapping holes.
-  [[nodiscard]] auto SiteDepthFoldChange() const -> f64 {
-    return mWindowCov > 0.0 ? static_cast<f64>(mTotalSampleCov) / mWindowCov : 1.0;
+  [[nodiscard]] auto SiteDepthFoldChange(std::string_view sample_name, usize sample_dp) const
+      -> f64 {
+    auto const iter = mPerSampleCov.find(sample_name);
+    if (iter == mPerSampleCov.end() || iter->second <= 0.0) return 1.0;
+    return static_cast<f64>(sample_dp) / iter->second;
   }
 
   // ── Evidence collection (shared by both constructors) ──────────────────

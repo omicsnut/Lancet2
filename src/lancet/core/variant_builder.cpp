@@ -168,6 +168,22 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     return {};
   }
 
+  // Loop-invariant: feature flags and per-sample window coverage are
+  // the same for every variant in every graph component of this window.
+  caller::VariantCall::FeatureFlags const feat_flags{
+      .mEnableGraphComplexity = mParamsPtr->mEnableGraphComplexity,
+      .mEnableSequenceComplexity = mParamsPtr->mEnableSequenceComplexity,
+  };
+
+  caller::VariantCall::PerSampleCov const per_sample_cov = [&]() {
+    caller::VariantCall::PerSampleCov result;
+    auto const win_len = window->Length();
+    for (auto const& sinfo : samples) {
+      result[sinfo.SampleName()] = sinfo.SampledCov(win_len);
+    }
+    return result;
+  }();
+
   WindowResults variants;
   for (usize idx = 0; idx < component_haplotypes.size(); ++idx) {
     auto const nhaps = component_haplotypes[idx].size();
@@ -223,17 +239,10 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
         var_supports.emplace(&var, std::move(iter->second));
       }
 
-      if (var_supports.empty()) {
-        return;
-      }
+      if (var_supports.empty()) return;
 
-      caller::VariantCall::FeatureFlags const feat_flags{
-          .mEnableGraphComplexity = mParamsPtr->mEnableGraphComplexity,
-          .mEnableSequenceComplexity = mParamsPtr->mEnableSequenceComplexity,
-      };
-
-      variants.emplace_back(std::make_unique<caller::VariantCall>(&var, std::move(var_supports),
-                                                                  samples, feat_flags, total_cov));
+      variants.emplace_back(std::make_unique<caller::VariantCall>(
+          &var, std::move(var_supports), samples, feat_flags, per_sample_cov));
     });
   }
 

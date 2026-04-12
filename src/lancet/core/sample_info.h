@@ -25,11 +25,17 @@ class SampleInfo {
   [[nodiscard]] auto FileName() const noexcept -> std::string {
     return mFilePath.filename().string();
   }
-  [[nodiscard]] auto TagKind() const noexcept -> cbdg::Label::Tag { return mTag; }
 
+  [[nodiscard]] auto TagKind() const noexcept -> cbdg::Label::Tag { return mTag; }
   [[nodiscard]] auto NumSampledReads() const noexcept -> u64 { return mNumSampledReads; }
   [[nodiscard]] auto NumSampledBases() const noexcept -> u64 { return mNumSampledBases; }
   [[nodiscard]] auto SampleName() const noexcept -> std::string_view { return mSampleName; }
+
+  /// Per-sample mean coverage over a reference region of length ref_len.
+  /// Used by SDFC (Site Depth Fold Change) to normalize per-sample site depth.
+  [[nodiscard]] auto SampledCov(u64 const ref_len) const noexcept -> f64 {
+    return ref_len > 0 ? static_cast<f64>(mNumSampledBases) / static_cast<f64>(ref_len) : 0.0;
+  }
 
   [[nodiscard]] static auto CombinedSampledCov(absl::Span<SampleInfo const> samples,
                                                u64 const ref_len) -> f64 {

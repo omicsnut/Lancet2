@@ -61,12 +61,12 @@ namespace lancet::caller {
 // Unspools a natively multi-allelic RawVariant exactly into the VCF array mapping!
 // ============================================================================
 VariantCall::VariantCall(RawVariant const* var, SupportsByVariant const& all_supports,
-                         Samples samps, FeatureFlags features, f64 const window_cov)
+                         Samples samps, FeatureFlags features, PerSampleCov per_sample_cov)
     : mVariantId(HashRawVariant(var)),
       mChromIndex(var->mChromIndex),
       mStartPos1(var->mGenomeChromPos1),
 
-      mWindowCov(window_cov),
+      mPerSampleCov(std::move(per_sample_cov)),
       mChromName(var->mChromName),
       mRefAllele(var->mRefAllele),
       mGraphCx(var->mGraphMetrics),
@@ -129,12 +129,12 @@ void VariantCall::Finalize(SupportArray const& evidence, Samples samps, FeatureF
 //   NPBQ  - Number=R: normalized posterior base quality per allele (PBQ/N)
 //   SB    - Number=1: Strand bias log odds ratio (Haldane-corrected)
 //   SCA   - Number=1: Soft Clip Asymmetry (ALT - REF soft-clip fraction)
-//   FLD   - Number=1: Fragment Length Delta (|mean ALT isize - mean REF isize|)
+//   FLD   - Number=1: Fragment Length Delta (mean ALT isize − mean REF isize, signed)
 //   RPCD  - Number=1: Read Position Cohen's D (folded position effect size)
 //   BQCD  - Number=1: Base Quality Cohen's D (base quality effect size)
 //   MQCD  - Number=1: Mapping Quality Cohen's D (MAPQ effect size)
-//   ASMD  - Number=1: Allele-Specific Mismatch Delta (mean ALT NM - mean REF NM)
-//   SDFC  - Number=1: Site Depth Fold Change (DP / window mean coverage)
+//   ASMD  - Number=1: Allele-Specific Mismatch Delta (mean ALT NM − mean REF NM − variant_length)
+//   SDFC  - Number=1: Site Depth Fold Change (sample DP / per-sample window mean coverage)
 //   PRAD  - Number=1: Polar Radius log10(1 + sqrt(AD_Ref² + AD_Alt²))
 //   PANG  - Number=1: Polar Angle atan2(AD_Alt, AD_Ref) in radians
 //   CMLOD - Number=A: Continuous Mixture LOD per ALT (quality-weighted)
@@ -186,7 +186,8 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
         [](i64 len) { return static_cast<usize>(std::abs(len)); });
     sample.mAlleleMismatchDelta = ToOptF32(support->AlleleMismatchDelta(max_var_len));
 
-    sample.mSiteDepthFoldChange = static_cast<f32>(SiteDepthFoldChange());
+    sample.mSiteDepthFoldChange =
+        static_cast<f32>(SiteDepthFoldChange(sinfo.SampleName(), support->TotalSampleCov()));
 
     // Polar coordinate features for ML variant classification
     // PRAD/PANG separate allele identity from depth (see polar_coords.h)

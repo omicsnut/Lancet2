@@ -396,12 +396,12 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
 ##FORMAT=<ID=NPBQ,Number=R,Type=Float,Description="Normalized posterior base quality per allele (raw PBQ / allele depth)">
 ##FORMAT=<ID=SB,Number=1,Type=Float,Description="Strand bias log odds ratio (Haldane-corrected, coverage-invariant)">
 ##FORMAT=<ID=SCA,Number=1,Type=Float,Description="Soft clip asymmetry (ALT minus REF)">
-##FORMAT=<ID=FLD,Number=1,Type=Float,Description="Fragment length delta (ALT vs REF)">
+##FORMAT=<ID=FLD,Number=1,Type=Float,Description="Fragment length delta (signed mean ALT isize minus mean REF isize)">
 ##FORMAT=<ID=RPCD,Number=1,Type=Float,Description="Read position Cohen's D effect size (0.0 if untestable)">
 ##FORMAT=<ID=BQCD,Number=1,Type=Float,Description="Base quality Cohen's D effect size (0.0 if untestable)">
 ##FORMAT=<ID=MQCD,Number=1,Type=Float,Description="Mapping quality Cohen's D effect size (0.0 if untestable)">
-##FORMAT=<ID=ASMD,Number=1,Type=Float,Description="Allele-specific mismatch delta (mean ALT NM minus mean REF NM)">
-##FORMAT=<ID=SDFC,Number=1,Type=Float,Description="Site depth fold change (DP / window mean coverage)">
+##FORMAT=<ID=ASMD,Number=1,Type=Float,Description="Allele-specific mismatch delta (mean ALT NM minus mean REF NM minus variant length)">
+##FORMAT=<ID=SDFC,Number=1,Type=Float,Description="Site depth fold change (sample DP / per-sample window mean coverage)">
 ##FORMAT=<ID=PRAD,Number=1,Type=Float,Description="Polar radius: log10(1 + sqrt(AD_Ref^2 + AD_Alt^2))">
 ##FORMAT=<ID=PANG,Number=1,Type=Float,Description="Polar angle: allele identity ratio atan2(AD_Alt, AD_Ref) in radians">
 ##FORMAT=<ID=CMLOD,Number=A,Type=Float,Description="Continuous mixture log-odds score per ALT allele (base-quality-weighted LOD vs null)">

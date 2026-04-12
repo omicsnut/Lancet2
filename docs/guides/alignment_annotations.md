@@ -263,14 +263,19 @@ is likely a misaligned chimera or paralog.
    mismatches (under M ops) + insertion bases + deletion bases. Soft clips,
    hard clips, and reference skips are excluded.
 3. NM values are grouped by allele assignment (REF vs ALT).
-4. `ASMD = mean(ALT NM) − mean(REF NM)`, computed per-sample.
+4. The maximum variant length across all ALT alleles is computed as
+   `max_var_len = max(|alt_length|)` (absolute value, since deletions are
+   stored as negative lengths).
+5. `ASMD = mean(ALT NM) − mean(REF NM) − max_var_len`, computed per-sample.
 
-**Why NM cancels the variant's own contribution**: Both REF and ALT reads are
-aligned to the same REF haplotype. The variant itself is an edit against the
-reference for all reads equally. ASMD therefore isolates *excess noise* beyond
-the shared baseline.
+**Why variant length is subtracted**: ALT reads aligned back to the REF
+haplotype carry the variant's own edit distance — a clean 50 bp deletion
+contributes +50 NM against REF, but that is the variant itself, not noise.
+Subtracting `max_var_len` removes this expected structural difference so ASMD
+isolates only *excess noise* from chimeric or paralogous mismapping. For SNVs
+(`max_var_len = 1`), the adjustment is minimal.
 
-**Value range**: (−∞, +∞), typically [0, 20], or `.` (untestable — one or both groups empty)
+**Value range**: (−∞, +∞), typically [−5, 20], or `.` (untestable — one or both groups empty)
 
 **Coverage stability**: Mean edit distance converges quickly. ASMD is stable
 above 10× per allele. At extreme coverages (1000×+), the mean becomes very
@@ -305,11 +310,16 @@ at one location.
 
 **Computation**:
 
-1. During `ProcessWindow`, the window mean coverage is computed from all
-   sampled BAM reads across all samples:
-   `WindowCov = Σ(sampled_bases) / window_length`.
-2. For each variant, `SDFC = DP / WindowCov`, where DP is the total read
-   depth at the variant site (sum across alleles).
+1. During `ProcessWindow`, a per-sample window coverage map is built:
+   for each sample, `SampleWindowCov = sample_sampled_bases / window_length`.
+2. For each variant and each sample, `SDFC = sample_DP / SampleWindowCov`, where
+   sample_DP is this sample's total read depth at the variant site (sum across alleles).
+
+**Why per-sample normalization**: Tumor and normal samples have different
+sequencing depths. A shared combined coverage would give both samples the same
+SDFC value, masking depth spikes in the low-coverage sample and diluting them
+in the high-coverage one. Per-sample normalization lets a 200× tumor and a 30×
+normal each detect their own paralogous mapping artifacts independently.
 
 **Why window mean coverage**: The window (≥ 1000 bp, enforced minimum) averages
 read depth across hundreds of positions, providing a stable local background

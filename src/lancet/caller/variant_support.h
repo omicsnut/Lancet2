@@ -180,13 +180,13 @@ class VariantSupport {
   [[nodiscard]] auto BaseQualCohenD() const -> std::optional<f64>;
 
   // Allele-Specific Mismatch Delta (ASMD FORMAT field):
-  // mean(ALT NM) − mean(REF NM), where NM is edit distance to the REF haplotype.
-  // True variants contribute equally to both groups' NM (the variant itself is
-  // an edit against the reference for all reads). Chimeric or paralogously
-  // mismapped reads produce high ALT NM (excess random mismatches) while REF
-  // reads stay clean, yielding ASMD > 0.
-  //   Returns std::nullopt when ALT count is zero (untestable).
-  //   Returns 0.0 when no mismatch delta detected (genuine zero).
+  // mean(ALT NM) − mean(REF NM) − variant_length, where NM is edit distance
+  // to the REF haplotype. ALT reads carry the variant's inherent edit distance
+  // (e.g., a clean 50bp deletion = NM +50 against REF). Subtracting
+  // variant_length removes this expected structural difference, isolating only
+  // excess noise from chimeric or paralogous mismapping.
+  //   Returns std::nullopt when either group is empty (untestable).
+  //   Returns 0.0 when no excess mismatch detected (genuine zero).
   [[nodiscard]] auto AlleleMismatchDelta(usize variant_length = 0) const -> std::optional<f64>;
 
   // ── Multi-Allelic Genotype Likelihoods (Dirichlet-Multinomial Model) ──

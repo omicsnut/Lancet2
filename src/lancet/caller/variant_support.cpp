@@ -330,13 +330,14 @@ auto VariantSupport::SoftClipAsymmetry() const -> f64 {
 // ============================================================================
 // FragLengthDelta (FLD FORMAT field)
 //
-// Absolute difference in mean insert sizes between ALT-supporting and
-// REF-supporting properly-paired reads.
-//   FLD = |mean_alt_isize - mean_ref_isize|
+// Signed difference in mean insert sizes between ALT-supporting and
+// REF-supporting properly-paired reads. Directionality is preserved:
+//   FLD = mean_alt_isize − mean_ref_isize
+//   Negative → ALT fragments shorter (e.g., cfDNA tumor biology)
+//   Positive → ALT fragments longer (e.g., chimeric library artifact)
 //
-// Large FLD indicates chimeric library artifacts (artificial bridging) or
-// somatic cfDNA fragment length shifts. Insert sizes come from the original
-// whole-genome alignment (bam1_t::core.isize), not the genotyper re-alignment.
+// Insert sizes come from the original whole-genome alignment
+// (bam1_t::core.isize), not the genotyper re-alignment.
 // Only non-zero insert sizes from properly-paired reads are included.
 // ============================================================================
 auto VariantSupport::FragLengthDelta() const -> std::optional<f64> {
