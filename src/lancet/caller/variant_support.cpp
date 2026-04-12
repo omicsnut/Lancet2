@@ -54,6 +54,15 @@ void VariantSupport::AddEvidence(ReadEvidence const& evidence) {
 
   // Track edit distance to REF haplotype (for ASMD FORMAT tag)
   data.mRefNmValues.push_back(static_cast<f64>(evidence.mRefNm));
+
+  // Track fragment start position (for FSSE: PCR optical duplicate detection)
+  data.mAlignmentStarts.push_back(evidence.mAlignmentStart);
+
+  // Track edit distance against assigned ALT haplotype (for AHDD)
+  data.mAltNmValues.push_back(static_cast<f64>(evidence.mAltNm));
+
+  // Track assigned SPOA haplotype ID (for HSE: path co-segregation)
+  data.mHaplotypeIds.push_back(evidence.mAssignedHaplotypeId);
 }
 
 // ============================================================================
@@ -108,6 +117,17 @@ void VariantSupport::MergeAlleleFrom(VariantSupport const& src, AlleleIndex cons
 
   dst_data.mRefNmValues.insert(dst_data.mRefNmValues.end(), src_data.mRefNmValues.begin(),
                                src_data.mRefNmValues.end());
+
+  // Merge new artifact metric vectors
+  dst_data.mAlignmentStarts.insert(dst_data.mAlignmentStarts.end(),
+                                   src_data.mAlignmentStarts.begin(),
+                                   src_data.mAlignmentStarts.end());
+
+  dst_data.mAltNmValues.insert(dst_data.mAltNmValues.end(), src_data.mAltNmValues.begin(),
+                               src_data.mAltNmValues.end());
+
+  dst_data.mHaplotypeIds.insert(dst_data.mHaplotypeIds.end(), src_data.mHaplotypeIds.begin(),
+                                src_data.mHaplotypeIds.end());
 }
 
 // ============================================================================

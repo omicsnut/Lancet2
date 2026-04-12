@@ -61,11 +61,19 @@ class VariantSupport {
   VariantSupport() = default;
 
   struct ReadEvidence {
-    i64 mInsertSize;      // template length from original alignment
+    // ── 8B Alignment ──────────────────────────────────────────────────────
+    i64 mInsertSize;      // template length from original alignment (for FLD)
+    i64 mAlignmentStart;  // fragment genomic start position (for FSSE)
     f64 mAlnScore;        // normalized alignment score to the assigned haplotype
     f64 mFoldedReadPos;   // 0.0=read edge, 0.5=read center (for RPCD)
-    u32 mRnameHash;       // hash of read name (for dedup)
-    u32 mRefNm;           // edit distance to REF haplotype (for ASMD)
+
+    // ── 4B Alignment ──────────────────────────────────────────────────────
+    u32 mRnameHash;            // hash of read name (for dedup)
+    u32 mRefNm;                // edit distance to REF haplotype (for ASMD)
+    u32 mAltNm;                // edit distance to assigned ALT haplotype (for AHDD)
+    u32 mAssignedHaplotypeId;  // SPOA path index this read was assigned to (for HSE)
+
+    // ── 1B Alignment ──────────────────────────────────────────────────────
     AlleleIndex mAllele;  // which allele this read supports
     Strand mStrand;       // forward or reverse strand
     u8 mBaseQual;         // representative PBQ (min across variant region for indels)
@@ -294,6 +302,18 @@ class VariantSupport {
     // Edit distances (NM) against REF haplotype for ASMD delta.
     // Stored as f64 for mean computation.
     std::vector<f64> mRefNmValues;
+
+    // Fragment alignment start positions for FSSE (Fragment Start Shannon Entropy).
+    // Genomic coordinates — high repeat count at the same position signals PCR duplicates.
+    std::vector<i64> mAlignmentStarts;
+
+    // Edit distances (NM) against assigned ALT haplotype for AHDD.
+    // Stored as f64 for mean computation. Only populated for ALT-assigned reads.
+    std::vector<f64> mAltNmValues;
+
+    // SPOA path IDs for HSE (Haplotype Segregation Entropy).
+    // Tracks which assembled haplotype each ALT read was assigned to.
+    std::vector<u32> mHaplotypeIds;
   };
 
   // Dense vector indexed by AlleleIndex: mAlleleData[0]=REF, [1]=ALT1, ...

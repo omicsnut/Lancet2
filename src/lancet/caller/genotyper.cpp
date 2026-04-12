@@ -683,6 +683,16 @@ auto Genotyper::EvaluateAlignment(Mm2AlnResult const& aln, RawVariant const& var
     best.mLocalIdentity = local.mIdentity;
     best.mBaseQualAtVar = local.mBaseQual;
 
+    // SPOA path ID for HSE: which haplotype did this read align to?
+    best.mAssignedHaplotypeId = static_cast<u32>(aln.mHapIdx);
+
+    // ALT NM for AHDD: how well does this read fit its assigned haplotype?
+    // `target` (line 666) is the encoded span for aln.mHapIdx.
+    // Only computed for ALT-assigned reads; REF reads keep the default 0.
+    if (mapped_allele_idx != REF_ALLELE_IDX) {
+      best.mAltNm = hts::ComputeEditDistance(aln.mCigar, qry_seq_encoded, target);
+    }
+
     // ── Folded read position ──────────────────────────────────
     usize var_start_in_aln = 0;
     if (hap_var_start > aln.mRefStart) {
@@ -763,10 +773,13 @@ void Genotyper::AddToTable(Result& out_vars_table, cbdg::Read const& qry_read,
 
     auto const evidence = VariantSupport::ReadEvidence{
         .mInsertSize = qry_read.InsertSize(),
+        .mAlignmentStart = qry_read.StartPos0(),
         .mAlnScore = assignment.CombinedScore(),
         .mFoldedReadPos = assignment.mFoldedReadPos,
         .mRnameHash = static_cast<u32>(rname_hash),
         .mRefNm = assignment.mRefNm,
+        .mAltNm = assignment.mAltNm,
+        .mAssignedHaplotypeId = assignment.mAssignedHaplotypeId,
         .mAllele = assignment.mAllele,
         .mStrand = strand,
         .mBaseQual = assignment.mBaseQualAtVar,

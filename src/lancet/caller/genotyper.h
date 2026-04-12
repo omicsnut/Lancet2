@@ -233,8 +233,10 @@ class Genotyper {
     f64 mLocalIdentity = 0.0;  // (8B) fraction of exact matches in variant region
     f64 mFoldedReadPos = 0.0;  // (8B) Used for RPCD FORMAT field
 
-    i32 mGlobalScore = 0;  // (4B) mm_map DP score of full read→haplotype alignment
-    u32 mRefNm = 0;        // (4B) Edit distance (NM) of this read against the REF haplotype
+    i32 mGlobalScore = 0;          // (4B) mm_map DP score of full read→haplotype alignment
+    u32 mRefNm = 0;                // (4B) Edit distance (NM) against REF haplotype (for ASMD)
+    u32 mAltNm = 0;                // (4B) Edit distance (NM) against ALT haplotype (for AHDD)
+    u32 mAssignedHaplotypeId = 0;  // (4B) SPOA path index this read was assigned to (for HSE)
     AlleleIndex mAllele = REF_ALLELE_IDX;  // (4B) Allele enumerator, defaults to REF
 
     u8 mBaseQualAtVar = 0;  // (1B) Representative base quality at this variant for this read
