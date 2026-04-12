@@ -177,7 +177,15 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     sample.mReadPosCohenD = ToOptF32(support->ReadPosCohenD());
     sample.mBaseQualCohenD = ToOptF32(support->BaseQualCohenD());
     sample.mMapQualCohenD = ToOptF32(support->MappingQualCohenD());
-    sample.mAlleleMismatchDelta = ToOptF32(support->AlleleMismatchDelta());
+
+    // ASMD: subtract max variant length so the variant's own edit distance
+    // against REF doesn't inflate the mismatch delta (e.g., 50bp del = +50 NM).
+    auto const max_var_len = std::transform_reduce(
+        mVariantLengths.cbegin(), mVariantLengths.cend(), usize{0},
+        [](usize acc, usize cur) { return std::max(acc, cur); },
+        [](i64 len) { return static_cast<usize>(std::abs(len)); });
+    sample.mAlleleMismatchDelta = ToOptF32(support->AlleleMismatchDelta(max_var_len));
+
     sample.mSiteDepthFoldChange = static_cast<f32>(SiteDepthFoldChange());
 
     // Polar coordinate features for ML variant classification

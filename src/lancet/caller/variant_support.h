@@ -187,7 +187,7 @@ class VariantSupport {
   // reads stay clean, yielding ASMD > 0.
   //   Returns std::nullopt when ALT count is zero (untestable).
   //   Returns 0.0 when no mismatch delta detected (genuine zero).
-  [[nodiscard]] auto AlleleMismatchDelta() const -> std::optional<f64>;
+  [[nodiscard]] auto AlleleMismatchDelta(usize variant_length = 0) const -> std::optional<f64>;
 
   // ── Multi-Allelic Genotype Likelihoods (Dirichlet-Multinomial Model) ──
 

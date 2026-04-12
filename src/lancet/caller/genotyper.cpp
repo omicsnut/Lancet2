@@ -514,8 +514,8 @@ auto Genotyper::AssignReadToAlleles(cbdg::Read const& qry_read, VariantSet const
 
   // O(N) PERFORMANCE WIN: Extracted from the variant iterator loop.
   // Calculated natively exactly once per read!
-  u32 const baseline_ref_nm =
-      ComputeRefEditDistance(all_alns, absl::MakeConstSpan(qry_seq_encoded), qry_read_length);
+  u32 const baseline_ref_nm = ComputeHaplotypeEditDistance(
+      all_alns, REF_HAP_IDX, absl::MakeConstSpan(qry_seq_encoded), qry_read_length);
 
   for (auto const& variant : variant_set) {
     ReadAlleleAssignment best{};
@@ -609,32 +609,23 @@ auto Genotyper::EncodeSequence(std::string_view const raw_seq) -> std::vector<u8
   return encoded;
 }
 
-auto Genotyper::ComputeRefEditDistance(std::vector<Mm2AlnResult> const& alns,
-                                       absl::Span<u8 const> qry_seq_encoded,
-                                       usize qry_read_length) const -> u32 {
-  // Calculate the edit distance (NM) against the Reference Haplotype.
-  // We explicitly compute this against the REF sequence, even if the read
-  // was assigned to an ALT allele. This provides a baseline noise metric
-  // used later to filter out false positives.
+auto Genotyper::ComputeHaplotypeEditDistance(std::vector<Mm2AlnResult> const& alns,
+                                             usize const hap_idx,
+                                             absl::Span<u8 const> qry_seq_encoded,
+                                             usize qry_read_length) const -> u32 {
+  // Calculate edit distance (NM) against the specified haplotype.
+  // Per SAM tags spec: NM excludes clipping (soft/hard clips do NOT contribute).
+  // hts::ComputeEditDistance() is already spec-compliant.
   for (auto const& aln : alns) {
-    if (aln.mHapIdx != REF_HAP_IDX || aln.mRefStart >= aln.mRefEnd) {
+    if (aln.mHapIdx != hap_idx || aln.mRefStart >= aln.mRefEnd) {
       continue;
     }
-    auto const ref_aln_len = static_cast<usize>(aln.mRefEnd - aln.mRefStart);
-    auto const ref_target = absl::MakeConstSpan(mEncodedHaplotypes[REF_HAP_IDX])
-                                .subspan(static_cast<usize>(aln.mRefStart), ref_aln_len);
-    u32 edist = hts::ComputeEditDistance(aln.mCigar, qry_seq_encoded, ref_target);
-
-    for (auto const& unit : aln.mCigar) {
-      if (unit.Operation() == hts::CigarOp::SOFT_CLIP) {
-        edist += unit.Length();
-      }
-    }
-    return edist;
+    auto const aln_len = static_cast<usize>(aln.mRefEnd - aln.mRefStart);
+    auto const target = absl::MakeConstSpan(mEncodedHaplotypes[hap_idx])
+                            .subspan(static_cast<usize>(aln.mRefStart), aln_len);
+    return hts::ComputeEditDistance(aln.mCigar, qry_seq_encoded, target);
   }
-  // Initialize the edit distance (ref_nm) to the maximum possible value
-  // (the full read length). If we find a valid alignment later, we'll
-  // replace this with the real edit distance.
+  // No valid alignment found — fallback to full read length as worst-case NM.
   return static_cast<u32>(qry_read_length);
 }
 

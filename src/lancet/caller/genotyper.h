@@ -259,9 +259,10 @@ class Genotyper {
   // ──────────────────────────────────────────────────────────────────────────
   // AssignReadToAlleles Internal Core Helpers
   // ──────────────────────────────────────────────────────────────────────────
-  [[nodiscard]] auto ComputeRefEditDistance(std::vector<Mm2AlnResult> const& alns,
-                                            absl::Span<u8 const> qry_seq_encoded,
-                                            usize qry_read_length) const -> u32;
+  [[nodiscard]] auto ComputeHaplotypeEditDistance(std::vector<Mm2AlnResult> const& alns,
+                                                  usize hap_idx,
+                                                  absl::Span<u8 const> qry_seq_encoded,
+                                                  usize qry_read_length) const -> u32;
 
   auto EvaluateAlignment(Mm2AlnResult const& aln, RawVariant const& variant,
                          absl::Span<u8 const> qry_seq_encoded, absl::Span<u8 const> qry_base_quals,

@@ -44,9 +44,10 @@ void VariantSupport::AddEvidence(ReadEvidence const& evidence) {
   // Track soft-clip status from original alignment (for SCA FORMAT tag)
   if (evidence.mIsSoftClipped) ++data.mSoftClipCount;
 
-  // Track insert sizes from properly-paired reads (for FLD FORMAT tag)
+  // Track insert sizes from properly-paired reads (for FLD FORMAT tag).
+  // Signed insert size preserved: negative = ALT shorter (cfDNA biology).
   if (evidence.mIsProperPair && evidence.mInsertSize != 0) {
-    data.mProperPairIsizes.push_back(std::abs(static_cast<f64>(evidence.mInsertSize)));
+    data.mProperPairIsizes.push_back(static_cast<f64>(evidence.mInsertSize));
   }
 
   // Track folded read position (for RPCD FORMAT tag)
@@ -468,15 +469,18 @@ auto VariantSupport::BaseQualCohenD() const -> std::optional<f64> {
 // ============================================================================
 // AlleleMismatchDelta (ASMD FORMAT field)
 //
-// mean(ALT NM) − mean(REF NM), where NM is the edit distance of each read
-// against the REF haplotype. Both groups share the variant's own edit
-// contribution, so ASMD cancels it and isolates excess noise.
+// mean(ALT NM) − mean(REF NM) − variant_length, where NM is the edit
+// distance of each read against the REF haplotype. Both groups share the
+// variant's own edit contribution, but ALT reads also carry the variant's
+// inherent edit distance (e.g., a clean 50bp deletion = NM +50 against REF).
+// Subtracting variant_length isolates excess noise beyond the expected
+// structural difference.
 //
 // Positive ASMD → ALT reads have more mismatches (chimeric/paralogous signal)
 // Near zero     → expected for true variants
 // Returns std::nullopt if either group is empty (untestable).
 // ============================================================================
-auto VariantSupport::AlleleMismatchDelta() const -> std::optional<f64> {
+auto VariantSupport::AlleleMismatchDelta(usize const variant_length) const -> std::optional<f64> {
   if (REF_ALLELE_IDX >= mAlleleData.size()) return std::nullopt;
   auto const& ref_nms = mAlleleData[REF_ALLELE_IDX].mRefNmValues;
   if (ref_nms.empty()) return std::nullopt;
@@ -495,7 +499,10 @@ auto VariantSupport::AlleleMismatchDelta() const -> std::optional<f64> {
 
   if (alt_count == 0) return std::nullopt;
   auto const alt_mean = alt_sum / static_cast<f64>(alt_count);
-  return alt_mean - ref_mean;
+  // Subtract variant length: a clean indel contributes its own length
+  // to NM against REF, but that's the variant itself, not noise.
+  auto const adjusted_alt_mean = alt_mean - static_cast<f64>(variant_length);
+  return adjusted_alt_mean - ref_mean;
 }
 
 // ============================================================================
