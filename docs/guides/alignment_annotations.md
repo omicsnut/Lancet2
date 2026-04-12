@@ -58,9 +58,13 @@ somatic cfDNA fragment length shifts.
    insert size are grouped by their assigned allele.
 3. Mean insert sizes are computed for REF-supporting and ALT-supporting
    reads separately.
-4. `FLD = |mean_alt_isize − mean_ref_isize|`, computed per-sample.
+4. `FLD = mean_alt_isize − mean_ref_isize`, computed per-sample.
+   The sign is preserved: negative values indicate shorter ALT fragments
+   (common in cfDNA tumor-derived fragments). If either group has no
+   properly-paired reads, the metric is **untestable** and emitted as
+   `.` (VCF 4.5 missing value).
 
-**Value range**: [0, ∞)
+**Value range**: (−∞, +∞), or `.` (untestable)
 
 **Interpretation**:
 
@@ -114,7 +118,7 @@ statistical significance.
    `Var(U) = (m·n/12) · [(N+1) − Σ(tₖ³−tₖ)/(N·(N−1))]`
 5. `MQCD = Z / √N = [(U − E[U]) / √Var(U)] / √(m+n)`, computed per-sample.
 
-**Value range**: [−2, +2] typically, or `0.0` (untestable)
+**Value range**: [−2, +2] typically, or `.` (untestable — one or both groups empty)
 
 **Coverage stability**: A constant mild bias (ALT MAPQ 2 units lower)
 produces MQCD ≈ −0.34 at **every** depth from 20× to 2000× (< 3% variation).
@@ -123,7 +127,8 @@ produces MQCD ≈ −0.34 at **every** depth from 20× to 2000× (< 3% variation
 
 | MQCD Range | Meaning |
 |:-----------|:--------|
-| ≈ 0.0 | No systematic MAPQ difference — strong evidence for true variant. Also returned when the test is untestable (empty REF or ALT group, all identical MAPQs). |
+| `.` | Untestable: one or both allele groups empty (no reads to compare). |
+| ≈ 0.0 | No systematic MAPQ difference — strong evidence for true variant. |
 | −0.2 to −0.5 | Moderate ALT MAPQ depression — possible repetitive region, inspect manually |
 | < −0.5 | Strong ALT mismapping signal — likely paralogous or multi-mapping artifact |
 | > 0 | ALT MAPQ higher than REF — unusual, may indicate REF mapping issues |
@@ -178,7 +183,7 @@ to folded read positions instead of mapping qualities.
 3. Group folded positions by allele (REF vs ALT).
 4. Apply Mann-Whitney U test → Z/√N effect size, computed per-sample.
 
-**Value range**: [−2, +2] typically, or `0.0` (untestable)
+**Value range**: [−2, +2] typically, or `.` (untestable — one or both groups empty)
 
 **Coverage stability**: The effect size is coverage-invariant. A consistent
 edge bias produces the same RPCD at any depth from 20× to 2000×.
@@ -187,7 +192,8 @@ edge bias produces the same RPCD at any depth from 20× to 2000×.
 
 | RPCD Range | Meaning |
 |:-----------|:--------|
-| ≈ 0.0 | Uniform read position distribution — expected for true variants. Also returned when untestable. |
+| `.` | Untestable: one or both allele groups empty (no reads to compare). |
+| ≈ 0.0 | Uniform read position distribution — expected for true variants. |
 | −0.2 to −0.5 | Moderate edge bias — ALT allele somewhat closer to read ends |
 | < −0.5 | Strong edge bias — likely alignment artifact or 3' error cascade |
 
@@ -221,7 +227,7 @@ qualities at the variant position (REF vs ALT groups).
    reverse strand observations.
 3. Apply Mann-Whitney U test → Z/√N effect size, computed per-sample.
 
-**Value range**: [−2, +2] typically, or `0.0` (untestable)
+**Value range**: [−2, +2] typically, or `.` (untestable — one or both groups empty)
 
 **Coverage stability**: Coverage-invariant. A consistent 5-unit ALT quality
 depression produces the same BQCD at any depth.
@@ -230,7 +236,8 @@ depression produces the same BQCD at any depth.
 
 | BQCD Range | Meaning |
 |:-----------|:--------|
-| ≈ 0.0 | No systematic quality difference — expected for true variants. Also returned when untestable. |
+| `.` | Untestable: one or both allele groups empty (no reads to compare). |
+| ≈ 0.0 | No systematic quality difference — expected for true variants. |
 | −0.2 to −0.5 | Moderate ALT quality depression — inspect for oxidation or deamination |
 | < −0.5 | Strong signal — likely chemistry artifact (8-oxoG, FFPE deamination) |
 
@@ -263,7 +270,7 @@ aligned to the same REF haplotype. The variant itself is an edit against the
 reference for all reads equally. ASMD therefore isolates *excess noise* beyond
 the shared baseline.
 
-**Value range**: (−∞, +∞), typically [0, 20]
+**Value range**: (−∞, +∞), typically [0, 20], or `.` (untestable — one or both groups empty)
 
 **Coverage stability**: Mean edit distance converges quickly. ASMD is stable
 above 10× per allele. At extreme coverages (1000×+), the mean becomes very
@@ -273,10 +280,10 @@ precise, but the expected value remains the same.
 
 | ASMD Range | Meaning |
 |:-----------|:--------|
+| `.` | Untestable: one or both allele groups empty (no reads to compare). |
 | ≈ 0 | ALT and REF reads have similar edit distance — true variant expected |
 | 1–3 | Mild excess noise — possibly repetitive region or low-quality library |
 | > 5 | Strong signal — ALT reads carry many extra mismatches, likely misaligned from a paralogous locus or chimeric junction |
-| 0.0 (empty) | Either REF or ALT group had no reads |
 
 **Manual interpretation tip**: ASMD should be interpreted together with MQCD.
 Paralogous mismapping usually shows both elevated ASMD (excess mismatches in

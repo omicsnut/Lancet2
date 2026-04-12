@@ -84,11 +84,11 @@ The FORMAT column header is: `GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQC
 | `NPBQ` | R | Float | Normalized posterior base quality | [0, ~40] | Per-read quality contribution (raw PBQ / allele depth). Coverage-invariant: ~30 for Q30 reads at any depth. |
 | `SB` | 1 | Float | Strand bias log odds ratio | [−4, +4] | 0 = balanced. \|SB\| > 1 = moderate bias. Sign: +/− = ALT enriched on fwd/rev strand. |
 | `SCA` | 1 | Float | Soft Clip Asymmetry | [−1.0, 1.0] | ALT minus REF soft-clip fraction. See [details](alignment_annotations.md#soft-clip-asymmetry-sca). |
-| `FLD` | 1 | Float | Fragment Length Delta | [0, ∞) | \|mean ALT isize − mean REF isize\|. See [details](alignment_annotations.md#fragment-length-delta-fld). |
-| `RPCD` | 1 | Float | Read Position Cohen's D | [−2, +2] | Effect size on folded read positions (ALT vs REF). Negative = ALT at read edges. 0 = untestable. See [details](alignment_annotations.md#read-position-cohens-d-rpcd). |
-| `BQCD` | 1 | Float | Base Quality Cohen's D | [−2, +2] | Effect size on base qualities (ALT vs REF). Negative = ALT low quality. 0 = untestable. See [details](alignment_annotations.md#base-quality-cohens-d-bqcd). |
-| `MQCD` | 1 | Float | Mapping Quality Cohen's D | [−2, +2] | Effect size on MAPQ (ALT vs REF). Negative = ALT mismapped. 0 = untestable. See [details](alignment_annotations.md#mapping-quality-cohens-d-mqcd). |
-| `ASMD` | 1 | Float | Allele Mismatch Delta | (−∞, +∞) | mean(ALT NM) − mean(REF NM). Positive = ALT excess noise. See [details](alignment_annotations.md#allele-specific-mismatch-delta-asmd). |
+| `FLD` | 1 | Float | Fragment Length Delta | (−∞, +∞) | mean ALT isize − mean REF isize. Signed: negative = ALT fragments shorter. `.` if either group has no proper pairs (untestable). See [details](alignment_annotations.md#fragment-length-delta-fld). |
+| `RPCD` | 1 | Float | Read Position Cohen's D | [−2, +2] | Effect size on folded read positions (ALT vs REF). Negative = ALT at read edges. `.` if either group is empty (untestable). See [details](alignment_annotations.md#read-position-cohens-d-rpcd). |
+| `BQCD` | 1 | Float | Base Quality Cohen's D | [−2, +2] | Effect size on base qualities (ALT vs REF). Negative = ALT low quality. `.` if either group is empty (untestable). See [details](alignment_annotations.md#base-quality-cohens-d-bqcd). |
+| `MQCD` | 1 | Float | Mapping Quality Cohen's D | [−2, +2] | Effect size on MAPQ (ALT vs REF). Negative = ALT mismapped. `.` if either group is empty (untestable). See [details](alignment_annotations.md#mapping-quality-cohens-d-mqcd). |
+| `ASMD` | 1 | Float | Allele Mismatch Delta | (−∞, +∞) | mean(ALT NM) − mean(REF NM). Positive = ALT excess noise. `.` if either group is empty (untestable). See [details](alignment_annotations.md#allele-specific-mismatch-delta-asmd). |
 | `SDFC` | 1 | Float | Site Depth Fold Change | [0, ∞) | DP / window mean coverage. >2 = possible paralog collapse. See [details](alignment_annotations.md#site-depth-fold-change-sdfc). |
 | `PRAD` | 1 | Float | Polar Radius | [0, ~3.5] | log10(1 + sqrt(AD_Ref² + AD_Alt²)). Coverage-invariant signal magnitude. See [details](polar_features.md#polar-radius-prad). |
 | `PANG` | 1 | Float | Polar Angle | [0, π/2] | atan2(AD_Alt, AD_Ref) in radians. 0 = hom REF, π/4 = het, π/2 = hom ALT. See [details](polar_features.md#polar-angle-pang). |
@@ -119,7 +119,7 @@ The VCF QUAL field depends on operating mode:
 ### Tumor-Normal Mode
 
 ```
-chr1  12345  .  A  AT  4.85  .  TUMOR;TYPE=INS;LENGTH=1  GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ  0/1:20,15:10,8:10,7:35:55.0,52.3:30.2,28.5:0.150:0.1200:15.3:-0.3200:-0.1500:-0.2800:0.450:1.00:1.3979:0.6435:0,42,180:42  0/0:30,0:15,0:15,0:30:58.1,0.0:29.8,0.0:0.000:0.0000:0.0:0.0000:0.0000:0.0000:0.000:0.86:1.4914:0.0000:0,0,270:99
+chr1  12345  .  A  AT  4.85  .  TUMOR;TYPE=INS;LENGTH=1  GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:PL:GQ  0/1:20,15:10,8:10,7:35:55.0,52.3:30.2,28.5:0.150:0.1200:15.3:-0.3200:-0.1500:-0.2800:0.450:1.00:1.3979:0.6435:0,42,180:42  0/0:30,0:15,0:15,0:30:58.1,0.0:29.8,0.0:0.000:0.0000:.:.:.:.:.:0.86:1.4914:0.0000:0,0,270:99
 ```
 
 **Per-sample annotation breakdown**:
@@ -128,7 +128,7 @@ chr1  12345  .  A  AT  4.85  .  TUMOR;TYPE=INS;LENGTH=1  GT:AD:ADF:ADR:DP:RMQ:NP
 |:------|:-----------------|:-------------------|:---------------|
 | `NPBQ` | 30.2, 28.5 | 29.8, 0.0 | Good per-read quality (~Q30) for both alleles in tumor. |
 | `SB` | 0.150 | 0.000 | Minimal strand bias in tumor. Normal: no ALT reads, Haldane correction gives 0.0. |
-| `MQCD` | −0.2800 | 0.0000 | Slight ALT MAPQ depression in tumor (within normal range). Normal: untestable (no ALT). |
+| `MQCD` | −0.2800 | `.` | Slight ALT MAPQ depression in tumor (within normal range). Normal: untestable (no ALT reads → `.`). |
 | `PRAD` | 1.3979 | 1.4914 | log10(1+25) ≈ 1.40, log10(1+30) ≈ 1.49. Both in moderate-confidence range (~1.2–1.8). |
 | `PANG` | 0.6435 | 0.0000 | Tumor ≈37° (37% VAF). Normal 0° — no ALT, consistent with somatic variant. |
 

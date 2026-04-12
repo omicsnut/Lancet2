@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -132,11 +133,13 @@ class VariantSupport {
   //   SCA = (alt_sc / alt_total) - (ref_sc / ref_total)
   [[nodiscard]] auto SoftClipAsymmetry() const -> f64;
 
-  // Fragment Length Delta (FLD FORMAT field): absolute difference in mean insert
-  // sizes between ALT-supporting and REF-supporting read pairs. Large FLD
-  // indicates chimeric library artifacts or somatic cfDNA fragment length shifts.
-  //   FLD = |mean_alt_isize - mean_ref_isize|
-  [[nodiscard]] auto FragLengthDelta() const -> f64;
+  // Fragment Length Delta (FLD FORMAT field): signed difference in mean insert
+  // sizes between ALT-supporting and REF-supporting read pairs. Preserves
+  // directionality: negative = ALT fragments shorter (cfDNA biology),
+  // positive = ALT fragments longer (chimeric artifact).
+  //   FLD = mean_alt_isize - mean_ref_isize
+  //   Returns std::nullopt when no proper pairs exist in either group.
+  [[nodiscard]] auto FragLengthDelta() const -> std::optional<f64>;
 
   // Mapping Quality Cohen's D (MQCD FORMAT field): coverage-normalized effect
   // size comparing mapping qualities of REF-supporting vs ALT-supporting reads.
@@ -146,24 +149,27 @@ class VariantSupport {
   // at any depth from 20× to 2000×.
   //   Negative → ALT reads are systematically lower MAPQ (paralogous mismapping)
   //   Near zero → no systematic difference (expected for true variants)
-  //   0.0 → test not applicable (empty group or identical MAPQ)
-  [[nodiscard]] auto MappingQualCohenD() const -> f64;
+  //   Returns std::nullopt when either group is empty (untestable).
+  //   Returns 0.0 when test ran but found no bias (genuine zero).
+  [[nodiscard]] auto MappingQualCohenD() const -> std::optional<f64>;
 
   // Read Position Cohen's D (RPCD FORMAT field): coverage-normalized effect
   // size comparing folded read positions of REF vs ALT reads. Folded position
   // maps both 5' and 3' read edges to 0.0, centers to 0.5.
   //   Negative → ALT allele systematically at read edges (artifact signal)
   //   Near zero → uniform distribution (expected for true variants)
-  //   0.0 → untestable (empty group or identical positions)
-  [[nodiscard]] auto ReadPosCohenD() const -> f64;
+  //   Returns std::nullopt when either group is empty (untestable).
+  //   Returns 0.0 when test ran but found no bias (genuine zero).
+  [[nodiscard]] auto ReadPosCohenD() const -> std::optional<f64>;
 
   // Base Quality Cohen's D (BQCD FORMAT field): coverage-normalized effect
   // size comparing per-allele base qualities (REF vs ALT). Detects 8-oxoG
   // oxidation artifacts where the miscalled base has characteristically low
   // Phred confidence.
   //   Negative → ALT allele has systematically lower base quality
-  //   0.0 → untestable (empty group or identical qualities)
-  [[nodiscard]] auto BaseQualCohenD() const -> f64;
+  //   Returns std::nullopt when either group is empty (untestable).
+  //   Returns 0.0 when test ran but found no bias (genuine zero).
+  [[nodiscard]] auto BaseQualCohenD() const -> std::optional<f64>;
 
   // Allele-Specific Mismatch Delta (ASMD FORMAT field):
   // mean(ALT NM) − mean(REF NM), where NM is edit distance to the REF haplotype.
@@ -171,8 +177,9 @@ class VariantSupport {
   // an edit against the reference for all reads). Chimeric or paralogously
   // mismapped reads produce high ALT NM (excess random mismatches) while REF
   // reads stay clean, yielding ASMD > 0.
-  //   0.0 if either group is empty.
-  [[nodiscard]] auto AlleleMismatchDelta() const -> f64;
+  //   Returns std::nullopt when ALT count is zero (untestable).
+  //   Returns 0.0 when no mismatch delta detected (genuine zero).
+  [[nodiscard]] auto AlleleMismatchDelta() const -> std::optional<f64>;
 
   // ── Multi-Allelic Genotype Likelihoods (Dirichlet-Multinomial Model) ──
 

@@ -16,10 +16,11 @@ if (NOT longdust_POPULATED)
 endif ()
 
 add_executable(TestLancet2
-		base/repeat_test.cpp base/longdust_scorer_test.cpp base/sequence_complexity_test.cpp
+		base/repeat_test.cpp base/longdust_scorer_test.cpp
+		base/sequence_complexity_test.cpp base/mann_whitney_test.cpp
 		hts/cigar_utils_test.cpp hts/reference_test.cpp hts/extractor_test.cpp hts/alignment_test.cpp
-		cbdg/kmer_test.cpp cbdg/graph_test.cpp cbdg/graph_complexity_test.cpp caller/variant_set_test.cpp
-		caller/variant_call_test.cpp
+		cbdg/kmer_test.cpp cbdg/graph_test.cpp cbdg/graph_complexity_test.cpp
+		caller/variant_set_test.cpp caller/variant_call_test.cpp
 		${longdust_SOURCE_DIR}/longdust.c ${longdust_SOURCE_DIR}/kalloc.c)
 target_include_directories(TestLancet2 PRIVATE
 		"${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}"
@@ -36,7 +37,8 @@ endif ()
 add_executable(ScoreRegionLongdust base/score_region_longdust.cpp)
 target_include_directories(ScoreRegionLongdust PRIVATE
 		"${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}")
-target_link_libraries(ScoreRegionLongdust PRIVATE lancet_hts concurrentqueue absl::btree absl::fixed_array absl::strings absl::synchronization)
+target_link_libraries(ScoreRegionLongdust PRIVATE lancet_hts concurrentqueue absl::btree
+		absl::fixed_array absl::strings absl::synchronization)
 set_target_properties(ScoreRegionLongdust PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # Standalone Longdust score analysis tool (reads scored TSV, generates statistics)

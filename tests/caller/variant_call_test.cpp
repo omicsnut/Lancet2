@@ -2,6 +2,7 @@
 
 #include "catch_amalgamated.hpp"
 
+#include <optional>
 #include <vector>
 
 namespace lancet::caller::tests {
@@ -39,6 +40,34 @@ TEST_CASE("SampleGenotypeData compactly serializes VCF genotype structure string
                      "10,0,100:10");
   sample.mIsMissingSupport = true;
   REQUIRE(sample.RenderVcfString() == "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.");
+}
+
+TEST_CASE("SampleGenotypeData renders nullopt metrics as VCF missing value dot",
+          "[lancet][caller][VariantCall]") {
+  VariantCall::SampleGenotypeData sample;
+  sample.mPhredLikelihoods = {0, 10, 50};
+  sample.mAlleleDepths = {10, 0};
+  sample.mFwdAlleleDepths = {5, 0};
+  sample.mRevAlleleDepths = {5, 0};
+  sample.mRmsMappingQualities = {60.0, 0.0};
+  sample.mNormPosteriorBQs = {30.0, 0.0};
+  sample.mContinuousMixtureLods = {0.0, 0.0};
+  sample.mStrandBias = 0.0F;
+  sample.mSoftClipAsym = 0.0F;
+  // Leave 5 optional metrics at their default (std::nullopt) — untestable
+  sample.mSiteDepthFoldChange = 1.0F;
+  sample.mPolarRadius = 1.0F;
+  sample.mPolarAngle = 0.0F;
+  sample.mTotalDepth = 10;
+  sample.mGenotypeQuality = 0;
+  sample.mGenotypeIndices = {0, 0};
+  sample.mIsMissingSupport = false;
+
+  auto const vcf_str = sample.RenderVcfString();
+  // FLD, RPCD, BQCD, MQCD, ASMD should all render as "." (nullopt -> dot)
+  REQUIRE(vcf_str == "0/0:10,0:5,0:5,0:10:60.0,0.0:30.0,0.0:0.000:0.0000:.:"
+                     ".:.:.:.:1.00:1.0000:0.0000:0.0000:"
+                     "0,10,50:0");
 }
 
 }  // namespace lancet::caller::tests

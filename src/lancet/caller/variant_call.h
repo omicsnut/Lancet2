@@ -11,6 +11,7 @@
 #include "absl/types/span.h"
 
 #include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,11 +78,17 @@ class VariantCall {
     // 4B Align: Scalars
     f32 mStrandBias{0.0F};
     f32 mSoftClipAsym{0.0F};
-    f32 mFragLenDelta{0.0F};
-    f32 mReadPosCohenD{0.0F};
-    f32 mBaseQualCohenD{0.0F};
-    f32 mMapQualCohenD{0.0F};
-    f32 mAlleleMismatchDelta{0.0F};
+
+    // std::optional-initialized: std::nullopt from VariantSupport stays nullopt here.
+    // Cannot use IEEE NaN because -ffast-math (set in cmake/defaults.cmake) implies
+    // -ffinite-math-only, which lets the compiler assume NaN never exists — so
+    // std::isnan() is optimized to false and quiet_NaN() may be eliminated.
+    std::optional<f32> mFragLenDelta;
+    std::optional<f32> mReadPosCohenD;
+    std::optional<f32> mBaseQualCohenD;
+    std::optional<f32> mMapQualCohenD;
+    std::optional<f32> mAlleleMismatchDelta;
+
     f32 mSiteDepthFoldChange{0.0F};
     f32 mPolarRadius{0.0F};
     f32 mPolarAngle{0.0F};

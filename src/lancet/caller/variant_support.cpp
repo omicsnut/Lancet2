@@ -318,7 +318,7 @@ auto VariantSupport::SoftClipAsymmetry() const -> f64 {
 // whole-genome alignment (bam1_t::core.isize), not the genotyper re-alignment.
 // Only non-zero insert sizes from properly-paired reads are included.
 // ============================================================================
-auto VariantSupport::FragLengthDelta() const -> f64 {
+auto VariantSupport::FragLengthDelta() const -> std::optional<f64> {
   // ALT mean insert size (summed across all non-REF alleles)
   f64 alt_isize_sum = 0.0;
   usize alt_pairs = 0;
@@ -341,9 +341,11 @@ auto VariantSupport::FragLengthDelta() const -> f64 {
     }
   }
 
-  f64 const alt_mean = alt_pairs > 0 ? alt_isize_sum / static_cast<f64>(alt_pairs) : 0.0;
-  f64 const ref_mean = ref_pairs > 0 ? ref_isize_sum / static_cast<f64>(ref_pairs) : 0.0;
-  return std::abs(alt_mean - ref_mean);
+  // Untestable if either group has no proper pairs
+  if (alt_pairs == 0 || ref_pairs == 0) return std::nullopt;
+  f64 const alt_mean = alt_isize_sum / static_cast<f64>(alt_pairs);
+  f64 const ref_mean = ref_isize_sum / static_cast<f64>(ref_pairs);
+  return alt_mean - ref_mean;
 }
 
 // ============================================================================
@@ -358,9 +360,10 @@ auto VariantSupport::FragLengthDelta() const -> f64 {
 // Pools all ALT alleles into a single group (REF vs all-ALT) because the
 // test is about whether ALT reads as a class are mismapped.
 //
-// Returns 0.0 if either group is empty or all MAPQs are identical.
+// Returns std::nullopt if either group is empty (untestable).
+// Returns 0.0 when test ran but found no bias (genuine zero).
 // ============================================================================
-auto VariantSupport::MappingQualCohenD() const -> f64 {
+auto VariantSupport::MappingQualCohenD() const -> std::optional<f64> {
   // Collect REF mapping qualities
   absl::Span<u8 const> ref_mqs;
   if (REF_ALLELE_IDX < mAlleleData.size()) {
@@ -374,6 +377,9 @@ auto VariantSupport::MappingQualCohenD() const -> f64 {
     alt_mqs.insert(alt_mqs.end(), mqs.begin(), mqs.end());
   }
 
+  // MannWhitneyEffectSize now returns std::optional<f64>:
+  //   nullopt → one or both groups empty (untestable → NaN in VCF)
+  //   0.0     → test ran, no bias detected (genuine zero)
   return base::MannWhitneyEffectSize<u8>(ref_mqs, absl::MakeConstSpan(alt_mqs));
 }
 
@@ -388,9 +394,10 @@ auto VariantSupport::MappingQualCohenD() const -> f64 {
 // Artifacts from 3' quality degradation cluster at read edges (low folded
 // position), producing a negative effect size for ALT.
 //
-// Returns 0.0 if either group is empty or all positions are identical.
+// Returns std::nullopt if either group is empty (untestable).
+// Returns 0.0 when test ran but found no bias (genuine zero).
 // ============================================================================
-auto VariantSupport::ReadPosCohenD() const -> f64 {
+auto VariantSupport::ReadPosCohenD() const -> std::optional<f64> {
   absl::Span<f64 const> ref_positions;
   if (REF_ALLELE_IDX < mAlleleData.size()) {
     ref_positions = absl::MakeConstSpan(mAlleleData[REF_ALLELE_IDX].mFoldedReadPositions);
@@ -413,9 +420,10 @@ auto VariantSupport::ReadPosCohenD() const -> f64 {
 // Detects 8-oxoguanine oxidation artifacts where the miscalled base has
 // characteristically low Phred confidence.
 //
-// Returns 0.0 if either group is empty or all qualities are identical.
+// Returns std::nullopt if either group is empty (untestable).
+// Returns 0.0 when test ran but found no bias (genuine zero).
 // ============================================================================
-auto VariantSupport::BaseQualCohenD() const -> f64 {
+auto VariantSupport::BaseQualCohenD() const -> std::optional<f64> {
   // Collect REF base qualities (fwd + rev concatenated)
   std::vector<u8> ref_bqs;
   if (REF_ALLELE_IDX < mAlleleData.size()) {
@@ -446,18 +454,15 @@ auto VariantSupport::BaseQualCohenD() const -> f64 {
 //
 // Positive ASMD → ALT reads have more mismatches (chimeric/paralogous signal)
 // Near zero     → expected for true variants
-// Returns 0.0 if either group is empty.
+// Returns std::nullopt if either group is empty (untestable).
 // ============================================================================
-auto VariantSupport::AlleleMismatchDelta() const -> f64 {
-  // REF group mean NM
-  f64 ref_mean = 0.0;
-  if (REF_ALLELE_IDX < mAlleleData.size()) {
-    auto const& ref_nms = mAlleleData[REF_ALLELE_IDX].mRefNmValues;
-    if (!ref_nms.empty()) {
-      auto const ref_sum = std::accumulate(ref_nms.begin(), ref_nms.end(), 0.0);
-      ref_mean = ref_sum / static_cast<f64>(ref_nms.size());
-    }
-  }
+auto VariantSupport::AlleleMismatchDelta() const -> std::optional<f64> {
+  if (REF_ALLELE_IDX >= mAlleleData.size()) return std::nullopt;
+  auto const& ref_nms = mAlleleData[REF_ALLELE_IDX].mRefNmValues;
+  if (ref_nms.empty()) return std::nullopt;
+
+  auto const ref_sum = std::accumulate(ref_nms.begin(), ref_nms.end(), 0.0);
+  auto const ref_mean = ref_sum / static_cast<f64>(ref_nms.size());
 
   // Pool all ALT NM values
   f64 alt_sum = 0.0;
@@ -468,7 +473,7 @@ auto VariantSupport::AlleleMismatchDelta() const -> f64 {
     alt_count += nms.size();
   }
 
-  if (alt_count == 0) return 0.0;
+  if (alt_count == 0) return std::nullopt;
   auto const alt_mean = alt_sum / static_cast<f64>(alt_count);
   return alt_mean - ref_mean;
 }

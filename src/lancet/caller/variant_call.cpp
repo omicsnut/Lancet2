@@ -19,12 +19,11 @@
 #include <algorithm>
 #include <array>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-#include <cmath>
 
 namespace {
 
@@ -33,6 +32,23 @@ namespace {
 // See the identity design note on VariantCall::operator< for full rationale.
 [[nodiscard]] inline auto HashRawVariant(lancet::caller::RawVariant const* var) -> u64 {
   return static_cast<u64>(absl::HashOf(var->mChromIndex, var->mGenomeChromPos1, var->mRefAllele));
+}
+
+// Convert std::optional<f64> from VariantSupport to std::optional<f32> for SampleGenotypeData.
+// Preserves nullopt (untestable → "." in VCF) and narrows f64 → f32 for storage.
+[[nodiscard]] inline auto ToOptF32(std::optional<f64> const& val) -> std::optional<f32> {
+  return val.has_value() ? std::optional(static_cast<f32>(val.value())) : std::nullopt;
+}
+
+// Format a std::optional<f32> for VCF output, emitting "." for missing values.
+// VCF 4.5 spec: "." = missing value. This is the single point where the
+// optional → dot conversion happens for all FORMAT fields.
+// NOTE: Cannot use IEEE NaN here because -ffast-math (cmake/defaults.cmake)
+// implies -ffinite-math-only, which optimizes away std::isnan().
+[[nodiscard]] inline auto FormatOptional(std::optional<f32> const& val, char const* fmt_spec)
+    -> std::string {
+  if (!val.has_value()) return ".";
+  return fmt::format(fmt::runtime(fmt_spec), val.value());
 }
 
 }  // namespace
@@ -154,13 +170,14 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     // Strand bias log odds ratio (Number=1, per-sample)
     sample.mStrandBias = static_cast<f32>(support->StrandBiasLogOR());
 
-    // Alignment-derived per-sample annotations (coverage-normalized effect sizes)
+    // Alignment-derived per-sample annotations (coverage-normalized effect sizes).
+    // ToOptF32 bridges std::optional<f64> (VariantSupport) → std::optional<f32> (VCF storage).
     sample.mSoftClipAsym = static_cast<f32>(support->SoftClipAsymmetry());
-    sample.mFragLenDelta = static_cast<f32>(support->FragLengthDelta());
-    sample.mReadPosCohenD = static_cast<f32>(support->ReadPosCohenD());
-    sample.mBaseQualCohenD = static_cast<f32>(support->BaseQualCohenD());
-    sample.mMapQualCohenD = static_cast<f32>(support->MappingQualCohenD());
-    sample.mAlleleMismatchDelta = static_cast<f32>(support->AlleleMismatchDelta());
+    sample.mFragLenDelta = ToOptF32(support->FragLengthDelta());
+    sample.mReadPosCohenD = ToOptF32(support->ReadPosCohenD());
+    sample.mBaseQualCohenD = ToOptF32(support->BaseQualCohenD());
+    sample.mMapQualCohenD = ToOptF32(support->MappingQualCohenD());
+    sample.mAlleleMismatchDelta = ToOptF32(support->AlleleMismatchDelta());
     sample.mSiteDepthFoldChange = static_cast<f32>(SiteDepthFoldChange());
 
     // Polar coordinate features for ML variant classification
@@ -476,17 +493,25 @@ auto VariantCall::SampleGenotypeData::RenderVcfString() const -> std::string {
                              : absl::StrJoin(mContinuousMixtureLods.begin() + 1,
                                              mContinuousMixtureLods.end(), ",", format_f64);
 
+  // Optional-safe formatting: 5 metrics can be std::nullopt (untestable) → "." in VCF.
+  // All other fields are always populated (not optional-capable).
+  auto const fld_str = FormatOptional(mFragLenDelta, "{:.1f}");
+  auto const rpcd_str = FormatOptional(mReadPosCohenD, "{:.4f}");
+  auto const bqcd_str = FormatOptional(mBaseQualCohenD, "{:.4f}");
+  auto const mqcd_str = FormatOptional(mMapQualCohenD, "{:.4f}");
+  auto const asmd_str = FormatOptional(mAlleleMismatchDelta, "{:.3f}");
+
   // clang-format off
   return fmt::format(
-      "{GT}:{AD}:{ADF}:{ADR}:{DP}:{RMQ}:{NPBQ}:{SB:.3F}:{SCA:.4F}:{FLD:.1F}:{RPCD:.4F}:"
-      "{BQCD:.4F}:{MQCD:.4F}:{ASMD:.3F}:{SDFC:.2F}:{PRAD:.4F}:{PANG:.4F}:{CMLOD}:{PL}:{GQ}",
+      "{GT}:{AD}:{ADF}:{ADR}:{DP}:{RMQ}:{NPBQ}:{SB:.3f}:{SCA:.4f}:{FLD}:{RPCD}:"
+      "{BQCD}:{MQCD}:{ASMD}:{SDFC:.2f}:{PRAD:.4f}:{PANG:.4f}:{CMLOD}:{PL}:{GQ}",
       fmt::arg("GT",    gt_str),           fmt::arg("AD",    ad_str),
       fmt::arg("ADF",   adf_str),          fmt::arg("ADR",   adr_str),
       fmt::arg("DP",    mTotalDepth),      fmt::arg("RMQ",   rmq_str),
       fmt::arg("NPBQ",  npbq_str),         fmt::arg("SB",    mStrandBias),
-      fmt::arg("SCA",   mSoftClipAsym),    fmt::arg("FLD",   mFragLenDelta),
-      fmt::arg("RPCD",  mReadPosCohenD),   fmt::arg("BQCD",  mBaseQualCohenD),
-      fmt::arg("MQCD",  mMapQualCohenD),   fmt::arg("ASMD",  mAlleleMismatchDelta),
+      fmt::arg("SCA",   mSoftClipAsym),    fmt::arg("FLD",   fld_str),
+      fmt::arg("RPCD",  rpcd_str),         fmt::arg("BQCD",  bqcd_str),
+      fmt::arg("MQCD",  mqcd_str),         fmt::arg("ASMD",  asmd_str),
       fmt::arg("SDFC",  mSiteDepthFoldChange), fmt::arg("PRAD",  mPolarRadius),
       fmt::arg("PANG",  mPolarAngle),      fmt::arg("CMLOD", cmlod_str),
       fmt::arg("PL",    pl_str),           fmt::arg("GQ",    mGenotypeQuality));

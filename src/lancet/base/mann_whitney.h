@@ -70,14 +70,20 @@
 //
 // ── Edge Cases ──────────────────────────────────────────────────────────────
 //
-// When the test cannot be computed (one or both groups empty, or all values
-// identical producing zero variance), 0.0 is returned. This is correct:
-// with no observable difference between groups, there is no measured bias.
+// Empty group (one or both samples missing): returns std::nullopt.
+// This means the test CANNOT be run — semantically distinct from "test ran,
+// found no bias" (which returns 0.0). Downstream, nullopt converts to
+// IEEE NaN → "." in VCF output (VCF 4.5 missing value convention).
 //
-// Common biological scenarios producing 0.0:
+// Zero variance (all values identical): returns 0.0. The test WAS run
+// but found no discriminating power — a genuine zero, not missing data.
+//
+// Common biological scenarios producing std::nullopt (untestable):
 //   - Homozygous ALT (1/1): all reads support ALT, 0 REF observations
 //   - Allelic dropout: all reads randomly sample one allele
 //   - Homozygous REF (0/0): 0 ALT observations (no variant reads)
+//
+// Common biological scenarios producing 0.0 (genuine zero):
 //   - Identical values: all reads have the same MAPQ/BQ/position
 //
 // ── References ──────────────────────────────────────────────────────────────
@@ -93,6 +99,7 @@
 #include "absl/types/span.h"
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 #include <cmath>
@@ -103,18 +110,18 @@ namespace lancet::base {
 // samples. This is the coverage-normalized analog of the Z-score.
 //
 // Returns positive values if alt_vals tend to be higher, negative if lower.
-// Returns 0.0 when either sample is empty (test not applicable) or when
-// all values are identical (zero variance, no discriminating power).
+// Returns std::nullopt when either sample is empty (test not applicable).
+// Returns 0.0 when all values are identical (zero variance — genuine zero).
 //
 // Template parameter T must be an arithmetic type (u8, i32, f64, etc.).
 // Values are promoted to f64 internally for rank computation.
 template <typename T>
 [[nodiscard]] auto MannWhitneyEffectSize(absl::Span<T const> ref_vals, absl::Span<T const> alt_vals)
-    -> f64 {
-  // Require at least one observation in each group. Without both groups,
-  // there is no observable bias — return 0.0.
+    -> std::optional<f64> {
+  // Empty group = test CANNOT be run. Return nullopt → NaN in VCF (".").
+  // This is semantically different from "test ran, found no bias" (→ 0.0).
   if (ref_vals.empty() || alt_vals.empty()) {
-    return 0.0;
+    return std::nullopt;
   }
 
   auto const n_ref = static_cast<f64>(ref_vals.size());
