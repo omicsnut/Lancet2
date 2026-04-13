@@ -50,6 +50,7 @@ TEST_CASE("MannWhitneyEffectSize returns 0.0 when all values are identical",
   auto const result =
       MannWhitneyEffectSize<f64>(absl::MakeConstSpan(ref_vals), absl::MakeConstSpan(alt_vals));
   REQUIRE(result.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   REQUIRE(result.value() == Catch::Approx(0.0).margin(1e-10));
 }
 
@@ -61,6 +62,7 @@ TEST_CASE("MannWhitneyEffectSize returns nonzero for biased groups",
   auto const result =
       MannWhitneyEffectSize<f64>(absl::MakeConstSpan(ref_vals), absl::MakeConstSpan(alt_vals));
   REQUIRE(result.has_value());
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   REQUIRE(result.value() > 0.0);
 }
 
