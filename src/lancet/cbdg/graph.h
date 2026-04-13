@@ -215,7 +215,7 @@ class Graph {
   [[nodiscard]] static auto ToString(State state) -> std::string;
 
   template <class... Args>
-  inline constexpr void WriteDotDevelop(Args&&... args) {
+  constexpr void WriteDotDevelop(Args&&... args) {
     WriteDot(std::forward<Args>(args)...);
   }
 #else

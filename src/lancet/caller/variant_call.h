@@ -261,7 +261,7 @@ class VariantCall {
   };
 
   /// Build per-sample FORMAT components and track multi-allelic site qualities.
-  void BuildFormatFields(SupportArray const& evidence, Samples samps, bool tumor_normal_mode);
+  void BuildFormatFields(SupportArray const& evidence, Samples samps, bool case_ctrl_mode);
 
   // Sets mGenotypeIndices from PL values.
   static void AssignGenotype(SampleGenotypeData& sample, absl::Span<int const> pls,
@@ -271,10 +271,10 @@ class VariantCall {
   [[nodiscard]] static auto GenotypeFromGLIndex(usize gl_index, usize num_alleles) -> std::string;
 
   void UpdateSiteQuality(core::SampleInfo const& sinfo, VariantSupport const* support,
-                         SupportArray const& evidence, Samples samps, bool tumor_normal_mode,
+                         SupportArray const& evidence, Samples samps, bool case_ctrl_mode,
                          absl::Span<int const> pls);
 
-  /// Somatic log odds ratio: tumor ALT enrichment vs normal.
+  /// Somatic log odds ratio: case ALT enrichment vs control.
   [[nodiscard]] static auto SomaticLogOddsRatio(core::SampleInfo const& curr,
                                                 SupportArray const& supports, Samples samps) -> f64;
 
@@ -282,13 +282,13 @@ class VariantCall {
   static void AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupport const* support,
                                      usize num_alleles);
 
-  /// Compute SHARED/NORMAL/TUMOR/UNKNOWN state from evidence.
-  /// In non-tumor-normal mode (i.e. normal-only), state is always UNKNOWN.
-  void ComputeState(SupportArray const& evidence, Samples samps, bool tumor_normal_mode);
+  /// Compute SHARED/CTRL/CASE/UNKNOWN state from evidence.
+  /// In non-case-control mode (i.e. control-only), state is always UNKNOWN.
+  void ComputeState(SupportArray const& evidence, Samples samps, bool case_ctrl_mode);
 
   /// Assemble the INFO field string (TYPE, LENGTH,
   /// optional state prefix, complexity annotations).
-  void BuildInfoField(bool tumor_normal_mode);
+  void BuildInfoField(bool case_ctrl_mode);
 };
 
 }  // namespace lancet::caller

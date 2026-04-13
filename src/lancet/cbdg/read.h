@@ -17,17 +17,19 @@ namespace lancet::cbdg {
 
 class Read {
  public:
-  explicit Read(hts::Alignment const& aln, std::string sample_name, Label::Tag const tag)
+  explicit Read(hts::Alignment const& aln, std::string sample_name, Label::Tag const tag,
+                usize const sample_index)
       : mStart0(aln.StartPos0()),
         mInsertSize(aln.InsertSize()),
-        mChromIdx(aln.ChromIndex()),
-        mSamFlag(aln.FlagRaw()),
-        mMapQual(aln.MapQual()),
-        mTag(tag),
+        mSampleIndex(sample_index),
         mQname(aln.QnameView()),
         mSequence(aln.BuildSequence()),
         mSampleName(std::move(sample_name)),
-        mQuality(aln.BuildQualities()) {
+        mQuality(aln.BuildQualities()),
+        mChromIdx(aln.ChromIndex()),
+        mSamFlag(aln.FlagRaw()),
+        mMapQual(aln.MapQual()),
+        mTag(tag) {
     static constexpr u8 DEFAULT_MIN_READ_MAP_QUAL = 20;
     if (aln.MapQual() < DEFAULT_MIN_READ_MAP_QUAL) {
       mPassesAlnFilters = false;
@@ -65,20 +67,23 @@ class Read {
   [[nodiscard]] auto QualView() const noexcept -> absl::Span<u8 const> { return mQuality; }
   [[nodiscard]] auto Length() const noexcept -> usize { return mSequence.size(); }
   [[nodiscard]] auto SampleName() const noexcept -> std::string_view { return mSampleName; }
+  [[nodiscard]] auto SampleIndex() const noexcept -> usize { return mSampleIndex; }
   [[nodiscard]] auto IsSoftClipped() const noexcept -> bool { return mIsSoftClipped; }
   [[nodiscard]] auto InsertSize() const noexcept -> i64 { return mInsertSize; }
   [[nodiscard]] auto IsProperPair() const noexcept -> bool { return (mSamFlag & 0x2) != 0; }
 
   template <typename HashState>
   friend auto AbslHashValue(HashState hash_state, Read const& read) -> HashState {
-    return HashState::combine(std::move(hash_state), read.mSampleName, read.mStart0, read.mChromIdx,
-                              read.mSamFlag, read.mMapQual, static_cast<u8>(read.mTag), read.mQname,
-                              read.mSequence, read.mQuality);
+    return HashState::combine(std::move(hash_state), read.mSampleName, read.mStart0,
+                              read.mSampleIndex, read.mChromIdx, read.mSamFlag, read.mMapQual,
+                              static_cast<u8>(read.mTag), read.mQname, read.mSequence,
+                              read.mQuality);
   }
 
   friend auto operator==(Read const& lhs, Read const& rhs) noexcept -> bool {
     return lhs.mSampleName == rhs.mSampleName &&
            lhs.mStart0 == rhs.mStart0 &&
+           lhs.mSampleIndex == rhs.mSampleIndex &&
            lhs.mChromIdx == rhs.mChromIdx &&
            lhs.mSamFlag == rhs.mSamFlag &&
            lhs.mMapQual == rhs.mMapQual &&
@@ -94,19 +99,19 @@ class Read {
   }
 
  private:
-  i64 mStart0 = -1;
-  i64 mInsertSize = 0;
-  i32 mChromIdx = -1;
-  u16 mSamFlag = 0;
-  u8 mMapQual = 0;
-  bool mPassesAlnFilters = true;
-  bool mIsSoftClipped = false;
-
-  Label::Tag mTag;
-  std::string mQname;
-  std::string mSequence;
-  std::string mSampleName;
-  std::vector<u8> mQuality;
+  i64 mStart0 = -1;               // 8B
+  i64 mInsertSize = 0;            // 8B
+  usize mSampleIndex = 0;         // 8B
+  std::string mQname;             // 32B (8B align)
+  std::string mSequence;          // 32B (8B align)
+  std::string mSampleName;        // 32B (8B align)
+  std::vector<u8> mQuality;       // 24B (8B align)
+  i32 mChromIdx = -1;             // 4B
+  u16 mSamFlag = 0;               // 2B
+  u8 mMapQual = 0;                // 1B
+  bool mPassesAlnFilters = true;  // 1B
+  bool mIsSoftClipped = false;    // 1B
+  Label::Tag mTag = Label::CTRL;  // 1B
 };
 
 }  // namespace lancet::cbdg

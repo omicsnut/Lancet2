@@ -22,6 +22,7 @@ class CliParams {
 
   usize mNumWorkerThreads = 2;
   bool mEnableVerboseLogging = false;
+  bool mIsCaseCtrlMode = false;
 
   core::WindowBuilder::Params mWindowBuilder;
   core::VariantBuilder::Params mVariantBuilder;

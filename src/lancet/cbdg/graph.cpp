@@ -777,13 +777,13 @@ auto Graph::MarkConnectedComponents() -> std::vector<ComponentInfo> {
   std::vector<ComponentInfo> results_info;
 
 #ifdef LANCET_DEVELOP_MODE
-  static auto const is_unassigned = [](NodeTable::const_reference item) {
+  static auto const IS_UNASSIGNED = [](NodeTable::const_reference item) {
     return item.second->GetComponentId() == 0;
   };
 #endif
 
   // Check that all nodes are component zero before we start
-  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, is_unassigned)) == mNodes.size())
+  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, IS_UNASSIGNED)) == mNodes.size())
 
   for (NodeTable::reference item : mNodes) {
     if (item.second->GetComponentId() != 0) continue;
@@ -826,7 +826,7 @@ auto Graph::MarkConnectedComponents() -> std::vector<ComponentInfo> {
   });
 
   // Check that none of the nodes are component zero after we are done
-  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, is_unassigned)) == 0)
+  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, IS_UNASSIGNED)) == 0)
   return results_info;
 }
 
@@ -841,12 +841,12 @@ void Graph::RemoveLowCovNodes(usize const component_id) {
         if (item.second->GetComponentId() != component_id) return;
         if (item.first == source_id || item.first == sink_id) return;
 
-        auto const is_nml_singleton = item.second->NormalReadSupport() == 1;
-        auto const is_tmr_singleton = item.second->TumorReadSupport() == 1;
+        // Remove nodes where every sample has at most 1 read (unreliable k-mers)
+        // or total coverage is below the user-configured minimum.
+        auto const all_singletons = item.second->IsAllSingletons();
         auto const total_sample_cov = item.second->TotalReadSupport();
 
-        if ((is_nml_singleton && is_tmr_singleton) ||
-            total_sample_cov < this->mParams.mMinNodeCov) {
+        if (all_singletons || total_sample_cov < this->mParams.mMinNodeCov) {
           remove_nids.emplace_back(item.first);
         }
       });
@@ -915,7 +915,7 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
       offset++;
 
       if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) return;
-      node->IncrementReadSupport(read.SrcLabel());
+      node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
       mate_mers.emplace(mm_pair);
     });
   }
@@ -1039,8 +1039,8 @@ edge [color=gray,fontsize=8,fontcolor=floralwhite,len=3,fixedsize=false,headclip
     auto const fill_color = is_background_node                     ? "darkgray"sv
                             : nodes_highlight.contains(item.first) ? "orchid"sv
                             : item.second->IsShared()              ? "steelblue"sv
-                            : item.second->IsTumorOnly()           ? "indianred"sv
-                            : item.second->IsNormalOnly()          ? "mediumseagreen"sv
+                            : item.second->IsCaseOnly()            ? "indianred"sv
+                            : item.second->IsCtrlOnly()            ? "mediumseagreen"sv
                                                                    : "lightblue"sv;
     // NOLINTEND(readability-avoid-nested-conditional-operator)
 

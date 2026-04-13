@@ -1,6 +1,5 @@
-#include "lancet/caller/variant_support.h"
-
 #include "lancet/caller/variant_call.h"
+#include "lancet/caller/variant_support.h"
 
 #include "catch_amalgamated.hpp"
 
@@ -10,12 +9,13 @@
 
 namespace lancet::caller::tests {
 
+namespace {
 // ============================================================================
 // Helper: build a ReadEvidence with only the fields relevant to a specific
 // metric under test. All other fields use safe defaults.
 // ============================================================================
-static auto MakeEvidence(AlleleIndex allele, i64 aln_start, u32 own_hap_nm, u32 haplotype_id,
-                         u32 rname_hash) -> VariantSupport::ReadEvidence {
+auto MakeEvidence(AlleleIndex allele, i64 aln_start, u32 own_hap_nm, u32 haplotype_id,
+                  u32 rname_hash) -> VariantSupport::ReadEvidence {
   return {
       .mInsertSize = 300,
       .mAlignmentStart = aln_start,
@@ -33,6 +33,7 @@ static auto MakeEvidence(AlleleIndex allele, i64 aln_start, u32 own_hap_nm, u32 
       .mIsProperPair = true,
   };
 }
+}  // namespace
 
 // ============================================================================
 // FSSE Tests
@@ -239,7 +240,7 @@ TEST_CASE("HSE ignores REF reads — only ALT haplotype IDs contribute",
 
 TEST_CASE("PDCV renders as dot when nullopt in SampleGenotypeData",
           "[lancet][caller][VariantCall][PDCV]") {
-  VariantCall::SampleGenotypeData sample;
+  VariantCall::SampleGenotypeData const sample;
   // mPathDepthCv defaults to std::nullopt
   REQUIRE_FALSE(sample.mPathDepthCv.has_value());
 }

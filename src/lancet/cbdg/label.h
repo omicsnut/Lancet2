@@ -8,7 +8,7 @@ namespace lancet::cbdg {
 class Label {
  public:
   // NOLINTNEXTLINE(cppcoreguidelines-use-enum-class)
-  enum Tag : u8 { REFERENCE = 1, NORMAL = 2, TUMOR = 4 };
+  enum Tag : u8 { REFERENCE = 1, CTRL = 2, CASE = 4 };
 
   Label() = default;
   constexpr explicit Label(Tag val) noexcept : mData(static_cast<u8>(val)) {}

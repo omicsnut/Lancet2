@@ -32,12 +32,12 @@ build = { cmd = "cmake --build cmake-build-release", depends-on = [
   "configure",
 ], description = "Build Lancet2 in Release mode" }
 
-build-debug = { cmd = "cmake --build build", depends-on = [
+build-debug = { cmd = "cmake --build cmake-build-debug", depends-on = [
   "configure-debug",
 ], description = "Build Lancet2 in Debug mode (with tests)" }
 
 # ── Test & Benchmark ─────────────────────────────────────────────────────────
-test = { cmd = "./build/tests/TestLancet2", depends-on = [
+test = { cmd = "./cmake-build-debug/tests/TestLancet2", depends-on = [
   "build-debug",
 ], description = "Run Catch2 unit tests" }
 
@@ -48,15 +48,15 @@ bench = { cmd = "./cmake-build-release/benchmarks/BenchmarkLancet2", depends-on 
 # ── Formatting (clang-format) ────────────────────────────────────────────────
 fmt-check = { cmd = "python3 scripts/run_clang_format.py", description = "Check C++ formatting (dry-run)" }
 
-fmt = { cmd = "python3 scripts/run_clang_format.py --fix", description = "Apply clang-format to all C++ sources" }
+fmt-fix = { cmd = "python3 scripts/run_clang_format.py --fix", description = "Apply clang-format to all C++ sources" }
 
 # ── Static Analysis (clang-tidy) ─────────────────────────────────────────────
 lint-check = { cmd = "python3 scripts/run_clang_tidy.py", depends-on = [
-  "build-debug",
+  "build",
 ], description = "Run clang-tidy check on all sources (no fixes)" }
 
 lint-fix = { cmd = "python3 scripts/run_clang_tidy.py --fix", depends-on = [
-  "build-debug",
+  "build",
 ], description = "Run clang-tidy with auto-fix (review changes carefully)" }
 
 # ── Aggregate Lint ───────────────────────────────────────────────────────────

@@ -421,15 +421,14 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
                     fmt::format("##contig=<ID={},length={}>\n", chrom.Name(), chrom.Length()));
   }
 
-  // SHARED/NORMAL/TUMOR INFO headers — only when tumor inputs exist (somatic mode)
+  // SHARED/CTRL/CASE INFO headers — only when case-control mode is active
   std::string conditional_info_lines;
-  bool const has_tumor = !params.mVariantBuilder.mRdCollParams.mTumorPaths.empty();
-  if (has_tumor) {
+  if (params.mIsCaseCtrlMode) {
     // clang-format off
     absl::StrAppend(&conditional_info_lines,
-      "##INFO=<ID=SHARED,Number=0,Type=Flag,Description=\"Variant ALT seen in both tumor & normal sample(s)\">\n"
-      "##INFO=<ID=NORMAL,Number=0,Type=Flag,Description=\"Variant ALT seen only in normal samples(s)\">\n"
-      "##INFO=<ID=TUMOR,Number=0,Type=Flag,Description=\"Variant ALT seen only in tumor sample(s)\">\n");
+      "##INFO=<ID=SHARED,Number=0,Type=Flag,Description=\"Variant ALT seen in both case & control sample(s)\">\n"
+      "##INFO=<ID=CTRL,Number=0,Type=Flag,Description=\"Variant ALT seen only in control sample(s)\">\n"
+      "##INFO=<ID=CASE,Number=0,Type=Flag,Description=\"Variant ALT seen only in case sample(s)\">\n");
     // clang-format on
   }
 
@@ -487,17 +486,47 @@ void PipelineRunner::ValidateAndPopulateParams() {
     return true;
   };
 
-  if (std::ranges::any_of(mParamsPtr->mVariantBuilder.mRdCollParams.mNormalPaths, is_md_missing)) {
-    LOG_WARN("MD tag missing in normal BAM/CRAM. Turning off active region detection")
+  if (std::ranges::any_of(mParamsPtr->mVariantBuilder.mRdCollParams.mCtrlPaths, is_md_missing)) {
+    LOG_WARN("MD tag missing in control BAM/CRAM. Turning off active region detection")
     mParamsPtr->mVariantBuilder.mSkipActiveRegion = true;
     return;
   }
 
-  if (std::ranges::any_of(mParamsPtr->mVariantBuilder.mRdCollParams.mTumorPaths, is_md_missing)) {
-    LOG_WARN("MD tag missing in tumor BAM/CRAM. Turning off active region detection")
+  if (std::ranges::any_of(mParamsPtr->mVariantBuilder.mRdCollParams.mCasePaths, is_md_missing)) {
+    LOG_WARN("MD tag missing in case BAM/CRAM. Turning off active region detection")
     mParamsPtr->mVariantBuilder.mSkipActiveRegion = true;
     return;
   }
+
+  // Check --sample specs for MD tag presence.
+  // Parse each spec to extract the file path (strip the :role suffix).
+  for (auto const& spec : mParamsPtr->mVariantBuilder.mRdCollParams.mSampleSpecs) {
+    auto const colon_pos = spec.rfind(':');
+    auto const suffix = (colon_pos != std::string::npos && colon_pos < spec.size() - 1)
+                            ? std::string_view(spec).substr(colon_pos + 1)
+                            : std::string_view{};
+    auto const is_known_role = (suffix == "control" || suffix == "case");
+    auto const fpath = is_known_role ? std::filesystem::path(spec.substr(0, colon_pos))
+                                     : std::filesystem::path(spec);
+    if (is_md_missing(fpath)) {
+      LOG_WARN("MD tag missing in --sample BAM/CRAM. Turning off active region detection")
+      mParamsPtr->mVariantBuilder.mSkipActiveRegion = true;
+      return;
+    }
+  }
+
+  // Precompute case-control mode. True when both control and case samples exist.
+  // Checks --tumor paths AND --sample specs with :case suffix so BuildVcfHeader()
+  // emits SHARED/CTRL/CASE INFO lines regardless of which CLI flag provided cases.
+  auto const& rdcoll = mParamsPtr->mVariantBuilder.mRdCollParams;
+  bool const has_case_from_legacy = !rdcoll.mCasePaths.empty();
+  bool const has_case_from_specs =
+      std::ranges::any_of(rdcoll.mSampleSpecs, [](std::string const& spec) -> bool {
+        auto const colon_pos = spec.rfind(':');
+        if (colon_pos == std::string::npos || colon_pos >= spec.size() - 1) return false;
+        return spec.substr(colon_pos + 1) == "case";
+      });
+  mParamsPtr->mIsCaseCtrlMode = has_case_from_legacy || has_case_from_specs;
 }
 
 }  // namespace lancet::cli

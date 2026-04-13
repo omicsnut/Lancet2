@@ -160,12 +160,12 @@ allele identity is algebraically separated from sequencing depth.
 
 ---
 
-## Tumor-Normal "Four-Feature" Paradigm
+## Case-Control "Four-Feature" Paradigm
 
 Each sample independently computes its own PRAD and PANG from its own allele
 depths. The downstream ML model receives a four-element feature vector:
 
-`[PRAD_Normal, PANG_Normal, PRAD_Tumor, PANG_Tumor]`
+`[PRAD_Control, PANG_Control, PRAD_Case, PANG_Case]`
 
 Both PRAD (log10-compressed, range [0, ~3.5]) and PANG (ratio-based, range
 [0, π/2]) are coverage-invariant, ensuring the four-feature paradigm produces
@@ -175,8 +175,8 @@ This avoids cross-sample relational metrics that would violate VCF FORMAT
 semantics and eliminates sentinel/NaN imputation issues. The model learns
 the relational delta itself:
 
-| Pattern | PANG Normal | PANG Tumor | Classification |
+| Pattern | PANG Control | PANG Case | Classification |
 |:--------|:------------|:-----------|:---------------|
 | Germline | ≈ π/4 (45°) | ≈ π/4 (45°) | Inherited variant — same allele fraction in both |
-| Somatic | ≈ 0 (0°) | ≈ π/6..π/4 | Tumor-specific variant — normal has no ALT support |
-| LOH | ≈ π/4 (45°) | ≈ π/2 (90°) | Loss of heterozygosity — tumor lost REF allele |
+| Somatic | ≈ 0 (0°) | ≈ π/6..π/4 | Case-specific variant — control has no ALT support |
+| LOH | ≈ π/4 (45°) | ≈ π/2 (90°) | Loss of heterozygosity — case lost REF allele |

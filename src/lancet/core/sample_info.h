@@ -43,7 +43,7 @@ class SampleInfo {
       return sum + sinfo.NumSampledBases();
     };
 
-    u64 const total_bases = std::accumulate(samples.cbegin(), samples.cend(), 0, SUMMER);
+    u64 const total_bases = std::accumulate(samples.cbegin(), samples.cend(), u64{0}, SUMMER);
     return static_cast<f64>(total_bases) / static_cast<f64>(ref_len);
   }
 
@@ -78,15 +78,29 @@ class SampleInfo {
     }
   };
 
+  /// 0-based index assigned after sorting by (TagKind, SampleName).
+  /// Multiple BAM/CRAM files sharing the same SM read group tag and same role
+  /// receive the same index — they are one logical sample split across files.
+  ///
+  /// This index determines three things:
+  ///   1. Which entry in Node::mCounts tracks this sample's read support
+  ///   2. The position of this sample's FORMAT column in VCF output
+  ///   3. Which bit is set in the SampleMask for N-sample graph coloring
+  ///
+  /// Assigned by MakeSampleList() after sorting — never set by the constructor.
+  [[nodiscard]] auto SampleIndex() const noexcept -> usize { return mSampleIndex; }
+
  private:
   u64 mNumSampledReads = 0;
   u64 mNumSampledBases = 0;
+  usize mSampleIndex = 0;
 
   std::string mSampleName;
   std::filesystem::path mFilePath;
   cbdg::Label::Tag mTag = cbdg::Label::REFERENCE;
 
   friend class ReadCollector;
+  void SetSampleIndex(usize const index) { mSampleIndex = index; }
   void SetNumSampledReads(u64 const num_reads) { mNumSampledReads = num_reads; }
   void SetNumSampledBases(u64 const num_bases) { mNumSampledBases = num_bases; }
 };

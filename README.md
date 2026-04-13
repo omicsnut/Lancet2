@@ -53,9 +53,31 @@ cmake -DCMAKE_BUILD_TYPE=Release -DLANCET_BUILD_STATIC=OFF -DLANCET_ENABLE_CLOUD
 make -j$(nproc)
 ```
 
+## Quick Start
+
+Tumor-normal somatic calling — the primary supported workflow. In the VCF,
+`--tumor` maps to `CASE` and `--normal` maps to `CTRL`
+([why?](https://nygenome.github.io/Lancet2/#basic-usage)):
+
+```bash
+Lancet2 pipeline \
+    --normal /path/to/normal.bam \
+    --tumor /path/to/tumor.bam \
+    --reference /path/to/reference.fasta \
+    --region "chr22" --num-threads $(nproc) \
+    --out-vcfgz /path/to/output.vcf.gz
+```
+
+Lancet2 also supports **single-sample** (germline/mosaic) and **multi-sample**
+modes. See the [full documentation](https://nygenome.github.io/Lancet2/) for
+details.
+
 ## Documentation
 
-Documentation for Lancet2 is hosted on [GitHub pages](https://nygenome.github.io/Lancet2/).
+See [full documentation](https://nygenome.github.io/Lancet2/) for
+[VCF output format](https://nygenome.github.io/Lancet2/guides/vcf_output/),
+[CLI reference](https://nygenome.github.io/Lancet2/reference/), and
+[pipeline architecture](https://nygenome.github.io/Lancet2/guides/architecture/).
 
 ## Citing
 

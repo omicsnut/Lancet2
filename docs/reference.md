@@ -30,17 +30,37 @@ See [VCF Output Reference](guides/vcf_output.md) for the full output format spec
 
 ### Datasets
 
+!!! note "Terminology: Case/Control vs. Tumor/Normal"
+    Lancet2 uses **case/control** terminology to generalize beyond tumor-normal analysis (e.g., treated vs. untreated, responder vs. non-responder). The `--normal` and `--tumor` CLI flags remain **first-class, permanent** — tumor-normal somatic calling is the primary supported workflow. The flags map directly: `--normal` → control samples, `--tumor` → case samples.
+
 #### `-n`,`--normal`
 > [PATH...]
 
 Path to one (or) more normal BAM/CRAM file(s). Required.
-Multiple paths enable multi-sample mode where all normal samples share the `NORMAL` graph color. Sample names are read from BAM `SM` read group tags. See [Multi-Sample & Germline Mode](guides/architecture.md#multi-sample-germline-mode) for caveats.
+Maps to control samples internally. Multiple paths enable multi-sample mode where all control samples share the `CTRL` graph color. Sample names are read from BAM `SM` read group tags. See [Multi-Sample & Germline Mode](guides/architecture.md#multi-sample-germline-mode) for caveats.
 
 #### `-t`,`--tumor`
 > [PATH...]
 
-Path to one (or) more tumor BAM/CRAM file(s). Optional — when omitted, Lancet2 runs in germline-only mode (no `SHARED`/`NORMAL`/`TUMOR` INFO tags in the VCF).
-Multiple paths enable multi-sample somatic mode. See [Multi-Sample & Germline Mode](guides/architecture.md#multi-sample-germline-mode).
+Path to one (or) more tumor BAM/CRAM file(s). Optional — when omitted, Lancet2 runs in germline-only mode (no `SHARED`/`CTRL`/`CASE` INFO tags in the VCF).
+Maps to case samples internally. Multiple paths enable multi-sample case-control mode. See [Multi-Sample & Germline Mode](guides/architecture.md#multi-sample-germline-mode).
+
+#### `-s`,`--sample`
+> [PATH:ROLE...]
+
+Unified sample input for N-sample mode. Each argument is a `<path>:<role>` pair where `role` is `control` or `case`. If the role suffix is omitted, the sample defaults to control. The role is identified by checking the suffix after the **last** colon, so cloud URIs like `s3://bucket/file.bam:case` work correctly. This flag can be used **alongside** `--normal`/`--tumor` to add additional samples. `--normal` remains required. Samples from all flags are merged into a single sorted sample list.
+
+**Examples:**
+```bash
+# Add a third sample alongside standard tumor-normal
+Lancet2 pipeline -n normal.bam -t tumor.bam -s extra.bam:case ...
+
+# Three-way comparison with shared control
+Lancet2 pipeline -n control.bam -s treated_a.bam:case -s treated_b.bam:case ...
+
+# Omitted role defaults to control
+Lancet2 pipeline -n normal.bam -s population.bam ...
+```
 
 ### Regions
 
@@ -88,7 +108,7 @@ Maximum k-mer length to try for micro-assembly graph nodes. Default value --> 12
 If no cycle-free graph is produced by this k-mer size, the window yields no assembled haplotypes. Higher values can resolve longer repeat motifs at the cost of requiring longer exact matches in reads.
 See [K-mer Retry Cascade](guides/architecture.md#k-mer-retry-cascade).
 
-#### `-s`,`--kmer-step`
+#### `--kmer-step`
 K-mer step size for the retry cascade. Must be one of {2, 4, 6, 8, 10}. Default value --> 6.
 Smaller steps try more intermediate k values before exhausting the search space — more chances to find a clean graph, but more rebuild iterations.
 See [K-mer Retry Cascade](guides/architecture.md#k-mer-retry-cascade).

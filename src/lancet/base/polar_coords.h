@@ -60,11 +60,11 @@
 //       Low angle + HIGH PRAD (>2) → true low-frequency variant (deep seq).
 //       Low angle + LOW PRAD  (<1) → stochastic noise (insufficient evidence).
 //
-// ── Tumor-Normal "Four-Feature" Paradigm ────────────────────────────────────
+// ── Case-Control "Four-Feature" Paradigm ────────────────────────────────────
 //
 //   Each sample independently computes its own (PRAD, PANG) from its
 //   own allele depths. The downstream ML model receives:
-//     [PRAD_Normal, PANG_Normal, PRAD_Tumor, PANG_Tumor]
+//     [PRAD_Control, PANG_Control, PRAD_Case, PANG_Case]
 //
 //   PRAD's log10 compression ensures the four-feature paradigm is coverage-
 //   invariant: both angle (identity) and radius (confidence) produce bounded,
@@ -73,9 +73,9 @@
 //   This avoids cross-sample relational metrics that would violate VCF's
 //   per-sample FORMAT semantics and eliminates sentinel/NaN imputation
 //   issues entirely. The model learns the relational delta itself:
-//     - Germline:  PANG_Normal ≈ π/4  AND PANG_Tumor ≈ π/4
-//     - Somatic:   PANG_Normal ≈ 0    AND PANG_Tumor ≈ π/6..π/4
-//     - LOH:       PANG_Normal ≈ π/4  AND PANG_Tumor ≈ π/2
+//     - Germline:  PANG_Control ≈ π/4  AND PANG_Case ≈ π/4
+//     - Somatic:   PANG_Control ≈ 0    AND PANG_Case ≈ π/6..π/4
+//     - LOH:       PANG_Control ≈ π/4  AND PANG_Case ≈ π/2
 //
 // ── Performance Notes ───────────────────────────────────────────────────────
 //

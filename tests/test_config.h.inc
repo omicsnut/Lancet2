@@ -12,10 +12,10 @@ static constexpr auto FULL_DATA_DIR = "@LANCET_FULL_DATA_DIR@";
 static constexpr auto TEST_DATA_DIR = "@LANCET_TEST_DATA_DIR@";
 
 static constexpr auto GRCH38_REF_NAME = "GRCh38_full_analysis_set_plus_decoy_hla.fa.gz";
-static constexpr auto TUMOR_CRAM_NAME = "chr4_with_pairs.HCC1395_SAMN10102573_SRR7890893.cram";
-static constexpr auto NORMAL_CRAM_NAME = "chr4_with_pairs.HCC1395BL_SAMN10102574_SRR7890943.cram";
-static constexpr auto TUMOR_BAM_NAME = "chr4_with_pairs.HCC1395_SAMN10102573_SRR7890893.bam";
-static constexpr auto NORMAL_BAM_NAME = "chr4_with_pairs.HCC1395BL_SAMN10102574_SRR7890943.bam";
+static constexpr auto CASE_CRAM_NAME = "chr4_with_pairs.HCC1395_SAMN10102573_SRR7890893.cram";
+static constexpr auto CTRL_CRAM_NAME = "chr4_with_pairs.HCC1395BL_SAMN10102574_SRR7890943.cram";
+static constexpr auto CASE_BAM_NAME = "chr4_with_pairs.HCC1395_SAMN10102573_SRR7890893.bam";
+static constexpr auto CTRL_BAM_NAME = "chr4_with_pairs.HCC1395BL_SAMN10102574_SRR7890943.bam";
 
 // NOLINTNEXTLINE(misc-use-anonymous-namespace)
 [[nodiscard]] static inline auto MakePath(std::string_view prefix, std::string_view suffix) -> std::filesystem::path {

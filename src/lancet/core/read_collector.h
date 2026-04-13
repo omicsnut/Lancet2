@@ -26,15 +26,21 @@ class ReadCollector {
 
   struct Params {
     std::filesystem::path mRefPath;
-    std::vector<std::filesystem::path> mNormalPaths;
-    std::vector<std::filesystem::path> mTumorPaths;
+    std::vector<std::filesystem::path> mCtrlPaths;
+    std::vector<std::filesystem::path> mCasePaths;
+
+    /// Forward-facing unified sample input. Each entry is "<path>:<role>"
+    /// where role is control or case. If role is omitted, defaults to control.
+    std::vector<std::string> mSampleSpecs;
 
     f64 mMaxSampleCov = DEFAULT_MAX_WINDOW_COVERAGE;
     bool mNoCtgCheck = false;
     bool mExtractPairs = false;
 
-    [[nodiscard]] auto SamplesCount() const -> usize {
-      return mNormalPaths.size() + mTumorPaths.size();
+    /// Number of input file paths (NOT unique logical samples).
+    /// Unique sample count is determined after sorting by MakeSampleList().
+    [[nodiscard]] auto InputPathCount() const -> usize {
+      return mCtrlPaths.size() + mCasePaths.size() + mSampleSpecs.size();
     }
   };
 
@@ -49,7 +55,7 @@ class ReadCollector {
   };
 
   [[nodiscard]] auto CollectRegionResult(Region const& region) -> Result;
-  [[nodiscard]] auto IsTumorNormalMode() const noexcept -> bool { return mIsTumorNormalMode; }
+  [[nodiscard]] auto IsCaseCtrlMode() const noexcept -> bool { return mIsCaseCtrlMode; }
 
   [[nodiscard]] static auto IsActiveRegion(Params const& params, Region const& region) -> bool;
   [[nodiscard]] static auto BuildSampleNameList(Params const& params) -> std::vector<std::string>;
@@ -65,7 +71,7 @@ class ReadCollector {
   using MateRegionsMap = absl::flat_hash_map<u64, hts::Alignment::MateInfo>;
 
   Params mParams;
-  bool mIsTumorNormalMode{false};
+  bool mIsCaseCtrlMode{false};
   SampleExtractors mExtractors;
   std::vector<SampleInfo> mSampleList;
 

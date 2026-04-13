@@ -14,7 +14,7 @@ namespace lancet::hts {
 /// In plain terms: Fisher's test answers "is there a real association
 /// between two categories, or could the observed pattern have happened by
 /// chance?" For variant calling, it tests whether the variant appears more
-/// often in one group (e.g., tumor) than another (e.g., normal) beyond
+/// often in one group (e.g., case) than another (e.g., control) beyond
 /// what random sampling would produce. Unlike approximate tests (e.g.,
 /// chi-squared), Fisher's test computes the exact probability by
 /// enumerating all possible arrangements of the data while keeping the

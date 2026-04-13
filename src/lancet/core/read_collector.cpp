@@ -20,6 +20,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -86,6 +87,14 @@ inline auto ParseMd(std::string_view md_val, absl::Span<u8 const> quals, i64 con
   return false;
 }
 
+// Returns the graph coloring tag for a known role string,
+// or std::nullopt if the string is not a recognized role.
+inline auto TryParseRole(std::string_view const role) -> std::optional<lancet::cbdg::Label::Tag> {
+  if (role == "control") return lancet::cbdg::Label::CTRL;
+  if (role == "case") return lancet::cbdg::Label::CASE;
+  return std::nullopt;
+}
+
 }  // namespace
 
 namespace lancet::core {
@@ -111,14 +120,14 @@ ReadCollector::ReadCollector(Params params) : mParams(std::move(params)) {
 
   auto const sam_tags = mParams.mExtractPairs ? std::vector<std::string>{"SA", "AS", "XS"}
                                               : std::vector<std::string>{"AS", "XS"};
-  static auto const IS_TUMOR = [](SampleInfo const& sinfo) -> bool {
-    return sinfo.TagKind() == cbdg::Label::TUMOR;
+  static auto const IS_CASE = [](SampleInfo const& sinfo) -> bool {
+    return sinfo.TagKind() == cbdg::Label::CASE;
   };
-  static auto const IS_NORMAL = [](SampleInfo const& sinfo) -> bool {
-    return sinfo.TagKind() == cbdg::Label::NORMAL;
+  static auto const IS_CTRL = [](SampleInfo const& sinfo) -> bool {
+    return sinfo.TagKind() == cbdg::Label::CTRL;
   };
-  mIsTumorNormalMode =
-      std::ranges::any_of(mSampleList, IS_TUMOR) && std::ranges::any_of(mSampleList, IS_NORMAL);
+  mIsCaseCtrlMode =
+      std::ranges::any_of(mSampleList, IS_CASE) && std::ranges::any_of(mSampleList, IS_CTRL);
 
   for (auto const& sinfo : mSampleList) {
     auto extractor = std::make_unique<Extractor>(sinfo.Path(), hts::Reference(mParams.mRefPath),
@@ -230,7 +239,7 @@ auto ReadCollector::CollectRegionResult(Region const& region) -> Result {
       if (!keep_qnames.contains(HashQname(aln.QnameView()))) continue;
 
       // Only kept reads trigger BuildSequence/BuildQualities via the Read constructor
-      sampled_reads.emplace_back(aln, sample_name, sinfo.TagKind());
+      sampled_reads.emplace_back(aln, sample_name, sinfo.TagKind(), sinfo.SampleIndex());
       sampled_base_count += sampled_reads.back().Length();
     }
 
@@ -263,7 +272,7 @@ auto ReadCollector::CollectRegionResult(Region const& region) -> Result {
           auto const itr = expected_mates.find(mate_qhash);
           if (itr == expected_mates.end()) continue;
 
-          sampled_reads.emplace_back(aln, sample_name, sinfo.TagKind());
+          sampled_reads.emplace_back(aln, sample_name, sinfo.TagKind(), sinfo.SampleIndex());
           sampled_base_count += sampled_reads.back().Length();
           expected_mates.erase(itr);
         }
@@ -402,28 +411,70 @@ auto ReadCollector::BuildSampleNameList(Params const& params) -> std::vector<std
 
 auto ReadCollector::MakeSampleList(Params const& params) -> std::vector<SampleInfo> {
   std::vector<SampleInfo> results;
-  results.reserve(params.mNormalPaths.size() + params.mTumorPaths.size());
+  results.reserve(params.mCtrlPaths.size() + params.mCasePaths.size() + params.mSampleSpecs.size());
   hts::Reference const ref(params.mRefPath);
 
-  // Add normal samples
-  std::ranges::transform(
-      params.mNormalPaths, std::back_inserter(results),
-      [&ref](std::filesystem::path const& fpath) -> SampleInfo {
-        hts::Extractor const extractor(fpath, ref, hts::Alignment::Fields::CORE_QNAME, {}, true);
-        auto result = SampleInfo(extractor.SampleName(), fpath, cbdg::Label::NORMAL);
-        return result;
-      });
+  // Shared helper: extract SM read group tag from BAM/CRAM header → SampleInfo.
+  auto const make_sample = [&ref](std::filesystem::path const& fpath,
+                                  cbdg::Label::Tag const tag) -> SampleInfo {
+    hts::Extractor const extractor(fpath, ref, hts::Alignment::Fields::CORE_QNAME, {}, true);
+    return SampleInfo(extractor.SampleName(), fpath, tag);
+  };
 
-  // Add tumor samples
-  std::ranges::transform(
-      params.mTumorPaths, std::back_inserter(results),
-      [&ref](std::filesystem::path const& fpath) -> SampleInfo {
-        hts::Extractor const extractor(fpath, ref, hts::Alignment::Fields::CORE_QNAME, {}, true);
-        auto result = SampleInfo(extractor.SampleName(), fpath, cbdg::Label::TUMOR);
-        return result;
-      });
+  // Legacy --normal paths → control samples
+  std::ranges::transform(params.mCtrlPaths, std::back_inserter(results),
+                         [&](auto const& fpath) { return make_sample(fpath, cbdg::Label::CTRL); });
+
+  // Legacy --tumor paths → case samples
+  std::ranges::transform(params.mCasePaths, std::back_inserter(results),
+                         [&](auto const& fpath) { return make_sample(fpath, cbdg::Label::CASE); });
+
+  // Unified --sample specs (<path>:<role>)
+  // Check if the suffix after the LAST colon is a known role string
+  // ("control" or "case"). If it is, split there. If not, the entire
+  // string is the path and the tag defaults to Label::CTRL.
+  // This handles cloud URIs (s3://bucket/file.bam) without false splits.
+  for (auto const& spec : params.mSampleSpecs) {
+    auto const colon_pos = spec.rfind(':');
+    auto const suffix = (colon_pos != std::string::npos && colon_pos < spec.size() - 1)
+                            ? std::string_view(spec).substr(colon_pos + 1)
+                            : std::string_view{};
+    auto const parsed_tag = TryParseRole(suffix);
+
+    auto const fpath = parsed_tag.has_value() ? std::filesystem::path(spec.substr(0, colon_pos))
+                                              : std::filesystem::path(spec);
+    auto const tag = parsed_tag.value_or(cbdg::Label::CTRL);
+    results.emplace_back(make_sample(fpath, tag));
+  }
 
   std::ranges::sort(results, std::less<SampleInfo>{});
+
+  // ======================================================================
+  // Assign sample indices AFTER sorting.
+  //
+  // Sorting by (TagKind, SampleName) guarantees deterministic ordering
+  // regardless of CLI argument order. Index assignment uses unique
+  // (role, name) pairs: two BAM files sharing the same SM read group
+  // tag and same role receive the same index.
+  //
+  // INVARIANT: sample index = sorted position = VCF FORMAT column position.
+  //   mSampleList[i].SampleIndex() == i  (for unique samples)
+  //   mSampleGenotypes[i] in VariantCall corresponds to mSampleList[i]
+  //   VCF #CHROM header sample columns follow this same order
+  // ======================================================================
+  usize current_idx = 0;
+  for (usize pos = 0; pos < results.size(); ++pos) {
+    if (pos > 0 &&
+        results[pos].SampleName() == results[pos - 1].SampleName() &&
+        results[pos].TagKind() == results[pos - 1].TagKind()) {
+      // Same logical sample (same SM tag + same role) split across files.
+      // Assign the same index so their reads increment the same counter.
+      results[pos].SetSampleIndex(results[pos - 1].SampleIndex());
+    } else {
+      results[pos].SetSampleIndex(current_idx++);
+    }
+  }
+
   return results;
 }
 

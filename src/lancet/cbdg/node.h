@@ -16,9 +16,26 @@
 
 namespace lancet::cbdg {
 
+/// Map Label::Tag to a 0-based index into the 2-element mRoleCounts array.
+/// CTRL → 0, CASE → 1. Only two roles exist regardless of sample count.
+/// REFERENCE is never used for read support tracking.
+constexpr auto RoleIndex(Label::Tag const tag) -> usize {
+  return tag == Label::CASE ? 1 : 0;
+}
+
 using NodeID = u64;
 using NodeIDPair = std::array<NodeID, 2>;
 
+// Node stores a canonical k-mer in the colored bidirected de Bruijn graph.
+//
+// Two tracking systems coexist:
+//   Label (3-bit bitmask)     — which roles contributed reads (CTRL|CASE|REF).
+//                                Used for graph pruning, DOT visualization, and
+//                                somatic state classification.
+//   mCounts (per-sample u32)  — how many reads each individual sample contributed.
+//                                Used for coverage thresholds and ML features.
+//   mRoleCounts (2-element)   — per-role totals (sum of all CTRL samples, sum of
+//                                all CASE samples). Fast-path for pruning.
 class Node {
  public:
   using EdgeList = absl::InlinedVector<Edge, 8>;
@@ -27,7 +44,16 @@ class Node {
   Node(Kmer&& mer, Label label) : mKmer(std::move(mer)), mLabel(label) {}
 
   void AddLabel(Label const& label);
-  void IncrementReadSupport(Label const& label);
+
+  /// Increment the per-sample counter and the per-role aggregate.
+  /// Grows the per-sample vector on demand if sample_index exceeds current size.
+  void IncrementReadSupport(usize sample_index, Label::Tag tag);
+
+  /// Read support for a specific sample. Returns 0 for untracked indices.
+  [[nodiscard]] auto ReadSupportForSample(usize sample_index) const -> u32;
+
+  /// Total read support across all samples assigned to the given role.
+  [[nodiscard]] auto ReadSupportForRole(Label::Tag role) const noexcept -> u32;
 
   template <class... Args>
   void EmplaceEdge(Args&&... args) {
@@ -56,20 +82,22 @@ class Node {
   }
 
   [[nodiscard]] auto IsShared() const noexcept -> bool {
-    return HasTag(Label::NORMAL) && HasTag(Label::TUMOR) && !HasTag(Label::REFERENCE);
+    return HasTag(Label::CTRL) && HasTag(Label::CASE) && !HasTag(Label::REFERENCE);
   }
 
-  [[nodiscard]] auto IsNormalOnly() const noexcept -> bool {
-    return HasTag(Label::NORMAL) && !HasTag(Label::TUMOR) && !HasTag(Label::REFERENCE);
+  [[nodiscard]] auto IsCtrlOnly() const noexcept -> bool {
+    return HasTag(Label::CTRL) && !HasTag(Label::CASE) && !HasTag(Label::REFERENCE);
   }
 
-  [[nodiscard]] auto IsTumorOnly() const noexcept -> bool {
-    return HasTag(Label::TUMOR) && !HasTag(Label::NORMAL) && !HasTag(Label::REFERENCE);
+  [[nodiscard]] auto IsCaseOnly() const noexcept -> bool {
+    return HasTag(Label::CASE) && !HasTag(Label::CTRL) && !HasTag(Label::REFERENCE);
   }
 
-  [[nodiscard]] auto NormalReadSupport() const noexcept -> u32;
-  [[nodiscard]] auto TumorReadSupport() const noexcept -> u32;
   [[nodiscard]] auto TotalReadSupport() const noexcept -> u32;
+
+  /// True if every sample with non-zero coverage has exactly 1 read.
+  /// N-sample generalization of the 2-sample (ctrl==1 && case==1) check.
+  [[nodiscard]] auto IsAllSingletons() const noexcept -> bool;
 
   [[nodiscard]] auto KmerData() const noexcept -> Kmer { return mKmer; }
   [[nodiscard]] auto Identifier() const noexcept -> NodeID { return mKmer.Identifier(); }
@@ -100,15 +128,16 @@ class Node {
   [[nodiscard]] auto cend() const -> EdgeConstIterator { return mEdges.cend(); }
 
  private:
-  static constexpr usize NORMAL_COUNT_INDEX = 0;
-  static constexpr usize TUMOR_COUNT_INDEX = 1;
-  using Counts = std::array<u32, 2>;
+  /// InlinedVector<u32, 2> stores up to 2 counts inline (no heap) —
+  /// covers the standard 2-sample case. Spills to heap for >2 samples.
+  using Counts = absl::InlinedVector<u32, 2>;
 
   EdgeList mEdges;
   Kmer mKmer;
   usize mCompId = 0;
-  Counts mCounts = {0, 0};
-  Label mLabel;
+  Counts mCounts;                    // 8B (InlinedVector<u32, 2>)
+  std::array<u32, 2> mRoleCounts{};  // 8B (2×4B, [0]=CTRL [1]=CASE)
+  Label mLabel;                      // 1B
 };
 
 }  // namespace lancet::cbdg

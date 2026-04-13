@@ -43,7 +43,7 @@ masquerade as smaller local variants in the assembly.
 **Coverage stability**: Inherently coverage-invariant — computed as a ratio
 of fractions. A 30% soft-clip rate in ALT reads produces SCA ≈ 0.3 at any
 depth. Using SCA together with SDFC helps distinguish real SVs (high SCA,
-normal SDFC) from mapping artifacts (high SCA, elevated SDFC).
+typical SDFC) from mapping artifacts (high SCA, elevated SDFC).
 
 ---
 
@@ -72,7 +72,7 @@ somatic cfDNA fragment length shifts.
 
 | FLD Range | Meaning |
 |:----------|:--------|
-| < 20 bp | Normal variation — insert size distributions are consistent |
+| < 20 bp | Expected variation — insert size distributions are consistent |
 | 20–100 bp | Moderate discrepancy — inspect manually |
 | > 100 bp | Large discrepancy — likely chimeric artifact, library prep issue, or cfDNA fragment size shift |
 
@@ -161,7 +161,7 @@ edge-biased artifacts (clustered at both 5' and 3' ends), but the mean
 of positions 5 and 145 in a 150bp read ≈ 75 — indistinguishable from a
 truly centered variant. Folding maps both ends to the same low-value space:
 
-$$P_{folded} = \min(P_{raw},\; L - 1 - P_{raw})$$
+`P_folded = min(P_raw, L − 1 − P_raw)`
 
 **In plain terms**: folding maps both ends of the read to the same "edge
 zone." A variant seen at position 5 (near the start) and position 145
@@ -317,11 +317,11 @@ at one location.
 2. For each variant and each sample, `SDFC = sample_DP / SampleWindowCov`, where
    sample_DP is this sample's total read depth at the variant site (sum across alleles).
 
-**Why per-sample normalization**: Tumor and normal samples have different
+**Why per-sample normalization**: Case and control samples have different
 sequencing depths. A shared combined coverage would give both samples the same
 SDFC value, masking depth spikes in the low-coverage sample and diluting them
-in the high-coverage one. Per-sample normalization lets a 200× tumor and a 30×
-normal each detect their own paralogous mapping artifacts independently.
+in the high-coverage one. Per-sample normalization lets a 200× case and a 30×
+control each detect their own paralogous mapping artifacts independently.
 
 **Why window mean coverage**: The window (≥ 1000 bp, enforced minimum) averages
 read depth across hundreds of positions, providing a stable local background

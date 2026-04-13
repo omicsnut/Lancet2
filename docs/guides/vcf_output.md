@@ -13,11 +13,11 @@ Lancet2 operates in two modes that affect which INFO fields are present:
 
 | Mode | Inputs | INFO State Tags | QUAL Source |
 |:-----|:-------|:----------------|:------------|
-| **Tumor-Normal** (somatic) | ≥ 1 tumor AND ≥ 1 normal BAM/CRAM | `SHARED`, `NORMAL`, `TUMOR` | Somatic log odds ratio (SOLOR) |
-| **Normal-Only** (germline) | Normal BAM/CRAM only | *(none — state is UNKNOWN)* | Ref-hom PL (DM model, naturally asymptotes) |
+| **Somatic** (case-control) | `--normal` + (`--tumor` and/or `--sample` with role `case`) | `SHARED`, `CTRL`, `CASE` | Somatic log odds ratio (SOLOR) |
+| **Germline** (normal-only) | `--normal` BAM/CRAM only | *(none — state is UNKNOWN)* | Ref-hom PL (DM model, naturally asymptotes) |
 
-In tumor-normal mode, state tags classify each variant by ALT allele
-presence across sample types. In normal-only mode, state classification
+In somatic mode, state tags classify each variant by ALT allele
+presence across sample roles. In germline mode, state classification
 is not possible, so no state flags appear in the INFO field.
 
 ---
@@ -32,13 +32,13 @@ is not possible, so no state flags appear in the INFO field.
 | `TYPE` | String | Variant type | `SNV`, `INS`, `DEL`, `MNP` | The class of variant event detected during local assembly. Comma-separated array for multiallelic variants. |
 | `LENGTH` | Integer | Variant length in base pairs | ≥ 1 | For SNVs: always 1. For INDELs: the number of inserted or deleted bases. Comma-separated array for multiallelic variants. |
 
-### Somatic State Flags (tumor-normal mode only)
+### Somatic State Flags (case-control mode only)
 
 | Field | VCF Type | Description | Interpretation |
 |:------|:---------|:------------|:---------------|
-| `SHARED` | Flag | ALT allele seen in both tumor and normal | Likely germline variant or LOH event |
-| `NORMAL` | Flag | ALT allele seen only in normal sample(s) | Possible loss-of-heterozygosity in tumor |
-| `TUMOR` | Flag | ALT allele seen only in tumor sample(s) | Candidate somatic variant |
+| `SHARED` | Flag | ALT allele seen in both case and control | Likely germline variant or LOH event |
+| `CTRL` | Flag | ALT allele seen only in control (normal) sample(s) | Possible loss-of-heterozygosity in case |
+| `CASE` | Flag | ALT allele seen only in case (tumor) sample(s) | Candidate somatic variant |
 
 ### Complexity Annotations
 Graph topology and sequence composition metrics computed during assembly.
@@ -49,6 +49,12 @@ quality models without depth normalization.
 |:------|:---------|:------------|
 | `GRAPH_CX` | String (3 values) | Graph structural complexity (GEI, TipToPathCovRatio, MaxSingleDirDegree). Topology-derived; coverage-stable above 20×. See [Graph Complexity](graph_complexity.md). |
 | `SEQ_CX` | String (11 values) | Sequence complexity (ContextHRun, ContextEntropy, ContextFlankLQ, ContextHaplotypeLQ, DeltaHRun, DeltaEntropy, DeltaFlankLQ, TrAffinity, TrPurity, TrPeriod, IsStutterIndel). Perfectly coverage-invariant (sequence-only). See [Sequence Complexity](sequence_complexity.md). |
+
+---
+
+## Sample Column Order
+
+Sample FORMAT columns appear in **deterministic sorted order**: first by role (control before case), then by SM read group tag name (lexicographic). This order is independent of the order in which `--normal`, `--tumor`, or `--sample` flags appear on the command line. Multiple BAM/CRAM files sharing the same SM tag and role are treated as one logical sample.
 
 ---
 
@@ -104,14 +110,14 @@ The FORMAT column header is: `GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQC
 
 The VCF QUAL field depends on operating mode:
 
-- **Tumor-Normal mode**: Somatic log odds ratio (SOLOR) comparing ALT
-  enrichment between tumor and normal:
-  `QUAL = ln(((tmr_alt+1)(nml_ref+1)) / ((tmr_ref+1)(nml_alt+1)))`. Uses
+- **Case-Control mode**: Somatic log odds ratio (SOLOR) comparing ALT
+  enrichment between case and control:
+  `QUAL = ln(((case_alt+1)(ctrl_ref+1)) / ((case_ref+1)(ctrl_alt+1)))`. Uses
   Haldane correction (+1) for zero-count robustness. Coverage-invariant:
   measures effect size, not statistical significance. Range: [0, ~10].
   `QUAL > 4` = strong somatic evidence at any coverage.
 
-- **Normal-Only mode**: Ref-hom PL directly (PL[0/0] from the DM model).
+- **Control-Only mode**: Ref-hom PL directly (PL[0/0] from the DM model).
   The Dirichlet-Multinomial overdispersion parameter causes PLs to asymptote
   naturally at high depth — no artificial capping or depth-normalization is
   needed. Takes the maximum across samples (strongest evidence wins).
@@ -120,23 +126,23 @@ The VCF QUAL field depends on operating mode:
 
 ## Example VCF Records
 
-### Tumor-Normal Mode
+### Case-Control Mode
 
 ```
-chr1  12345  .  A  AT  4.85  .  TUMOR;TYPE=INS;LENGTH=1;GRAPH_CX=0.85,0.01,3;SEQ_CX=20,0.50,0.69,0.22,3,−0.10,0.05,1.00,0.95,1,1  GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ  0/1:20,15:10,8:10,7:35:55.0,52.3:30.2,28.5:0.150:0.1200:15.3:-0.3200:-0.1500:-0.2800:0.450:1.00:1.3979:0.6435:12.5432:0.8521:0.350:0.1200:0.4500:0,42,180:42  0/0:30,0:15,0:15,0:30:58.1,0.0:29.8,0.0:0.000:0.0000:.:.:.:.:.:0.86:1.4914:0.0000:0.0000:.:.:.:.:0,0,270:99
+chr1  12345  .  A  AT  4.85  .  CASE;TYPE=INS;LENGTH=1;GRAPH_CX=0.85,0.01,3;SEQ_CX=20,0.50,0.69,0.22,3,−0.10,0.05,1.00,0.95,1,1  GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ  0/1:20,15:10,8:10,7:35:55.0,52.3:30.2,28.5:0.150:0.1200:15.3:-0.3200:-0.1500:-0.2800:0.450:1.00:1.3979:0.6435:12.5432:0.8521:0.350:0.1200:0.4500:0,42,180:42  0/0:30,0:15,0:15,0:30:58.1,0.0:29.8,0.0:0.000:0.0000:.:.:.:.:.:0.86:1.4914:0.0000:0.0000:.:.:.:.:0,0,270:99
 ```
 
 **Per-sample annotation breakdown**:
 
-| Field | Tumor (sample 1) | Normal (sample 2) | Interpretation |
+| Field | Case (sample 1) | Control (sample 2) | Interpretation |
 |:------|:-----------------|:-------------------|:---------------|
-| `NPBQ` | 30.2, 28.5 | 29.8, 0.0 | Good per-read quality (~Q30) for both alleles in tumor. |
-| `SB` | 0.150 | 0.000 | Minimal strand bias in tumor. Normal: no ALT reads, Haldane correction gives 0.0. |
-| `MQCD` | −0.2800 | `.` | Slight ALT MAPQ depression in tumor (within normal range). Normal: untestable (no ALT reads → `.`). |
+| `NPBQ` | 30.2, 28.5 | 29.8, 0.0 | Good per-read quality (~Q30) for both alleles in case. |
+| `SB` | 0.150 | 0.000 | Minimal strand bias in case. Control: no ALT reads, Haldane correction gives 0.0. |
+| `MQCD` | −0.2800 | `.` | Slight ALT MAPQ depression in case (within normal range). Control: untestable (no ALT reads → `.`). |
 | `PRAD` | 1.3979 | 1.4914 | log10(1+25) ≈ 1.40, log10(1+30) ≈ 1.49. Both in moderate-confidence range (~1.2–1.8). |
-| `PANG` | 0.6435 | 0.0000 | Tumor ≈37° (37% VAF). Normal 0° — no ALT, consistent with somatic variant. |
+| `PANG` | 0.6435 | 0.0000 | Case ≈37° (37% VAF). Control 0° — no ALT, consistent with somatic variant. |
 
-### Normal-Only Mode
+### Control-Only Mode
 
 ```
 chr1  12345  .  A  AT  3.00  .  TYPE=INS;LENGTH=1;GRAPH_CX=0.42,0.00,2;SEQ_CX=8,1.20,0.31,0.18,1,0.05,0.02,0.80,0.90,1,0  GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ  0/1:25,10:13,5:12,5:35:56.2,50.8:29.5,27.8:0.095:0.0500:8.2:-0.1500:-0.0800:-0.2100:0.320:1.00:1.4314:0.3805:8.2100:0.7200:0.120:0.0800:0.3200:0,30,150:30

@@ -94,25 +94,27 @@ VariantCall::VariantCall(RawVariant const* var, SupportsByVariant const& all_sup
 // ============================================================================
 // Finalize: common post-construction steps for both constructors.
 //
-// Determines tumor-normal (somatic) vs normal-only mode, then delegates to
+// Determines case-control vs control-only mode, then delegates to
 // three focused methods:
 //   1. BuildFormatFields  — per-sample FORMAT strings + site quality
-//   2. ComputeState       — SHARED/NORMAL/TUMOR classification
+//   2. ComputeState       — SHARED/CTRL/CASE classification
 //   3. BuildInfoField     — INFO string assembly
 // ============================================================================
 void VariantCall::Finalize(SupportArray const& evidence, Samples samps) {
-  static auto const IS_TUMOR = [](auto const& sinfo) -> bool {
-    return sinfo.TagKind() == cbdg::Label::TUMOR;
+  // Detect case-control mode by checking for at least one sample of each role.
+  // TagKind serves as the role identifier: Label::CASE = focal, Label::CTRL = baseline.
+  static auto const IS_CASE = [](auto const& sinfo) -> bool {
+    return sinfo.TagKind() == cbdg::Label::CASE;
   };
-  static auto const IS_NORMAL = [](auto const& sinfo) -> bool {
-    return sinfo.TagKind() == cbdg::Label::NORMAL;
+  static auto const IS_CTRL = [](auto const& sinfo) -> bool {
+    return sinfo.TagKind() == cbdg::Label::CTRL;
   };
-  auto const tumor_normal_mode =
-      std::ranges::any_of(samps, IS_TUMOR) && std::ranges::any_of(samps, IS_NORMAL);
+  auto const case_ctrl_mode =
+      std::ranges::any_of(samps, IS_CASE) && std::ranges::any_of(samps, IS_CTRL);
 
-  BuildFormatFields(evidence, samps, tumor_normal_mode);
-  ComputeState(evidence, samps, tumor_normal_mode);
-  BuildInfoField(tumor_normal_mode);
+  BuildFormatFields(evidence, samps, case_ctrl_mode);
+  ComputeState(evidence, samps, case_ctrl_mode);
+  BuildInfoField(case_ctrl_mode);
 }
 
 // ============================================================================
@@ -148,7 +150,7 @@ void VariantCall::Finalize(SupportArray const& evidence, Samples samps) {
 //   GQ    - Genotype quality (second-lowest PL from Dirichlet-Multinomial, capped at 99)
 // ============================================================================
 void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
-                                    bool const tumor_normal_mode) {
+                                    bool const case_ctrl_mode) {
   auto const num_alleles = mAltAlleles.size() + 1;  // +1 for REF
 
   mSampleGenotypes.reserve(samps.size());
@@ -170,7 +172,7 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     sample.mTotalDepth = support->TotalSampleCov();
     sample.mGenotypeQuality = VariantSupport::ComputeGQ(pls);
 
-    UpdateSiteQuality(sinfo, support, evidence, samps, tumor_normal_mode, pls);
+    UpdateSiteQuality(sinfo, support, evidence, samps, case_ctrl_mode, pls);
     mHasAltSupport = mHasAltSupport || (support->TotalAltCov() > 0);
 
     // Strand bias log odds ratio (Number=1, per-sample)
@@ -293,13 +295,13 @@ void VariantCall::AssignGenotype(SampleGenotypeData& sample, absl::Span<int cons
 //   DM PLs asymptote via overdispersion — no artificial cap needed.
 //
 // Somatic mode:  QUAL = Somatic Log Odds Ratio (SOLOR).
-//   Coverage-invariant tumor-vs-normal enrichment metric.
+//   Coverage-invariant case-vs-control enrichment metric.
 // ============================================================================
 void VariantCall::UpdateSiteQuality(core::SampleInfo const& sinfo,
                                     [[maybe_unused]] VariantSupport const* support,
                                     SupportArray const& evidence, Samples samps,
-                                    bool tumor_normal_mode, absl::Span<int const> pls) {
-  if (tumor_normal_mode) {
+                                    bool case_ctrl_mode, absl::Span<int const> pls) {
+  if (case_ctrl_mode) {
     auto const somatic_lor = SomaticLogOddsRatio(sinfo, evidence, samps);
     mSiteQuality = std::max(mSiteQuality, somatic_lor);
   } else {
@@ -313,42 +315,44 @@ void VariantCall::UpdateSiteQuality(core::SampleInfo const& sinfo,
 
 // ============================================================================
 // SomaticLogOddsRatio: somatic variant evidence as a coverage-invariant
-// log odds ratio. Compares ALT/REF allele counts between the current tumor
-// sample and the average across normal samples.
+// log odds ratio. Compares ALT/REF allele counts between the current case
+// sample and the average across control samples.
 //
-//   SOLOR = ln( ((tmr_alt+1)(nml_ref+1)) / ((tmr_ref+1)(nml_alt+1)) )
+//   SOLOR = ln( ((case_alt+1)(ctrl_ref+1)) / ((case_ref+1)(ctrl_alt+1)) )
 //
 // Haldane correction (+1) handles zero-count edge cases without sentinels.
-// A clean somatic produces SOLOR ≈ 5; germline produces SOLOR ≈ 0.
-// Coverage-stable: once normal VAF stabilizes (≥60×), SOLOR varies < 3%.
+// A clean somatic produces SOLOR ≈ 5; germline (shared) produces SOLOR ≈ 0.
+// Coverage-stable: once control VAF stabilizes (≥60×), SOLOR varies < 3%.
 // ============================================================================
 auto VariantCall::SomaticLogOddsRatio(core::SampleInfo const& curr, SupportArray const& supports,
                                       Samples samps) -> f64 {
-  if (curr.TagKind() != cbdg::Label::TUMOR) return 0.0;
+  // SOLOR is only meaningful for focal (case) samples compared against baseline (control).
+  if (curr.TagKind() != cbdg::Label::CASE) return 0.0;
 
-  auto const* tmr_evidence = supports.Find(curr.SampleName());
+  auto const* case_evidence = supports.Find(curr.SampleName());
   // Haldane correction (+1) mitigates undefined zero-division smoothly
-  f64 const tmr_alt = tmr_evidence ? static_cast<f64>(tmr_evidence->TotalAltCov()) + 1.0 : 1.0;
-  f64 const tmr_ref = tmr_evidence ? static_cast<f64>(tmr_evidence->TotalRefCov()) + 1.0 : 1.0;
+  f64 const case_alt = case_evidence ? static_cast<f64>(case_evidence->TotalAltCov()) + 1.0 : 1.0;
+  f64 const case_ref = case_evidence ? static_cast<f64>(case_evidence->TotalRefCov()) + 1.0 : 1.0;
 
-  f64 sum_na = 0.0;
-  f64 sum_nr = 0.0;
-  f64 count_nml = 0.0;
+  f64 sum_ctrl_alt = 0.0;
+  f64 sum_ctrl_ref = 0.0;
+  f64 count_ctrl = 0.0;
 
   for (auto const& sinfo : samps) {
     auto const* evidence = supports.Find(sinfo.SampleName());
-    if (sinfo.TagKind() != cbdg::Label::NORMAL || evidence == nullptr) continue;
+    // Accumulate only baseline (control) samples for the denominator.
+    if (sinfo.TagKind() != cbdg::Label::CTRL || evidence == nullptr) continue;
 
-    sum_na += static_cast<f64>(evidence->TotalAltCov());
-    sum_nr += static_cast<f64>(evidence->TotalRefCov());
-    count_nml += 1.0;
+    sum_ctrl_alt += static_cast<f64>(evidence->TotalAltCov());
+    sum_ctrl_ref += static_cast<f64>(evidence->TotalRefCov());
+    count_ctrl += 1.0;
   }
 
-  f64 const norm_val = std::max(count_nml, 1.0);
-  f64 const nml_alt = (sum_na / norm_val) + 1.0;
-  f64 const nml_ref = (sum_nr / norm_val) + 1.0;
+  f64 const ctrl_count = std::max(count_ctrl, 1.0);
+  f64 const ctrl_alt = (sum_ctrl_alt / ctrl_count) + 1.0;
+  f64 const ctrl_ref = (sum_ctrl_ref / ctrl_count) + 1.0;
 
-  return std::log((tmr_alt * nml_ref) / (tmr_ref * nml_alt));
+  return std::log((case_alt * ctrl_ref) / (case_ref * ctrl_alt));
 }
 
 void VariantCall::AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupport const* support,
@@ -376,41 +380,41 @@ void VariantCall::AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupp
 }
 
 // ============================================================================
-// ComputeState: classify variant as SHARED, NORMAL, TUMOR, UNKNOWN, or NONE.
+// ComputeState: classify variant as SHARED, CTRL, CASE, UNKNOWN, or NONE.
 //
-// In tumor-normal mode: SHARED/NORMAL/TUMOR based on ALT presence, NONE if no support.
-// In normal-only mode: always UNKNOWN (not enough info to classify).
+// In case-control mode: SHARED/CTRL/CASE based on ALT presence, NONE if no support.
+// In control-only mode: always UNKNOWN (not enough info to classify).
 // ============================================================================
 void VariantCall::ComputeState(SupportArray const& evidence, Samples samps,
-                               bool const tumor_normal_mode) {
-  if (!tumor_normal_mode) {
+                               bool const case_ctrl_mode) {
+  if (!case_ctrl_mode) {
     mState = RawVariant::State::UNKNOWN;
     return;
   }
 
-  auto const has_alt = [&evidence](core::SampleInfo const& sinfo, cbdg::Label::Tag kind) -> bool {
+  auto const has_alt = [&evidence](core::SampleInfo const& sinfo, cbdg::Label::Tag role) -> bool {
     auto const* support = evidence.Find(sinfo.SampleName());
-    return sinfo.TagKind() == kind && support != nullptr && support->TotalAltCov() > 0;
+    return sinfo.TagKind() == role && support != nullptr && support->TotalAltCov() > 0;
   };
 
-  bool const in_normal = std::ranges::any_of(
-      samps, [&](auto const& sinfo) { return has_alt(sinfo, cbdg::Label::NORMAL); });
+  bool const in_ctrl = std::ranges::any_of(
+      samps, [&](auto const& sinfo) { return has_alt(sinfo, cbdg::Label::CTRL); });
 
-  bool const in_tumor = std::ranges::any_of(
-      samps, [&](auto const& sinfo) { return has_alt(sinfo, cbdg::Label::TUMOR); });
+  bool const in_case = std::ranges::any_of(
+      samps, [&](auto const& sinfo) { return has_alt(sinfo, cbdg::Label::CASE); });
 
   static constexpr std::array<RawVariant::State, 4> STATE_MAP = {{
-      RawVariant::State::NONE,    // 00: Neither
-      RawVariant::State::NORMAL,  // 01: Normal only
-      RawVariant::State::TUMOR,   // 10: Tumor only
-      RawVariant::State::SHARED   // 11: Both
+      RawVariant::State::NONE,   // 00: Neither control nor case
+      RawVariant::State::CTRL,   // 01: Control only
+      RawVariant::State::CASE,   // 10: Case only
+      RawVariant::State::SHARED  // 11: Both control and case
   }};
 
-  // We compute a 2-bit mapping index directly from the boolean parameters:
-  // Bit 1 (Left bit):  in_tumor
-  // Bit 0 (Right bit): in_normal
-  // Evaluates exactly into [0=NONE, 1=NORMAL, 2=TUMOR, 3=SHARED].
-  usize const state_idx = (static_cast<usize>(in_tumor) << 1) | static_cast<usize>(in_normal);
+  // 2-bit mapping index from boolean parameters:
+  // Bit 1 (left):  in_case
+  // Bit 0 (right): in_ctrl
+  // Evaluates into [0=NONE, 1=CTRL, 2=CASE, 3=SHARED].
+  usize const state_idx = (static_cast<usize>(in_case) << 1) | static_cast<usize>(in_ctrl);
   mState = STATE_MAP[state_idx];
 }
 
@@ -419,7 +423,7 @@ void VariantCall::ComputeState(SupportArray const& evidence, Samples samps,
 //
 // Structure:  [STATE;]TYPE=<type>;LENGTH=<len>[;GRAPH_CX=...][;SEQ_CX=...]
 //
-//   STATE     — SHARED/NORMAL/TUMOR (tumor-normal mode only; omitted otherwise)
+//   STATE     — SHARED/CTRL/CASE (case-control mode only; omitted otherwise)
 //   TYPE      — SNV, INS, DEL, MNP (always present)
 //   LENGTH    — variant length in bp (always present)
 //   GRAPH_CX  — graph complexity (GEI, TipToPathCovRatio, MaxDegree)
@@ -427,7 +431,7 @@ void VariantCall::ComputeState(SupportArray const& evidence, Samples samps,
 //
 // Note: SCA, FLD, and MQCD are per-sample FORMAT fields, not site-level INFO.
 // ============================================================================
-void VariantCall::BuildInfoField(bool const tumor_normal_mode) {
+void VariantCall::BuildInfoField(bool const case_ctrl_mode) {
   using namespace std::string_view_literals;
 
   static constexpr std::array<std::string_view, 6> TYPE_MAP = {
@@ -442,11 +446,11 @@ void VariantCall::BuildInfoField(bool const tumor_normal_mode) {
   std::string info;
   info.reserve(1024);
 
-  if (tumor_normal_mode) {
-    // State prefix — tumor-normal mode only
-    // SHARED/NORMAL/TUMOR state — only in tumor-normal (somatic) mode
+  if (case_ctrl_mode) {
+    // State prefix — case-control mode only
+    // SHARED/CTRL/CASE state — only in case-control mode
     static constexpr std::array<std::string_view, 5> STATE_MAP = {
-        {"NONE"sv, "SHARED"sv, "NORMAL"sv, "TUMOR"sv, "UNKNOWN"sv}};
+        {"NONE"sv, "SHARED"sv, "CTRL"sv, "CASE"sv, "UNKNOWN"sv}};
 
     absl::StrAppend(&info, STATE_MAP[static_cast<i8>(mState) + 1], ";");
   }

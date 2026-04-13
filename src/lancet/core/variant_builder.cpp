@@ -123,8 +123,9 @@ void AnnotatePathMetrics(caller::RawVariant const& var,
 auto CollectPathSequences(absl::Span<cbdg::Graph::Path const> paths) -> std::vector<std::string> {
   std::vector<std::string> seqs;
   seqs.reserve(paths.size());
-  std::ranges::transform(paths, std::back_inserter(seqs),
-                         [](auto const& path) -> std::string { return std::string(path.Sequence()); });
+  std::ranges::transform(paths, std::back_inserter(seqs), [](auto const& path) -> std::string {
+    return std::string(path.Sequence());
+  });
   return seqs;
 }
 
@@ -170,7 +171,7 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
       mAnnotator(mParamsPtr->mGcFraction) {
   mSpoaState.mEngine->Prealloc(window_length * PREALLOC_WINDOW_LENGTH_MULTIPLIER,
                                DNA_ALPHABET_SIZE);
-  mGenotyper.SetNumSamples(mParamsPtr->mRdCollParams.SamplesCount());
+  mGenotyper.SetNumSamples(mParamsPtr->mRdCollParams.InputPathCount());
 }
 
 auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) -> WindowResults {

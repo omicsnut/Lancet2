@@ -25,13 +25,13 @@ If the BAM lacks `MD` tags, `--no-active-region` is automatically enabled, disab
 
 ## 2. Colored Bidirected De Bruijn Graph
 
-Within each window, reads are shredded into k-mers to build a **colored bidirected De Bruijn graph**. Each node stores a canonical k-mer with two traversal signs (`+`/`-`) following the [BCALM2 bidirected model](https://github.com/GATB/bcalm/blob/v2.2.3/bidirected-graphs-in-bcalm2/bidirected-graphs-in-bcalm2.md). Colors tag each k-mer's origin as Normal, Tumor, or Reference.
+Within each window, reads are shredded into k-mers to build a **colored bidirected De Bruijn graph**. Each node stores a canonical k-mer with two traversal signs (`+`/`-`) following the [BCALM2 bidirected model](https://github.com/GATB/bcalm/blob/v2.2.3/bidirected-graphs-in-bcalm2/bidirected-graphs-in-bcalm2.md). Nodes are tagged by sample role (Control, Case, Reference) for pruning and somatic classification. Each node also tracks per-sample read support independently, so coverage thresholds and ML features operate at individual-sample resolution regardless of the number of input samples.
 
-Graph construction iterates from the minimum k-mer size (`-k`, default 13) to the maximum (`-K`, default 127) in steps of `-s` (default 6), retrying at larger k when the complexity guard (§3) identifies a tangled repeat structure or a cycle is detected. **`O(R × L / k)`** per k-value, where R = number of reads in the window and L = mean read length.
+Graph construction iterates from the minimum k-mer size (`-k`, default 13) to the maximum (`-K`, default 127) in steps of `--kmer-step` (default 6), retrying at larger k when the complexity guard (§3) identifies a tangled repeat structure or a cycle is detected. **`O(R × L / k)`** per k-value, where R = number of reads in the window and L = mean read length.
 
 ### K-mer Retry Cascade
 
-If a cycle is detected after pruning, or the complexity guard triggers, the entire graph is **cleared and rebuilt from scratch** at the next k-mer tier. Larger k values collapse short repeat motifs that cause ambiguous graph topology at smaller k. The step size (`-s`) is configurable within the set {2, 4, 6, 8, 10} — smaller steps increase the chance of finding a clean k but cost more rebuild iterations.
+If a cycle is detected after pruning, or the complexity guard triggers, the entire graph is **cleared and rebuilt from scratch** at the next k-mer tier. Larger k values collapse short repeat motifs that cause ambiguous graph topology at smaller k. The step size (`--kmer-step`) is configurable within the set {2, 4, 6, 8, 10} — smaller steps increase the chance of finding a clean k but cost more rebuild iterations.
 
 Example cascade at defaults: k=13 → 19 → 25 → 31 → ... → 127. If no k produces a cycle-free, low-complexity graph, the window yields no assembled haplotypes.
 
@@ -51,7 +51,7 @@ After successful graph construction at a given k, each connected component goes 
 
 After pruning, an `O(V+E)` three-color DFS detects cycles on the frozen graph. If a cycle persists, the k-mer retry cascade re-builds at the next tier.
 
-* **User tuning:** `-k` / `-K` for k-mer range; `-s` for step size; `--min-node-cov` to prune noise (higher = faster runtime but lower subclonal sensitivity).
+* **User tuning:** `-k` / `-K` for k-mer range; `--kmer-step` for step size; `--min-node-cov` to prune noise (higher = faster runtime but lower subclonal sensitivity).
 
 ## 3. Complexity Guard
 
@@ -174,8 +174,23 @@ Padding extends each BED region by N bases on both sides before windowing. This 
 !!! warning "Experimental — No ML model support"
     Multi-sample and germline-only modes are functional but **experimental**. No pre-trained ML models are currently provided for variant filtering in these modes. Variant calls will require custom downstream filtering.
 
-Lancet2 supports two additional operating modes beyond standard tumor-normal:
+Lancet2 supports two additional operating modes beyond standard tumor-normal somatic calling:
 
-- **Multi-sample somatic**: Pass multiple BAMs to `--normal` and/or `--tumor`. All normal samples share the `NORMAL` graph color; all tumor samples share the `TUMOR` color. The VCF header generates one column per sample (keyed by the SM read group tag). Genotyping is performed independently per sample.
+- **Multi-sample somatic**: Pass multiple BAMs to `--normal`, `--tumor`, and/or `--sample`. Each unique sample (identified by SM read group tag and role) is tracked independently in the graph. For somatic classification, samples are grouped by role: all control samples contribute to the `CTRL` aggregate, all case samples contribute to the `CASE` aggregate. The VCF header generates one column per unique sample. Genotyping is performed independently per sample.
 
-- **Germline-only**: Omit the `--tumor` flag entirely. The VCF output contains no `SHARED`/`NORMAL`/`TUMOR` INFO tags. All variants are reported without somatic classification.
+- **Germline-only**: Omit the `--tumor` flag entirely. The VCF output contains no `SHARED`/`CTRL`/`CASE` INFO tags. All variants are reported without somatic classification.
+
+Additional samples can also be added using the [`--sample`](../reference.md#-s--sample) flag alongside `--normal`/`--tumor`.
+
+!!! note "Case/Control terminology"
+    Lancet2 uses **case/control** terminology to generalize beyond tumor-normal analysis (e.g., treated vs. untreated, responder vs. non-responder). The `--normal` and `--tumor` CLI flags remain permanent first-class entry points — tumor-normal somatic calling is the primary supported workflow.
+
+### Sample Identity and Ordering
+
+Each sample receives a **0-based index** assigned after sorting by `(role, SM tag)`. This index determines:
+
+1. The sample's per-node read support counter in the graph
+2. The position of the sample's FORMAT column in VCF output
+3. The sample's identity bit for N-sample graph coloring
+
+The same index is shared by all BAM/CRAM files with matching SM read group tags and roles — they are treated as one logical sample split across files. The ordering is **deterministic**: the same set of input files always produces the same sample indices, regardless of CLI argument order.

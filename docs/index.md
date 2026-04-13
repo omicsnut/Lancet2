@@ -88,7 +88,10 @@ make -j$(nproc)
 ```
 
 ## Basic Usage
-The following command demonstrates the basic usage of the Lancet2 variant calling pipeline for a tumor and normal bam file pair on chr22.
+
+### Tumor-Normal Somatic Calling
+
+The primary supported workflow. Variants are classified as `CASE` (tumor-only), `CTRL` (normal-only), or `SHARED` (both) in the VCF INFO field.
 
 ```bash
 Lancet2 pipeline \
@@ -99,8 +102,27 @@ Lancet2 pipeline \
     --out-vcfgz /path/to/output.vcf.gz
 ```
 
-See the [Scoring Somatic Variants](guides/scoring_somatic_variants.md) guide for more information on how
-to score and filter somatic variants using explainable machine learning models.
+!!! note "Why `CASE`/`CTRL` instead of `TUMOR`/`NORMAL`?"
+    Lancet2 uses **case/control** terminology to generalize beyond tumor-normal analysis (e.g., treated vs. untreated, responder vs. non-responder). The `--normal` and `--tumor` CLI flags are **permanent and first-class** — tumor-normal somatic calling is the primary supported workflow. See the [CLI Reference](reference.md#datasets) for details.
+
+### Single-Sample Mode
+
+Omit `--tumor` to run on a single sample. Lancet2 generates raw variant candidates across the full allele spectrum (germline, mosaic, artifact) without somatic state classification — no `SHARED`/`CTRL`/`CASE` tags appear in the VCF.
+
+```bash
+Lancet2 pipeline \
+    --normal /path/to/sample.bam \
+    --reference /path/to/reference.fasta \
+    --region "chr22" --num-threads $(nproc) \
+    --out-vcfgz /path/to/output.vcf.gz
+```
+
+### Multi-Sample Mode
+
+Additional samples can be added using [`-s,--sample`](reference.md#-s--sample) alongside the standard flags. See [Multi-Sample & Germline Mode](guides/architecture.md#multi-sample-germline-mode) for details.
+
+!!! warning "Experimental — no pre-trained ML models"
+    Single-sample and multi-sample modes produce raw variant candidates. No pre-trained ML models are currently provided for filtering in these modes — variant calls require custom downstream filtering. The only pre-trained model available is for the standard tumor-normal somatic workflow (v2.8.7 compatible). See [Scoring Somatic Variants](guides/scoring_somatic_variants.md) for details.
 
 ## License
 

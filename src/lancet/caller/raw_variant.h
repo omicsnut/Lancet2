@@ -22,7 +22,7 @@ class RawVariant {
   RawVariant() = default;
 
   enum class Type : i8 { REF = -1, SNV = 0, INS = 1, DEL = 2, MNP = 3, CPX = 4 };
-  enum class State : i8 { NONE = -1, SHARED = 0, NORMAL = 1, TUMOR = 2, UNKNOWN = 3 };
+  enum class State : i8 { NONE = -1, SHARED = 0, CTRL = 1, CASE = 2, UNKNOWN = 3 };
 
   // ===========================================================================
   // STRICT SEQUENCE CORE CLASSIFICATION

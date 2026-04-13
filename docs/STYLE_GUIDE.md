@@ -555,6 +555,33 @@ clang-format **reflows long comments** to fit within the 100-column limit. This 
 
 ---
 
+## Prefer `<algorithm>` and Abseil Over Manual Loops
+
+Use `<algorithm>`, `<ranges>`, and Abseil utility headers (`absl/algorithm/`, `absl/strings/`, `absl/container/`) instead of hand-written loops and conditional branching wherever possible. The primary goal is **readability, maintainability, and expressiveness** — a `std::ranges::transform` or `absl::StrJoin` communicates intent more clearly than a raw `for` loop with manual index tracking.
+
+```cpp
+// ✅ Preferred — intent is immediately clear
+std::ranges::transform(paths, std::back_inserter(seqs),
+                       [](auto const& path) -> std::string { return std::string(path.Sequence()); });
+
+auto const has_case = std::ranges::any_of(samps, [](auto const& s) {
+  return s.TagKind() == cbdg::Label::CASE;
+});
+
+auto const total = std::accumulate(components.begin(), components.end(), u64{0},
+                                   [](u64 sum, auto const& comp) -> u64 { return sum + comp.size() - 1; });
+
+// ❌ Avoid — manual loop obscures intent
+std::vector<std::string> seqs;
+for (auto const& path : paths) {
+  seqs.push_back(std::string(path.Sequence()));
+}
+```
+
+**Exception:** Do not use `<algorithm>` or Abseil when it would **hurt readability**, **unnecessarily complicate the code**, or **degrade performance in any meaningful way**. A simple 3-line loop that is immediately clear can be better than a contorted `std::transform` with multiple lambdas. Use judgment — the goal is clarity, not dogma.
+
+---
+
 ## Static Analysis (clang-tidy)
 
 ### Naming Conventions
@@ -712,7 +739,7 @@ pixi run configure-debug -- -DLANCET_BENCHMARKS=ON
 ### Formatting
 ```bash
 pixi run fmt-check                    # dry-run — reports files that need formatting
-pixi run fmt                          # applies formatting in-place to all sources
+pixi run fmt-fix                      # applies formatting in-place to all sources
 ```
 
 For file-specific or directory-specific formatting, invoke the script directly:

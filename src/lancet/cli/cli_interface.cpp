@@ -167,19 +167,22 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
   auto& rc_prms = vb_prms.mRdCollParams;
   auto& grph_prms = vb_prms.mGraphParams;
 
-  static constexpr f64 MIN_TUMOR_VS_NORMAL_VAF_ODDS = 0.0;
-  static constexpr f64 MAX_TUMOR_VS_NORMAL_VAF_ODDS = 255.0;
   static int const MAX_NUM_THREADS = static_cast<int>(std::thread::hardware_concurrency());
 
   // Datasets
   subcmd
-      ->add_option("-n,--normal", rc_prms.mNormalPaths,
-                   "Path to one (or) more normal BAM/CRAM file(s)")
+      ->add_option("-n,--normal", rc_prms.mCtrlPaths,
+                   "Path to one (or) more control (normal) BAM/CRAM file(s)")
       ->required(true)
       ->group("Datasets");
   subcmd
-      ->add_option("-t,--tumor", rc_prms.mTumorPaths,
-                   "Path to one (or) more tumor BAM/CRAM file(s)")
+      ->add_option("-t,--tumor", rc_prms.mCasePaths,
+                   "Path to one (or) more case (tumor) BAM/CRAM file(s)")
+      ->required(false)
+      ->group("Datasets");
+  subcmd
+      ->add_option("-s,--sample", rc_prms.mSampleSpecs,
+                   "Sample input as <path>:<role> (roles: control, case)")
       ->required(false)
       ->group("Datasets");
 
@@ -237,7 +240,7 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
       ->group("Parameters")
       ->check(CLI::Range(cbdg::Graph::DEFAULT_MIN_KMER_LEN + 2, cbdg::Graph::MAX_ALLOWED_KMER_LEN));
   subcmd
-      ->add_option("-s,--kmer-step", vb_prms.mGraphParams.mKmerStepLen,
+      ->add_option("--kmer-step", vb_prms.mGraphParams.mKmerStepLen,
                    "Kmer step length to try for graph nodes")
       ->group("Parameters")
       ->check(CLI::IsMember({2, 4, 6, 8, 10}));

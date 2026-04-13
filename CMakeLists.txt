@@ -124,6 +124,7 @@ if (LANCET_ENABLE_CLOUD_IO)
 endif ()
 
 add_library(lancet_cbdg STATIC src/lancet/cbdg/label.h
+		src/lancet/cbdg/sample_mask.cpp src/lancet/cbdg/sample_mask.h
 		src/lancet/cbdg/kmer.cpp src/lancet/cbdg/kmer.h
 		src/lancet/cbdg/edge.h src/lancet/cbdg/read.h
 		src/lancet/cbdg/node.cpp src/lancet/cbdg/node.h
