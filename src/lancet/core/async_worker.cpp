@@ -5,8 +5,9 @@
 #include "lancet/base/types.h"
 #include "lancet/core/window.h"
 
+#include "concurrentqueue.h"
+
 #include <chrono>
-#include <concurrentqueue.h>
 #include <memory>
 #include <stop_token>
 #include <thread>

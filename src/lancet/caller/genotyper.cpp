@@ -11,14 +11,15 @@
 #include <array>
 #include <limits>
 #include <memory>
-#include <minimap.h>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include <cstdlib>
 
+// minimap2 C API — POSIX/C headers, not C++ stdlib
 extern "C" {
+#include "minimap.h"
 #include "mmpriv.h"
 }
 
@@ -107,7 +108,7 @@ inline void FreeMm2Alignment(mm_reg1_t* regs, int const num_regs) {
 // ComputeLocalScore: evaluate alignment quality in a variant's region.
 //
 // Given a read→haplotype CIGAR alignment, this function extracts specific metrics
-// for the sub-region of the haplotype that contains the variant natively:
+// for the sub-region of the haplotype that contains the variant:
 //
 //   1. mPbqScore:  PBQ-weighted DP score. Each position's substitution matrix
 //                  contribution is scaled by (1 - ε) where ε = 10^(-PBQ/10).
@@ -200,7 +201,7 @@ struct RegionAccumulator {
     mMatches += static_cast<usize>(mQuery[qpos] == mTarget[tpos_rel]);
   }
 
-  // Track the minimum base quality at an isolated read position natively.
+  // Record the weakest base quality in the variant region (weakest-link confidence).
   void TrackBaseQual(usize qpos) {
     if (qpos < mBaseQuals.size()) {
       mMinBq = std::min(mMinBq, mBaseQuals[qpos]);
@@ -262,9 +263,9 @@ auto ComputeLocalScore(std::vector<lancet::hts::CigarUnit> const& qry_aln_cigar,
 
     switch (cigar_op) {
       // ── Substitution Mappings ──
-      // Consumes both query and target bases. Iteratively maps bases through the
-      // strict raw substitution matrix DP to calculate precise alignment identity
-      // and mismatch penalties explicitly restricted inside the variant boundary.
+      // Consumes both query and target bases. Maps bases through the substitution
+      // matrix to compute alignment identity and mismatch penalties within the
+      // variant boundary (not the flanking context).
       case lancet::hts::CigarOp::ALIGNMENT_MATCH:
       case lancet::hts::CigarOp::SEQUENCE_MATCH:
       case lancet::hts::CigarOp::SEQUENCE_MISMATCH: {
@@ -279,8 +280,8 @@ auto ComputeLocalScore(std::vector<lancet::hts::CigarUnit> const& qry_aln_cigar,
       }
 
       // ── Insertion Geometry ──
-      // Consumes solely query bases. Penalizes the alignment quality natively via
-      // gap extension weights because these isolated query nucleotides lack reference backing.
+      // Consumes query bases only. Penalizes alignment quality via gap extension
+      // weights because inserted bases have no reference counterpart.
       case lancet::hts::CigarOp::INSERTION: {
         // Inserted bases don't advance tpos, but if we're inside the variant
         // region they count as aligned content and contribute PBQ.
@@ -298,9 +299,8 @@ auto ComputeLocalScore(std::vector<lancet::hts::CigarUnit> const& qry_aln_cigar,
       }
 
       // ── Deletion Geometry ──
-      // Consumes solely target bases. Symmetrically penalizes via gap extensions.
-      // Since true deletions physically lack query nucleotides mathematically, the quality
-      // score relies explicitly on borrowing confidence from the structurally flanking neighbors.
+      // Consumes target bases only. Penalizes via gap extensions. Deletions have no
+      // query bases, so the quality score borrows confidence from the flanking neighbors.
       case lancet::hts::CigarOp::DELETION: {
         for (u32 i = 0; i < len; ++i, ++tpos) {
           if (acc.InRegion(tpos)) {
@@ -314,8 +314,8 @@ auto ComputeLocalScore(std::vector<lancet::hts::CigarUnit> const& qry_aln_cigar,
       }
 
       // ── Unmapped Sequences ──
-      // Adjusts spatial limits flawlessly without DP mutation scoring interactions.
-      // Soft-clip toxicity defaults to being handled explicitly inside ComputeSoftClipPenalty.
+      // Advances position counters without scoring.
+      // Soft-clip penalty is handled in ComputeSoftClipPenalty.
       case lancet::hts::CigarOp::SOFT_CLIP: {
         qpos += len;
         break;
@@ -369,7 +369,7 @@ namespace lancet::caller {
 // assembly, biological variation is already in the haplotype sequences —
 // gaps here are machine errors and must be heavily penalized.
 //
-// See the SCORING_* constants defined natively in the anonymous namespace above for the full
+// See the SCORING_* constants defined in the anonymous namespace above for the full
 // rationale.
 // ============================================================================
 Genotyper::Genotyper() {
@@ -392,21 +392,20 @@ Genotyper::Genotyper() {
   // 1. Z-Drop (zdrop / zdrop_inv)
   // Minimap2 terminates DP alignment if the local Smith-Waterman score drops below
   // (max_score - zdrop). If a tumor contains a massive 300bp somatic deletion,
-  // the affine gap penalty (e.g. O + 300*E) structurally exceeds standard Z-drop thresholds
+  // the affine gap penalty (e.g. O + 300*E) exceeds standard Z-drop thresholds
   // (default 400). This causes minimap2 to silently truncate the alignment and report
-  // separate supplementary reads rather than a contiguous CIGAR spanning the deletion!
-  // By overriding Z-drop to 100000, we mathematically disable alignment truncation,
-  // forcing the band alignment to traverse any arbitrarily large intra-window structural
-  // variations.
+  // separate supplementary reads rather than a contiguous CIGAR spanning the deletion.
+  // Setting zdrop=100000 effectively disables alignment truncation, forcing the banded
+  // alignment to traverse any large intra-window structural variation.
   mopts->zdrop = 100'000;
   mopts->zdrop_inv = 100'000;
 
   // 2. Bandwidth (bw)
   // Minimap2 only computes DP matrix bounds within `bw` distance from the main diagonal
-  // (O(N * bw) complexity). If an insertion is larger than `bw`, the alignment mathematically
-  // strikes the banding boundary and terminates or forces chaotic mismatches. Because Lancet2's
-  // active regions encompass massive micro-assemblies (where germline insertions can exceed 2kb),
-  // we must drastically inflate `bw` from its default (often 500) to 10000. This guarantees
+  // (O(N * bw) complexity). If an insertion is larger than `bw`, the alignment exceeds
+  // the banding boundary and produces truncated alignments or spurious mismatches. Lancet2's
+  // active regions can contain germline insertions exceeding 2kb, so we set bw=10000
+  // (up from the default 500). This guarantees
   // massive germline and somatic insertions never exceed the matrix diagonal thresholds.
   mopts->bw = 10'000;
 
@@ -414,9 +413,8 @@ Genotyper::Genotyper() {
   // Minimap2 uses (k, w)-minimizers to detect identical seed anchors before executing SW.
   // In highly mutated sequences, STRs, or clustered hypermutation sites, the default
   // initialization (k=15, w=10) drops anchors because a continuous 15bp exact match
-  // rarely exists. By overriding this down to k=11 and w=5, we dramatically increase
-  // algorithmic sensitivity, natively instantiating index anchors directly through
-  // deeply fragmented micro-windows.
+  // rarely exists. Setting k=11 and w=5 increases sensitivity by placing index anchors
+  // in densely mutated micro-windows where longer seeds cannot form.
   mIndexingOpts->k = 11;
   mIndexingOpts->w = 5;
 
@@ -513,7 +511,7 @@ auto Genotyper::AssignReadToAlleles(cbdg::Read const& qry_read, VariantSet const
   PerVariantAssignment allele_assignments;
 
   // O(N) PERFORMANCE WIN: Extracted from the variant iterator loop.
-  // Calculated natively exactly once per read!
+  // Calculated exactly once per read.
   u32 const baseline_ref_nm = ComputeHaplotypeEditDistance(
       all_alns, REF_HAP_IDX, absl::MakeConstSpan(qry_seq_encoded), qry_read_length);
 
@@ -526,7 +524,7 @@ auto Genotyper::AssignReadToAlleles(cbdg::Read const& qry_read, VariantSet const
     f64 best_combined = std::numeric_limits<f64>::lowest();
     bool found_any = false;
 
-    // Scan the read natively against all identically aligned physical haplotypes
+    // Score this read against every aligned haplotype
     for (auto const& aln : all_alns) {
       found_any |= EvaluateAlignment(aln, variant, absl::MakeConstSpan(qry_seq_encoded), qry_quals,
                                      qry_read_length, best, best_combined);
@@ -541,17 +539,16 @@ auto Genotyper::AssignReadToAlleles(cbdg::Read const& qry_read, VariantSet const
 }
 
 // ============================================================================
-// AlignToAllHaplotypes: Exhaustively map a read to all haplotype sequences natively.
+// AlignToAllHaplotypes: map a read against all haplotype sequences.
 //
 // Uses minimap2's full pipeline (seed → chain → extend) rather than raw ksw2 DP
-// because minimizer hashing efficiently resolves topological boundaries natively before
-// falling back onto dynamic programming execution.
+// because minimizer hashing resolves topological boundaries before falling back
+// to dynamic programming.
 //
-// CRITICAL: We explicitly do NOT implement an early-exit short-circuit (even if a
-// read perfectly matches a haplotype). We must deliberately exhaust the entire
-// Haplotype Space to mathematically guarantee we assemble valid cross-haplotype noise
-// constraints, compute relative Edit Distances mapped strictly against the true Reference
-// baseline natively, and properly enforce global best-match boundaries unconditionally.
+// CRITICAL: No early-exit short-circuit — even if a read perfectly matches one
+// haplotype, we must align to all haplotypes to compute correct cross-haplotype
+// noise constraints, relative edit distances against the reference baseline,
+// and global best-match boundaries.
 // ============================================================================
 auto Genotyper::AlignToAllHaplotypes(cbdg::Read const& qry_read) -> std::vector<Mm2AlnResult> {
   std::vector<Mm2AlnResult> results;

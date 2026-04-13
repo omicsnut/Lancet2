@@ -324,7 +324,7 @@ normal each detect their own paralogous mapping artifacts independently.
 **Why window mean coverage**: The window (≥ 1000 bp, enforced minimum) averages
 read depth across hundreds of positions, providing a stable local background
 estimate that is immune to variant density non-uniformity and single-position
-outliers. This is fundamentally more robust than variant-DP-based approaches
+outliers. This is more robust than variant-DP-based approaches
 (e.g., EMA of nearby variant depths) which are sparse and outlier-sensitive.
 
 **Value range**: [0, ∞)

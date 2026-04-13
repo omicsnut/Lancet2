@@ -4,7 +4,8 @@
 #include "lancet/base/types.h"
 #include "lancet/hts/phred_quality.h"
 
-#include <absl/types/span.h>
+#include "absl/types/span.h"
+
 #include <algorithm>
 #include <limits>
 #include <memory>
@@ -519,7 +520,7 @@ auto VariantSupport::AlleleMismatchDelta(usize const variant_length) const -> st
 // diminishing returns in confidence, not infinite certainty.
 //
 // Replaces the legacy per-read binomial model with a count-based
-// Dirichlet-Multinomial (DM) distribution that natively handles:
+// Dirichlet-Multinomial (DM) distribution that handles:
 //
 //   1. Multi-allelic sites (K alleles, not just bi-allelic)
 //   2. Correlated errors at ultra-high depth (overdispersion via ρ)
@@ -824,7 +825,7 @@ auto VariantSupport::ComputeGQ(std::vector<int> const& pls) -> int {
 // ALT's mass proportionally among remaining alleles.
 //
 // A Q40 read supporting ALT contributes ~4.0 to the LOD; a Q10 read
-// contributes ~0.5. This natively separates high-confidence signal from
+// contributes ~0.5. This separates high-confidence signal from
 // sequencer noise without requiring any external error model.
 //
 // Complexity: O(N × K) per ALT allele, where N = total read count.

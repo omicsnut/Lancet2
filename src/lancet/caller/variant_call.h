@@ -24,11 +24,10 @@ using VariantID = u64;
 // VariantCall: a finalized VCF record, potentially multi-allelic.
 //
 // Multi-allelic support:
-//   The constructor natively ingests a single fully multiallelic RawVariant
-//   directly emitted from the Genotyper module. It unpacks the pre-mapped
-//   SupportArray layout directly into a unified multidimensional VCF trace:
+//   The constructor takes a single multiallelic RawVariant from the Genotyper.
+//   It unpacks the pre-mapped SupportArray layout into a unified VCF trace:
 //
-//     Input:  {chr1:100 A→T, A→G}  (One Natively Multiallelic RawVariant)
+//     Input:  {chr1:100 A→T, A→G}  (One Multiallelic RawVariant)
 //     Output: VCF record: chr1 100 . A T,G ... (comma-separated ALTs)
 //
 // FORMAT fields (per-sample):
@@ -254,10 +253,9 @@ class VariantCall {
   };
 
   /// Build per-sample FORMAT components and track multi-allelic site qualities.
-  /// Pre-computes and maps alignments dynamically into the `absl::InlinedVector` Sample structs.
   void BuildFormatFields(SupportArray const& evidence, Samples samps, bool tumor_normal_mode);
 
-  // Natively drops PL into mGenotypeIndices tuples.
+  // Sets mGenotypeIndices from PL values.
   static void AssignGenotype(SampleGenotypeData& sample, absl::Span<int const> pls,
                              usize num_alleles);
 
@@ -272,7 +270,7 @@ class VariantCall {
   [[nodiscard]] static auto SomaticLogOddsRatio(core::SampleInfo const& curr,
                                                 SupportArray const& supports, Samples samps) -> f64;
 
-  /// Extract multi-allelic reads via Native Vector Arrays
+  /// Extract per-allele metrics from VariantSupport.
   static void AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupport const* support,
                                      usize num_alleles);
 

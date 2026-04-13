@@ -121,7 +121,7 @@ class Genotyper {
   // Alignment Abstraction Boundary
   //
   // AssignReadToAlleles() completely encapsulates the mapping strategy
-  // using minimap2 per haplotype and dynamic local scoring from CIGARs natively.
+  // using minimap2 per haplotype and dynamic local scoring from CIGARs.
   //
   // Everything downstream (AddToTable, VariantSupport, VariantCall, VCF)
   // is strictly decoupled from the alignment engine and stays identical.
@@ -130,7 +130,7 @@ class Genotyper {
     // ── Scoring components for allele assignment ──
     //
     // Each read-haplotype pair produces multiple independent signals. The combined
-    // score integrates them to assign the read to its best structurally mapped allele:
+    // score integrates them to assign the read to its best-matching allele:
     //
     //   combined = (global_score - local_raw_score - sc_penalty) + (local_pbq_score *
     //   local_identity)
@@ -138,50 +138,47 @@ class Genotyper {
     // Components:
     //
     //   global_score:    mm_map DP score of the full read→haplotype alignment.
-    //                    Captures how well the entire read fits this haplotype natively,
+    //                    Captures how well the entire read fits this haplotype,
     //                    including flanking contexts.
     //
-    //   local_raw_score: The absolute raw substitution matrix score of the variant
-    //                    overlap slice. We explicitly SUBTRACT this from global_score
-    //                    to prevent double-counting the variant when we add the PBQ score!
+    //   local_raw_score: The raw substitution matrix score of the variant overlap
+    //                    slice. We SUBTRACT this from global_score to prevent
+    //                    double-counting the variant when we add the PBQ score.
     //
-    //   sc_penalty:      Explicit penalization of soft-clipped read tails. Prevents
-    //                    noisy supplementary mappings from artificially inflating
-    //                    their assignment affinities over cleaner native alignments.
+    //   sc_penalty:      Penalization of soft-clipped read tails. Prevents noisy
+    //                    supplementary mappings from inflating their assignment scores
+    //                    over clean end-to-end alignments.
     //
     //   local_pbq_score: PBQ-weighted DP score within the variant region only.
-    //                    Scales substitution scores by Phred confidence natively
+    //                    Scales substitution scores by Phred confidence
     //                    (1 - 10^(-PBQ/10)), analogous to GATK's local PairHMM.
     //
-    //   local_identity:  Fraction of exact matches natively inside the variant region.
+    //   local_identity:  Fraction of exact matches inside the variant region.
     //                    Acts as a confidence gate on the local PBQ score. A high
     //                    local_score from a noisy alignment (low identity) is
-    //                    mathematically discounted, while one from a clean alignment is trusted.
+    //                    discounted, while one from a clean alignment is trusted.
     //
     //   - Why subtract `local_raw_score`?
-    //     The `global_score` natively includes the raw unrestricted matrix alignment cost
-    //     spanning the variant sub-region. If we naively appended `local_pbq_score`, we would
-    //     mathematically double-count the locus mapping two variant weights. Subtracting
-    //     `local_raw_score` carves an exact algebraic "hole" out of the global alignment
-    //     path, allowing us to drop the high-fidelity PBQ-weighted score cleanly into
-    //     that specific locus natively.
+    //     global_score already includes the raw matrix alignment cost spanning the
+    //     variant sub-region. Naively appending local_pbq_score would double-count
+    //     the variant. Subtracting local_raw_score carves a "hole" out of the global
+    //     alignment path, allowing us to drop the PBQ-weighted score into that
+    //     specific locus.
     //
     //   - Why subtract `sc_penalty`?
-    //     Soft-clipped read tails are unaligned sequence garbage. Minimap2 naturally
-    //     exempts them from the primary DP score tracing. By explicitly calculating and
-    //     subtracting a soft-clip penalty, we aggressively crush the combined global
-    //     scores of chimeric supplementary mappings, structurally preventing partially
-    //     matching noise reads from maliciously winning allele assignments against clean
-    //     end-to-end trace alignments.
+    //     Soft-clipped read tails are unaligned sequence. Minimap2 exempts them
+    //     from the primary DP score. Subtracting a soft-clip penalty suppresses
+    //     the combined global scores of chimeric supplementary mappings, preventing
+    //     partially-matching noise reads from winning allele assignments against
+    //     clean end-to-end alignments.
     //
     //   - Why (local_pbq_score * local_identity)?
-    //     This mathematically penalizes "lucky" alignments in low-complexity boundaries.
-    //     A noisy chimeric read might accumulate a high DP score (magnitude) simply
-    //     by traversing a chaotic STR locus. By mapping that raw magnitude against
-    //     the CIGAR exact-match fraction (cleanliness), we enforce a strict confidence
-    //     gate structurally. Perfect alignments (identity = 1.0) retain full PBQ weight;
-    //     fragmented, heavily-gapped alignments (e.g. identity < 0.7) are aggressively
-    //     discounted, natively sinking repeat region artifacts and structural chimeras.
+    //     This penalizes "lucky" alignments in low-complexity regions. A noisy
+    //     chimeric read might accumulate a high DP score by traversing a repetitive
+    //     STR locus. Multiplying by the exact-match fraction (identity) acts as a
+    //     confidence gate: perfect alignments (identity = 1.0) retain full PBQ weight;
+    //     fragmented, heavily-gapped alignments (e.g. identity < 0.7) are discounted,
+    //     suppressing repeat-region artifacts and structural chimeras.
     //
     // ── Folded read position ──
     // Folded read position: min(p, 1−p) where p = variant_query_pos / read_length.

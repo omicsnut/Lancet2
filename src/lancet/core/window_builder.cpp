@@ -76,8 +76,7 @@ void WindowBuilder::AddBatchRegions(std::filesystem::path const& bed_file) {
   if (bed_file.empty()) return;
 
   // Open the BED file using HTSlib's htsFile API instead of standard C++ streams.
-  // This natively leverages the libcurl plugins built into Lancet2, allowing
-  // direct streaming of BED files over s3://, gs://, and http(s):// protocols.
+  // Uses HTSlib's built-in libcurl support to stream BED files from s3://, gs://, and https:// URLs.
   htsFile* fptr = hts_open(bed_file.c_str(), "r");
   if (fptr == nullptr) {
     throw std::runtime_error(fmt::format("Could not open bed file: {}", bed_file.string()));

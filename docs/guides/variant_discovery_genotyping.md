@@ -227,7 +227,7 @@ It works by comparing two scenarios:
 
 CMLOD is the log-odds between these two scenarios. Crucially, each read's contribution is weighted by its base quality: a high-confidence Q40 read counts for much more than a noisy Q10 read. This means CMLOD naturally separates true low-frequency variants from sequencing noise — a mosaic variant at 5% VAF supported by 10 high-quality reads will score much higher than 10 noisy reads at the same frequency.
 
-A Q40 read supporting ALT contributes ~4.0 to the LOD; a Q10 read contributes ~0.5. This natively separates high-confidence signal from sequencing noise without requiring an external error model.
+A Q40 read supporting ALT contributes ~4.0 to the LOD; a Q10 read contributes ~0.5. This separates high-confidence signal from sequencing noise without requiring an external error model.
 
 CMLOD is emitted as a `Number=A` FORMAT field (one value per ALT allele). It is particularly useful for low-VAF mosaic variant detection and somatic variant calling, where the discrete diploid PL model cannot represent continuous frequency states like 2% or 15% VAF.
 

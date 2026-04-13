@@ -38,11 +38,11 @@ namespace {
  * Values: Match: 0, Mismatch: -6, Gap1: -6,-2, Gap2: -26,-1
  *
  * **SIMD Overflow Note**: All classical parameters (typically +2/-4) have
- * been mathematically shifted downwards by 2. Setting the Match ceiling rigidly
- * to 0 is mandatory because SPOA employs 8-bit AVX2 SIMD vector lanes. A 1000bp
+ * been shifted downwards by 2. Setting the Match score to 0 is mandatory because SPOA
+ * employs 8-bit AVX2 SIMD vector lanes. A 1000bp
  * window accumulating +2 match scores would reach 2000, severely overflowing the
  * signed 8-bit integers (max 127). By anchoring the Match score to 0, all runtime
- * scores accumulate negatively, organically staying within the unrolled boundaries.
+ * scores accumulate negatively, staying within the SIMD lane boundaries.
  *
  * Unlike minimap2's `asm5` preset (which aggressively splits contigs at major
  * divergences for whole-genome synteny filtering), these parameters are tuned

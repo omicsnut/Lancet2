@@ -42,7 +42,7 @@ rescues the call.
 | Index | Field | Type | Range | Description |
 |:------|:------|:-----|:------|:------------|
 | 0 | ContextHRun | Integer | [0, ∞) | Max homopolymer run in REF ±20bp. A poly-A of length 12 means any 1bp INDEL within 20bp is a stutter candidate. |
-| 1 | ContextEntropy | Float | [0.0, 2.0] | Shannon entropy H = −Σ pᵢ log₂(pᵢ) in REF ±20bp. Measures sequence diversity: 0 = all one base (like AAAAAAA), 2.0 = perfectly balanced ACGT. Low entropy = inherently harder to align uniquely. |
+| 1 | ContextEntropy | Float | [0.0, 2.0] | Shannon entropy H = −Σ pᵢ log₂(pᵢ) in REF ±20bp. Measures sequence diversity: 0 = all one base (like AAAAAAA), 2.0 = perfectly balanced ACGT. Low entropy = harder to align uniquely. |
 | 2 | ContextFlankLQ | Float | [0.0, ~1.6] | log₁p-squashed LongdustQ (k=4) in REF ±50bp. LongdustQ is a k-mer concentration score: it counts how many short DNA words (k-mers) repeat more often than expected by chance. Higher values = more repetitive DNA = more likely to cause sequencing and assembly errors. The log₁p transform compresses heavy tails (telomeric LQ > 4.0 → ~1.6). |
 | 3 | ContextHaplotypeLQ | Float | [0.0, ~1.6] | log₁p-squashed LongdustQ (k=7) on full REF haplotype. Captures macro-scale repetitive structure of the assembled contig. Only REF because a 5bp INDEL changes < 0.5% of a 1000bp k-mer distribution. |
 

@@ -130,7 +130,7 @@ one axis but not entangled.
 
 **Coverage stability**: GEI is computed purely from graph topology and node
 coverage ratios — it does not use raw read counts. The CoverageCv component
-is a coefficient of variation (σ/μ), which is inherently self-normalizing.
+is a coefficient of variation (σ/μ), which is self-normalizing.
 However, at very low coverage (≤10×), the graph structure itself changes
 (fewer nodes, simpler topology), so GEI may be lower simply because the
 graph fails to assemble complex regions. Above 20×, GEI is effectively

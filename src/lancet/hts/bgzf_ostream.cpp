@@ -27,11 +27,9 @@ auto BgzfStreambuf::Open(std::filesystem::path const& path, char const* mode) ->
 
 void BgzfStreambuf::Close() {
   if (mFilePtr != nullptr) {
-    // If bgzf_close executes on a network stream (Cloud S3/GCS buckets), it aggressively blocks
-    // and flushes all internally cached Multipart fragments entirely onto the remote server.
-    // Failure to affirmatively intercept this return code (-1) implicitly swallows the network
-    // authentication exception natively, causing fatal pipeline termination to drop essentially
-    // silently.
+    // bgzf_close on a network stream (S3/GCS) blocks until all buffered multipart fragments
+    // are uploaded. If it returns -1 (authentication failure, network error) and we ignore it,
+    // the pipeline terminates without a diagnostic message.
     if (bgzf_close(mFilePtr) < 0) {
       LOG_CRITICAL("Failed to close BGZF stream. If writing to cloud URIs, check remote "
                    "auth/permissions: {}",
@@ -91,8 +89,8 @@ auto BgzfStreambuf::sync() -> int {
     return 0;
   }
 
-  // std::ostream::flush invokes sync(). Because HTSlib handles buffered remote streams,
-  // overriding this is intrinsically required to enforce explicit writes across the network layer.
+  // std::ostream::flush invokes sync(). HTSlib manages its own buffered remote streams,
+  // so we must forward the flush to bgzf_flush to ensure data reaches the network layer.
   if (bgzf_flush(mFilePtr) < 0) {
     LOG_CRITICAL(
         "Failed to flush BGZF stream. If writing to cloud URIs, check remote auth/permissions: {}",
