@@ -232,7 +232,7 @@ class Genotyper {
 
     i32 mGlobalScore = 0;          // (4B) mm_map DP score of full read→haplotype alignment
     u32 mRefNm = 0;                // (4B) Edit distance (NM) against REF haplotype (for ASMD)
-    u32 mAltNm = 0;                // (4B) Edit distance (NM) against ALT haplotype (for AHDD)
+    u32 mOwnHapNm = 0;             // (4B) Edit distance (NM) against assigned haplotype (for AHDD)
     u32 mAssignedHaplotypeId = 0;  // (4B) SPOA path index this read was assigned to (for HSE)
     AlleleIndex mAllele = REF_ALLELE_IDX;  // (4B) Allele enumerator, defaults to REF
 

@@ -179,9 +179,9 @@ auto MaxFlow::NextPath() -> Result {
       // Only traversed edges → skip this walk
       if (node.mScore == 0) continue;
 
-      // Accept first walk with score > 0. Because BFS explores by path length,
-      // and we natively rank branches descending by Read Support coverage locally,
-      // this guarantees discovering the most biologically prevalent topology first!
+      // Accept first walk with score > 0. BFS explores by path length,
+      // and branches are ranked descending by Read Support coverage,
+      // so the first accepted walk is the most biologically prevalent topology.
       best_leaf = arena_idx;
       break;
     }
@@ -246,7 +246,7 @@ void MaxFlow::EnqueueOutgoingEdges(u32 const state_idx, u32 const parent_ai, u32
   };
 
   // Sort edges descending by the destination node's TotalReadSupport
-  // to organically traverse high-confidence paths first
+  // to traverse high-confidence paths first
   std::ranges::sort(out_edges, pred);
 
   // Pass 1: untraversed edges (high priority — extend walk score)

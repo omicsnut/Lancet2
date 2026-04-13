@@ -60,8 +60,8 @@ void VariantSupport::AddEvidence(ReadEvidence const& evidence) {
   // Track fragment start position (for FSSE: PCR optical duplicate detection)
   data.mAlignmentStarts.push_back(evidence.mAlignmentStart);
 
-  // Track edit distance against assigned ALT haplotype (for AHDD)
-  data.mAltNmValues.push_back(static_cast<f64>(evidence.mAltNm));
+  // Track edit distance against assigned haplotype (for AHDD)
+  data.mOwnHapNmValues.push_back(static_cast<f64>(evidence.mOwnHapNm));
 
   // Track assigned SPOA haplotype ID (for HSE: path co-segregation)
   data.mHaplotypeIds.push_back(evidence.mAssignedHaplotypeId);
@@ -125,8 +125,8 @@ void VariantSupport::MergeAlleleFrom(VariantSupport const& src, AlleleIndex cons
                                    src_data.mAlignmentStarts.begin(),
                                    src_data.mAlignmentStarts.end());
 
-  dst_data.mAltNmValues.insert(dst_data.mAltNmValues.end(), src_data.mAltNmValues.begin(),
-                               src_data.mAltNmValues.end());
+  dst_data.mOwnHapNmValues.insert(dst_data.mOwnHapNmValues.end(), src_data.mOwnHapNmValues.begin(),
+                                  src_data.mOwnHapNmValues.end());
 
   dst_data.mHaplotypeIds.insert(dst_data.mHaplotypeIds.end(), src_data.mHaplotypeIds.begin(),
                                 src_data.mHaplotypeIds.end());
@@ -505,6 +505,127 @@ auto VariantSupport::AlleleMismatchDelta(usize const variant_length) const -> st
   // to NM against REF, but that's the variant itself, not noise.
   auto const adjusted_alt_mean = alt_mean - static_cast<f64>(variant_length);
   return adjusted_alt_mean - ref_mean;
+}
+
+// ============================================================================
+// ComputeFSSE: Fragment Start Shannon Entropy
+//
+// PCR duplicate jackpots cluster reads at a single start position (FSSE → 0).
+// True variants from randomly sheared fragments produce diverse starts
+// (FSSE → 1). See the header declaration for the five failure modes this
+// catches beyond MarkDuplicates.
+//
+// 3 bp binning: exonuclease enzymes nibble 1–4 bp from fragment ends during
+// library prep (especially FFPE and cfDNA). Without binning, these offsets
+// inflate entropy for genuine PCR clones.
+//
+// Normalization cap at 20 bins: beyond 20 distinct positions, additional
+// diversity provides diminishing discriminative value for the downstream
+// EBM classifier.
+// ============================================================================
+auto VariantSupport::ComputeFSSE() const -> std::optional<f64> {
+  // Pool alignment starts from all non-REF alleles
+  std::vector<i64> alt_starts;
+  for (usize i = 1; i < mAlleleData.size(); ++i) {
+    auto const& starts = mAlleleData[i].mAlignmentStarts;
+    alt_starts.insert(alt_starts.end(), starts.begin(), starts.end());
+  }
+
+  // With 1–2 reads, H = 0.0 is trivially true and not informative
+  if (alt_starts.size() < 3) return std::nullopt;
+
+  // Bin into 3 bp windows to absorb exonuclease fraying
+  absl::flat_hash_map<i64, usize> bin_counts;
+  for (auto const start : alt_starts) {
+    bin_counts[start / 3]++;
+  }
+
+  auto const total = static_cast<f64>(alt_starts.size());
+  f64 entropy = 0.0;
+  for (auto const& [_unused, count] : bin_counts) {
+    auto const prob = static_cast<f64>(count) / total;
+    entropy -= prob * std::log2(prob);
+  }
+
+  // Normalize to [0, 1] by max possible entropy, capped at 20 bins
+  auto const max_entropy = std::log2(std::min(total, 20.0));
+  return max_entropy > 0.0 ? (entropy / max_entropy) : 0.0;
+}
+
+// ============================================================================
+// ComputeAHDD: ALT-Haplotype Discordance Delta
+//
+// Complements ASMD: ASMD measures ALT-vs-REF discrepancy (do ALT reads
+// have excess noise against the reference?), while AHDD measures ALT-vs-
+// own-haplotype discrepancy (does the assembly match its own evidence?).
+//
+// A true variant has low AHDD — the reads fit the assembled haplotype.
+// A SPOA hallucination has high AHDD — the consensus was pulled toward
+// a chimeric sequence that doesn't match any individual read well.
+//
+// AHDD = mean(ALT reads' NM against assigned ALT haplotype)
+//      − mean(REF reads' NM against REF haplotype)
+//
+// Both groups use mOwnHapNmValues, which stores each read's NM against
+// its assigned haplotype (REF reads → haplotype 0, ALT reads → winning ALT).
+// ============================================================================
+auto VariantSupport::ComputeAHDD() const -> std::optional<f64> {
+  if (REF_ALLELE_IDX >= mAlleleData.size()) return std::nullopt;
+  auto const& ref_nms = mAlleleData[REF_ALLELE_IDX].mOwnHapNmValues;
+  if (ref_nms.empty()) return std::nullopt;
+
+  auto const ref_mean =
+      std::accumulate(ref_nms.begin(), ref_nms.end(), 0.0) / static_cast<f64>(ref_nms.size());
+
+  // Pool NM values from all ALT alleles
+  f64 alt_nm_sum = 0.0;
+  usize alt_count = 0;
+  for (usize i = 1; i < mAlleleData.size(); ++i) {
+    auto const& nms = mAlleleData[i].mOwnHapNmValues;
+    alt_nm_sum += std::accumulate(nms.begin(), nms.end(), 0.0);
+    alt_count += nms.size();
+  }
+
+  if (alt_count == 0) return std::nullopt;
+  auto const alt_mean = alt_nm_sum / static_cast<f64>(alt_count);
+
+  // Positive = ALT reads fit their haplotype worse than REF reads fit REF
+  return alt_mean - ref_mean;
+}
+
+// ============================================================================
+// ComputeHSE: Haplotype Segregation Entropy
+//
+// True variants concentrate ALT reads on one SPOA path (HSE → 0).
+// Errors scatter randomly (HSE → 1). Normalized by log₂(total_haplotypes)
+// to produce a [0, 1] metric independent of the number of assembled paths.
+// ============================================================================
+auto VariantSupport::ComputeHSE(usize const total_haplotypes) const -> std::optional<f64> {
+  if (total_haplotypes < 2) return std::nullopt;
+
+  // Pool haplotype IDs from all ALT alleles
+  std::vector<u32> alt_hap_ids;
+  for (usize i = 1; i < mAlleleData.size(); ++i) {
+    auto const& haps = mAlleleData[i].mHaplotypeIds;
+    alt_hap_ids.insert(alt_hap_ids.end(), haps.begin(), haps.end());
+  }
+
+  if (alt_hap_ids.size() < 3) return std::nullopt;
+
+  absl::flat_hash_map<u32, usize> hap_counts;
+  for (auto const hap_id : alt_hap_ids) {
+    hap_counts[hap_id]++;
+  }
+
+  auto const total = static_cast<f64>(alt_hap_ids.size());
+  f64 entropy = 0.0;
+  for (auto const& [_unused, count] : hap_counts) {
+    auto const prob = static_cast<f64>(count) / total;
+    entropy -= prob * std::log2(prob);
+  }
+
+  auto const max_entropy = std::log2(static_cast<f64>(total_haplotypes));
+  return max_entropy > 0.0 ? (entropy / max_entropy) : 0.0;
 }
 
 // ============================================================================

@@ -48,7 +48,7 @@ struct VariantTRFeatures {
 };
 
 // ============================================================================
-// SequenceComplexity — 11-feature ML-ready sequence complexity vector
+// SequenceComplexity — 11-feature coverage-invariant sequence complexity vector
 //
 // Distills raw multi-scale sequence metrics (homopolymer runs, Shannon
 // entropy, LongdustQ k-mer concentration, tandem repeat motifs) into an

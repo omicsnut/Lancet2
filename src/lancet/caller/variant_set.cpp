@@ -28,8 +28,8 @@ constexpr usize REF_HAP_IDX = 0;
 // STRICT SEQUENCE CORE LENGTH CALCULATOR
 // -----------------------------------------------------------------------------------------
 // Calculates the biological length of a mutation independent of VCF padding requirements.
-// Without extracting the core, MNP lengths are vastly artificially inflated by the shared
-// anchored padding bases bounding multi-allelic clusters!
+// Without extracting the core, MNP lengths are inflated by the shared anchored padding
+// bases bounding multi-allelic clusters.
 // =========================================================================================
 inline auto CalculateVariantLength(std::string_view ref, std::string_view alt,
                                    RawVariant::Type vtype) -> i64 {
@@ -41,7 +41,7 @@ inline auto CalculateVariantLength(std::string_view ref, std::string_view alt,
   auto const alt_len = static_cast<i64>(alt.length());
   auto const diff = alt_len - ref_len;
 
-  // Net structural variance mathematically aligns trivially with string length discrepancies
+  // Net structural variance equals the string length difference for INS/DEL/CPX
   if (vtype == RawVariant::Type::INS ||
       vtype == RawVariant::Type::DEL ||
       vtype == RawVariant::Type::CPX) {
@@ -49,8 +49,8 @@ inline auto CalculateVariantLength(std::string_view ref, std::string_view alt,
   }
 
   // For strict MNPs (diff == 0), the biological length IS exactly the Sequence Core!
-  // E.g., REF="ATGC", ALT="ACCC". Squeezing `start=1` ('A') and `end=1` ('C') bounds
-  // explicitly extracts the pure mutation core `TG`->`CC` (length 4 - 1 - 1 = 2).
+  // E.g., REF="ATGC", ALT="ACCC". Trimming `start=1` ('A') and `end=1` ('C') extracts
+  // the mutation core `TG`->`CC` (length 4 - 1 - 1 = 2).
   usize start_match = 0;
   while (std::cmp_less(start_match, ref_len) &&
          std::cmp_less(start_match, alt_len) &&
@@ -69,13 +69,13 @@ inline auto CalculateVariantLength(std::string_view ref, std::string_view alt,
 }
 
 // =========================================================================================
-// THE INTUITIVE PRIMER: NATIVE TOPOLOGICAL BUBBLE SINKING
+// TOPOLOGICAL BUBBLE EXTRACTION — How Variants Are Discovered in the POA Graph
 // =========================================================================================
-// Rather than relying on rigid 2D String Matrices (MSA) which are mathematically bloated, or
-// pairwise mapping which erroneously artificially fractures overlapping Multiallelic loci,
-// we view biological sequencing natively as tracking Pointers traversing a structured DAG graph.
+// Rather than relying on 2D string matrices (MSA column diffing)—which scale poorly—or
+// pairwise mapping—which fractures overlapping multiallelic loci—this algorithm tracks
+// pointers traversing the SPOA directed acyclic graph (DAG).
 //
-// -> 1. BIALLELIC SNVs (Paths traverse independent topological nodes before natively reuniting):
+// -> 1. BIALLELIC SNVs (Paths diverge at a single node, then reconverge):
 //
 //                                [REF]
 //                          .--> (T)[3] --.
@@ -85,7 +85,7 @@ inline auto CalculateVariantLength(std::string_view ref, std::string_view alt,
 //                          `--> (C)[4] --'
 //                                [ALT]
 //
-// -> 2. DELETIONS (Independent sequences shortcut massive blocks of graph architecture directly):
+// -> 2. DELETIONS (ALT path skips a stretch of REF nodes via a direct edge):
 //
 //                                            [REF]
 //                          .--> (T)[3] --> (C)[4] --> (G)[5] --.
@@ -96,8 +96,8 @@ inline auto CalculateVariantLength(std::string_view ref, std::string_view alt,
 //                          `-----------------------------------'
 //                                            [ALT]
 //
-// -> 3. MULTIALLELIC COMPLEXES (Massive concurrent branching geometries across the locus):
-//       This requires sweeping ALL pointer coordinates entirely in unison natively.
+// -> 3. MULTIALLELIC COMPLEXES (Multiple ALT paths diverge simultaneously):
+//       Resolving these requires advancing all path pointers in topological order.
 //
 //                               [ALT 1]
 //                          .--> (C)[3] --> (A)[4] ---------.
@@ -107,32 +107,31 @@ inline auto CalculateVariantLength(std::string_view ref, std::string_view alt,
 //                          `--> (G)[8] --> (A)[9] ---------'
 //                               [ALT 2]
 //
-// HOW THE SWEEP EXTRACTOR ALGORITHM WORKS: ("Greedy Sink")
-// 1. We track an array of active pointers representing exactly where every path is locally.
-// 2. If the pointers lose uniform consensus (meaning they point to different
-//    topological DAG nodes), a mathematical "Bubble" has triggered!
-// 3. To perfectly map the bubble without traversing paths unevenly, we evaluate every active
-//    pointer's `Rank` (its globally unique, topologically sorted 5'-to-3' graph depth indicator).
-// 4. We continually advance EXCLUSIVELY the pointer that possesses the MATHEMATICALLY LOWEST rank,
-//    strictly extracting its characters into a string buffer natively.
-// 5. This causes computationally "lagging" pointers to march forward until mathematically EVERY
-//    path inherently syncs identically onto the exact same `Rank` (the unified convergence target)
-// 6. We universally collect the buffered sequence strings across all paths, route them through the
-//    `VariantBubble` for robust VCF multi-allelic trimming parsimony, and register the payload!
+// HOW THE SWEEP EXTRACTOR ALGORITHM WORKS ("Greedy Sink"):
+// 1. Maintain an array of active pointers — one per haplotype — tracking the
+//    current node each path occupies in the DAG.
+// 2. When pointers disagree (point to different nodes), a "Bubble" has opened.
+// 3. Each pointer has a `Rank` — its topologically sorted 5'-to-3' position
+//    in the graph. Rank is the linearized left-to-right ordering.
+// 4. Repeatedly advance only the pointer(s) with the LOWEST rank, appending
+//    their decoded bases to per-path string buffers.
+// 5. This causes lagging paths to catch up until ALL pointers converge on
+//    the same Rank — the bubble's convergence node.
+// 6. Collect the buffered sequences, pass them through VCF multi-allelic
+//    trimming (NormalizeVcfParsimony), and emit the RawVariant.
 // ================================================================================================
-// Isolates algorithmic string Math and left-align computations fully away from graph logic headers
+// Encapsulates VCF string trimming and left-alignment, separate from graph traversal logic.
 class VariantBubble {
  public:
-  // DATA STRUCTURE CHOICE: We map the variant string -> array of integers (haplotype ids)
-  // Abseil maintains robust O(1) retrieval dynamically mapping haplotypes concurrently.
-  absl::flat_hash_map<std::string, std::vector<usize>> mAltAllelesToHaps;  // 40B+ natively
-  std::string mRefAllele;                                                  // 24B
-  std::vector<usize> mHapStarts;                                           // 24B
-  usize mGenomeStartPos = SIZE_MAX;                                        // 8B
+  // Maps each distinct ALT allele string to the haplotype IDs that produced it.
+  // O(1) lookup per allele via Abseil flat hash map.
+  absl::flat_hash_map<std::string, std::vector<usize>> mAltAllelesToHaps;
+  std::string mRefAllele;            // 24B
+  std::vector<usize> mHapStarts;     // 24B
+  usize mGenomeStartPos = SIZE_MAX;  // 8B
 
-  // Normalizing a Multiallelic block demands slicing bounding boxes universally based on ALL
-  // participating alleles simultaneously. You cannot over-trim the REF if one strict ALT block
-  // needs bounding anchor integrity (e.g. an Indel becoming empty).
+  // Multi-allelic normalization trims shared prefix/suffix across ALL alleles simultaneously.
+  // Trimming must stop if any ALT would become empty (losing anchor integrity for INDELs).
   void NormalizeVcfParsimony() {
     if (mAltAllelesToHaps.empty() || mRefAllele.empty()) return;
 
@@ -158,35 +157,32 @@ class VariantBubble {
     // Left Trim (e.g. REF: "TTC", ALTS: ["TGC"] => "TC", ["GC"])
     ApplyUnifiedTrim(CAN_MATCH_LEFT, DO_TRIM_LEFT);
 
-    // Correcting Start Pos! Every left character dropped dynamically sweeps Genomic Start `+1`.
+    // After left-trimming, advance the genomic start position by the number of characters removed.
     mGenomeStartPos += (initial_ref_len - mRefAllele.length());
   }
 
  private:
-  // Lambda generically isolates unified string validation.
-  // Takes `can_trim` (checks boundary char identically across all alleles utilizing
-  // `string_view` for speed) and `do_trim` (executes the heavy string mutation).
+  // Generic trim loop: `can_trim` checks whether the boundary character matches across all
+  // alleles (using string_view to avoid copies), `do_trim` performs the string mutation.
   template <typename CanTrimFunc, typename DoTrimFunc>
   void ApplyUnifiedTrim(CanTrimFunc can_trim, DoTrimFunc do_trim) {
-    // Guard ensuring bounding box doesn't evaporate completely!
+    // Guard: REF must retain at least 1 base (VCF requires non-empty REF)
     while (mRefAllele.length() > 1) {
       std::string_view const ref_view(mRefAllele);
 
-      // Any deviation stops the trimming completely across ALL alleles globally
+      // If any allele's boundary character differs, trimming stops for all alleles
       bool const is_trimmable = std::ranges::all_of(mAltAllelesToHaps, [&](auto const& pair) {
         return can_trim(ref_view, std::string_view(pair.first));
       });
 
       if (!is_trimmable) break;
 
-      // Once verified unconditionally, physically
-      // mutate all tracking memories uniformly
+      // All alleles match — apply the trim
       do_trim(mRefAllele);
 
-      // Flat Hash Maps utilize const `Keys` protecting structural hash-index legitimacy.
-      // We cannot arbitrarily mutate strings inside keys in-place. We allocate a blank
-      // hashmap natively and populate it exploiting `std::move` to skip memory reallocations
-      // of the heavy `std::vector<usize>` properties!
+      // Flat hash map keys are const (mutating them would corrupt the hash index).
+      // Rebuild the map with trimmed keys, using std::move on the haplotype vectors
+      // to avoid copying.
       absl::flat_hash_map<std::string, std::vector<usize>> rehashed_map;
       rehashed_map.reserve(mAltAllelesToHaps.size());
 
@@ -202,12 +198,13 @@ class VariantBubble {
 };
 
 // =========================================================================================
-// VariantExtractor Class Object (Finite State Machine Array Tracking)
+// VariantExtractor — Finite State Machine for DAG Bubble Detection
 // -----------------------------------------------------------------------------------------
-// WHY A CLASS? The looping logic relies profoundly heavily on 6+ sweeping memory tracking
-// variables (`active_ptrs_`, `node_to_rank_`, `current_ref_pos_`). Emulating these dynamically
-// locally inside an ultra massive routine produces extreme repetitive clutter.
-// Encapsulating state cleanly minimizes internal functions into robust English pseudo-code.
+// WHY A CLASS? The extraction loop maintains 6+ mutable state variables
+// (active_ptrs, node_to_rank, current_ref_pos, etc.). Keeping them as class
+// members avoids a single monolithic function and lets each step
+// (InitializeBubbleAnchor, SinkPointers, CreateNormalizedBubble) read
+// as self-contained operations.
 // =========================================================================================
 class VariantExtractor {
  public:
@@ -217,7 +214,7 @@ class VariantExtractor {
         mRefAnchorStart(anchor_start),
         mCurrentRefPos(anchor_start),
         mNumSeqs(mGraph.sequences().size()) {
-    // Natively nothing to discover against isolated references
+    // A graph with fewer than 2 sequences has only the REF — no variants to extract.
     if (mNumSeqs < 2) return;
 
     mCurrentHapPos.assign(mNumSeqs, 0);  // Initializes array accurately bounding paths
@@ -225,17 +222,18 @@ class VariantExtractor {
     // ===========================================================================
     // RANK LOOKUP INITIALIZATION:  O(N) Inverse Topological Indexing
     // ---------------------------------------------------------------------------
-    // WHY? In `spoa`, a node's physical `id` is dynamically assigned based exclusively
-    // on chronological graph insertion. A downstream reference base might be Node #5,
-    // while an upstream variant inserted significantly later could miraculously be Node #500.
-    // Utilizing native `.id` to evaluate chronological progression generates catastrophic bugs.
+    // WHY? In SPOA, a node's physical `id` is assigned based on
+    // insertion order. A downstream reference base might be Node #5,
+    // while an upstream variant inserted later could be Node #500.
+    // Using raw `.id` to determine left-to-right ordering produces
+    // incorrect results.
     //
-    // We utilize the `spoa` strictly validated 5'-to-3' topological sorting vector array.
-    // We inverse it here, meaning if you pass ANY native `.id`, `node_to_rank_[id]`
-    // retrieves its true mathematical biological left-to-right progressive rank value `O(1)`.
+    // SPOA provides a topologically sorted node array (rank_to_node).
+    // We invert it here: given any node `.id`, `mNodeToRank[id]`
+    // returns its true 5'-to-3' rank in O(1).
     // ===========================================================================
     auto const& topological_order = mGraph.rank_to_node();
-    // Instantiate graph memory maps matching natively biological pathways.
+    // Initialize pointer and rank lookup arrays
     mActivePtrs.assign(mNumSeqs, nullptr);
     mNodeToRank.assign(mGraph.nodes().size(), std::numeric_limits<u32>::max());
 
@@ -243,47 +241,33 @@ class VariantExtractor {
       mNodeToRank[topological_order[rank]->id] = rank;
     }
 
-    // Cache initial coordinate origins representing all continuous biological pathways
+    // Set each haplotype's initial pointer to its first node in the graph
     for (usize i = 0; i < mNumSeqs; ++i) {
       mActivePtrs[i] = mGraph.sequences()[i];
     }
   }
 
   // ===================================================================================================
-  // VARIANT EXTRACTOR FLOWCHART: Biological String Unraveling Topology
+  // VARIANT EXTRACTOR FLOWCHART
   // ===================================================================================================
-  // The VariantExtractor continuously pushes active pointers 5'-to-3' topologically across the POA
-  // graph. When pathways diverge (a variant occurs), the Extractor halts uniform sweeping and
-  // triggers a Bubble.
+  // Pushes active pointers 5'-to-3' through the POA graph. When pathways diverge
+  // (a variant occurs), the extractor halts uniform sweeping and triggers a Bubble.
   //
-  //                              (C)  (Prior Match Node! All Pointers Converged Here)
+  //                              (C)  (Prior Match Node — all pointers converged here)
   //                            /     \
   //                  (ALT)    /       \   (REF)
   //                 (C)->(T) .         . (T)->(G)
   //                           \       /
   //                            \     /
-  //                              (G)      (Target Convergence Node! Paths reunite here)
+  //                              (G)      (Target Convergence Node — paths reunite here)
   //
-  // HOW ARE PRIVATE HELPERS UTILIZED NATIVELY?
-  // 1. `InitializeBubbleAnchor`    : Before diving into the divergence, it retroactively graphs the
-  // prior
-  //                                  Match Node base `(C)` uniformly appending it to structural
-  //                                  sequences.
-  // 2. `SinkPointers`              : The Hot Loop Engine! It identifies the computationally lowest
-  // active
-  //    |-- `FindLowestActiveRank`  : topological Rank across all diverging paths.
-  //    |-- `ConsumePathsAtRank`    : It advances strictly those bottlenecking paths sequentially,
-  //    looping
-  //                                  the matrix until ALL pointers jump perfectly simultaneously to
-  //                                  `(G)`.
-  // 3. `CreateNormalizedBubble`    : Resolves the aggregated string bundles and routes them
-  // structurally
-  //                                  into `VariantBubble::NormalizeVcfParsimony` permanently
-  //                                  removing bloat!
-  // 4. `AssembleMultiallelicVariant`: Evaluates each isolated pure sequence core structurally by
-  // calling
-  //                                  `RawVariant::ClassifyVariant` and emitting `RawVariant` sets
-  //                                  seamlessly!
+  // Private helper call sequence:
+  // 1. `InitializeBubbleAnchor`    : Prepends the last matched base (C) as the VCF anchor.
+  // 2. `SinkPointers`              : The hot loop. Finds the lowest-rank pointer,
+  //    |-- `FindLowestActiveRank`  :   advances it, and repeats until all pointers
+  //    |-- `ConsumePathsAtRank`    :   converge on (G).
+  // 3. `CreateNormalizedBubble`    : Groups per-path strings, runs VCF parsimony trimming.
+  // 4. `AssembleMultiallelicVariant`: Classifies each ALT and emits a RawVariant.
   // ===================================================================================================
   // Single public interface endpoint parsing variants continuously
   // directly into the tracking payload container
@@ -294,8 +278,7 @@ class VariantExtractor {
 
     while (true) {
       if (AreAllPathsConverged()) {
-        // If everyone identically evaluates native `nullptr`,
-        // biological tracking universally concludes!
+        // All pointers are nullptr — graph traversal complete
         if (mActivePtrs[REF_HAP_IDX] == nullptr) break;
         AdvanceConvergedPaths();
       } else {
@@ -305,11 +288,10 @@ class VariantExtractor {
   }
 
  private:
-  // Memory Alignment: Large containers (24B vector objects) top-loaded, followed by
-  // uniformly 8B sized references, integers, and raw pointers perfectly eliminating waste.
+  // Memory Alignment: 24B vector objects first, then 8B references/integers, then pointers.
   std::vector<u32> mNodeToRank;
   std::vector<spoa::Graph::Node const*> mActivePtrs;
-  // Dynamically tracks each active path's exact physical array offset
+  // Current position index within each haplotype's sequence
   std::vector<usize> mCurrentHapPos;
   // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
   spoa::Graph const& mGraph;
@@ -318,10 +300,10 @@ class VariantExtractor {
   usize mRefAnchorStart;
   usize mCurrentRefPos;
   usize mNumSeqs;
-  // Mandatory dynamically updated VCF Anchor boundary
+  // Last converged VCF anchor node (prepended to bubble sequences)
   spoa::Graph::Node const* mPrevMatchNode = nullptr;
 
-  // O(M_paths) inline evaluating if NO multiallelic divergence exists currently locally
+  // O(M_paths): checks whether all haplotype pointers point to the same node
   [[nodiscard]] auto AreAllPathsConverged() const -> bool {
     auto const* target = mActivePtrs[REF_HAP_IDX];
     for (usize i = 1; i < mNumSeqs; ++i) {
@@ -330,13 +312,12 @@ class VariantExtractor {
     return true;
   }
 
-  // Step continuous matched blocks homogeneously concurrently
+  // Advance all converged pointers to their next successor node
   void AdvanceConvergedPaths() {
     mPrevMatchNode = mActivePtrs[REF_HAP_IDX];
     for (usize i = 0; i < mNumSeqs; ++i) {
       if (mActivePtrs[i]) {
         mActivePtrs[i] = mActivePtrs[i]->Successor(i);
-        // Dynamically advance sequence coordinate
         mCurrentHapPos[i]++;
       }
     }
@@ -344,7 +325,7 @@ class VariantExtractor {
     mCurrentRefPos++;
   }
 
-  // Controller natively consuming open bubbles and emitting clean Multiallelic Set payloads!
+  // Detect and resolve a single topological bubble, emitting its variants
   void EatTopologicalBubble(absl::btree_set<RawVariant>& out_variants) {
     // Initialize empty base sequences uniformly
     std::vector<std::string> raw_alleles(mNumSeqs, "");
@@ -354,10 +335,10 @@ class VariantExtractor {
     usize const exact_start_pos =
         InitializeBubbleAnchor(absl::MakeSpan(raw_alleles), bubble_hap_starts);
 
-    // 2. Engage Hot Loop Vector Engine to sweep topologies
+    // 2. Advance pointers until convergence
     SinkPointers(absl::MakeSpan(raw_alleles));
 
-    // 3. Normalize into a clean VCF mathematical block
+    // 3. Normalize into a trimmed VCF block
     VariantBubble bubble = CreateNormalizedBubble(exact_start_pos, std::move(raw_alleles));
     bubble.mHapStarts = std::move(bubble_hap_starts);
 
@@ -366,25 +347,24 @@ class VariantExtractor {
     }
   }
 
-  // BIOLOGICAL VCF ANCHORING REQUIREMENT:
-  // Complex Indels universally mandate a shared prefixed Match anchor natively appended uniformly.
+  // VCF ANCHORING REQUIREMENT:
+  // Complex indels require a shared prefix match base as anchor.
   auto InitializeBubbleAnchor(absl::Span<std::string> raw_alleles,
                               std::vector<usize>& out_hap_starts) -> usize {
     bool const has_prev = (mPrevMatchNode != nullptr);
     auto const anchor_offset = static_cast<usize>(has_prev);
 
-    // Branchlessly shifts the universal genomic coordinate logically
-    // backward by exactly 1 if an anchor exists
+    // Shift genomic coordinate back by 1 if an anchor base exists
     usize const bubble_start_pos = mCurrentRefPos - anchor_offset;
 
-    // We retroactively extract the LAST confirmed unified anchor base to prefix the sequences!
+    // Extract the last confirmed match base and prepend it to all alleles
     if (has_prev) {
       char const decoder_val = static_cast<char>(mGraph.decoder(mPrevMatchNode->code));
       std::for_each(raw_alleles.begin(), raw_alleles.end(),
                     [decoder_val](std::string& allele) { allele += decoder_val; });
     }
 
-    // Branchlessly record matrix boundaries uniformly
+    // Record each haplotype's starting position within the bubble
     for (usize i = 0; i < mNumSeqs; ++i) {
       out_hap_starts[i] = mCurrentHapPos[i] - anchor_offset;
     }
@@ -393,12 +373,11 @@ class VariantExtractor {
   }
 
   // ===========================================================================
-  // TOPOLOGICAL SINK: The Biological Sweeping Engine
-  // Using `absl::Span` ensures `raw_alleles` memory modifications are written precisely
-  // natively back to the source string vectors without executing vector copying internally.
+  // TOPOLOGICAL SINK: advances pointers until convergence
+  // absl::Span ensures in-place mutation of the caller's raw_alleles vector
+  // without copying.
   // ===========================================================================
-  // Pushes active pointers topologically forward until universal
-  // convergence is re-established natively
+  // Pushes active pointers forward until all paths converge on the same node.
   void SinkPointers(absl::Span<std::string> raw_alleles) {
     while (!AreAllPathsConverged()) {
       u32 const min_rank = FindLowestActiveRank();
@@ -425,18 +404,16 @@ class VariantExtractor {
         raw_alleles[i] += static_cast<char>(mGraph.decoder(mActivePtrs[i]->code));
         mActivePtrs[i] = mActivePtrs[i]->Successor(i);
 
-        // Tracking local path lengths natively mathematically
+        // Update per-haplotype position
         mCurrentHapPos[i]++;
 
-        // Critical Update! Only the native biological Reference
-        // Index modifies universal REF coordinates.
+        // Only the REF haplotype advances the shared genomic coordinate
         if (i == REF_HAP_IDX) mCurrentRefPos++;
       }
     }
   }
 
-  // Phase 3: Cluster disjoint sequence strings upon convergence organically, and precisely purge
-  // parsimony padding.
+  // Group per-path sequences upon convergence and apply VCF parsimony trimming.
   [[nodiscard]] auto CreateNormalizedBubble(usize genome_start_pos,
                                             std::vector<std::string> raw_alleles) const
       -> VariantBubble {
@@ -455,16 +432,15 @@ class VariantExtractor {
     return bubble;
   }
 
-  // Phase 4: Mathematically squeeze sequence cores against variant classes and emit normalized VCF
-  // multiallelic payloads.
+  // Classify each ALT allele and assemble the final multiallelic RawVariant.
   auto AssembleMultiallelicVariant(VariantBubble bubble) -> RawVariant {
-    // Instantiate unified multiallelic VCF bucket correctly capturing complex fields.
+    // Build multiallelic VCF record
     RawVariant multi_var;
     multi_var.mChromIndex = mWin.ChromIndex();
     multi_var.mChromName = mWin.ChromName();
     multi_var.mGenomeChromPos1 = bubble.mGenomeStartPos;
 
-    // Statically locks to REF coordinate flawlessly
+    // Set REF coordinate
     multi_var.mLocalRefStart0Idx = bubble.mHapStarts[REF_HAP_IDX];
     multi_var.mRefAllele = std::move(bubble.mRefAllele);
 
@@ -483,8 +459,7 @@ class VariantExtractor {
       multi_var.mAlts.push_back(std::move(sub_alt));
     }
 
-    // `RawVariant` utilizes std::vector equality natively, so sequence elements MUST strictly
-    // align uniformly to generate completely identical hashes reliably inside set arrays later.
+    // Sort ALT alleles for deterministic equality comparison and hash stability in btree_set.
     std::sort(multi_var.mAlts.begin(), multi_var.mAlts.end());
     return multi_var;
   }

@@ -285,7 +285,7 @@ auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav
     });
 
     // Deduplicate Sequence matches in O(N). Because the array is already sorted
-    // by coverage, this intrinsically retains the highest-coverage path for any duplicate sequence.
+    // by coverage, this retains the highest-coverage path for any duplicate sequence.
     absl::flat_hash_set<std::string_view> seen_seqs;
     std::erase_if(haplotypes, [&seen_seqs](Graph::Path const& path) -> bool {
       auto [_unused, inserted] = seen_seqs.insert(path.Sequence());

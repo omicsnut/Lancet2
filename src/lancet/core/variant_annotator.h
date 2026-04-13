@@ -16,7 +16,7 @@ namespace lancet::core {
 // VariantAnnotator — annotates RawVariants with complexity features
 //
 // Separated from VariantBuilder to isolate annotation logic (which produces
-// ML-ready features) from variant discovery logic (which walks the graph).
+// coverage-invariant features) from variant discovery logic (which walks the graph).
 //
 // Owns the SequenceComplexityScorer and provides methods to annotate
 // variant sets with sequence complexity and graph complexity metrics.

@@ -8,7 +8,9 @@ across 20×–2000× without retraining.
 
 SCA, FLD, and MQCD use metadata from the original BAM/CRAM alignment.
 RPCD, BQCD, and ASMD use metrics computed from the minimap2 re-alignment
-during genotyping. SDFC uses window-level BAM coverage.
+during genotyping. SDFC uses window-level BAM coverage. FSSE and AHDD use
+per-read alignment evidence from the genotyper. HSE uses SPOA haplotype
+assignment data. PDCV uses k-mer coverage from the de Bruijn graph paths.
 
 ---
 
@@ -347,3 +349,166 @@ paralog detection strategy: collapsed paralogs produce both elevated SDFC (exces
 reads mapped to one site) and depressed MQCD (the paralogous reads have lower
 MAPQ). A variant at a site with SDFC > 2.0 and MQCD < −0.3 is very likely a
 false positive.
+
+---
+
+## Fragment Start Shannon Entropy (`FSSE`)
+
+**Purpose**: Detect residual PCR duplicates that survive upstream deduplication
+tools (Picard MarkDuplicates, samtools markdup).
+
+Traditional deduplication identifies duplicates by exact start position + strand.
+Three mechanisms produce biological duplicates that share a PCR origin but
+differ by 1–3 bp in mapped start position, evading detection:
+
+1. **Exonuclease fraying** — proofreading 3'→5' exonucleases nibble 1–3 bp
+   from fragment ends during library prep, shifting mapped starts.
+2. **Alignment jitter** — soft-clip thresholds and indel penalties cause
+   identical molecules to align to slightly different start coordinates.
+3. **Representative read roulette** — when MarkDuplicates selects a
+   representative from a duplicate group, different runs may pick different
+   members, leaving residual PCR siblings.
+
+FSSE quantifies the spatial diversity of ALT read start positions. True
+variants produce reads from independent sampling events scattered across
+many start positions (high entropy). PCR duplicates cluster at few start
+positions (low entropy).
+
+**Computation**:
+
+1. Collect alignment start positions for all ALT-supporting reads.
+2. Bin starts into 3 bp buckets (floor(start / 3)) to absorb exonuclease
+   fraying. The 3 bp bin width corresponds to the typical exonuclease
+   nibble range.
+3. Compute Shannon entropy over the bin counts:
+   `H = -Σ(p_i × log₂(p_i))`, where `p_i = count_in_bin_i / total_ALT_reads`.
+4. Normalize: `FSSE = H / log₂(min(N, 20))`, where N = number of ALT reads.
+   The cap at 20 prevents normalization from penalizing deeply sequenced
+   sites with hundreds of unique start positions.
+5. If fewer than 3 ALT reads, return `.` (untestable — entropy requires
+   a meaningful distribution).
+
+**Value range**: [0, 1], or `.` (untestable)
+
+**Interpretation**:
+
+| FSSE Range | Meaning |
+|:-----------|:--------|
+| > 0.7 | High start diversity — reads from independent sampling events |
+| 0.3–0.7 | Moderate diversity — inspect manually |
+| < 0.3 | Low diversity — reads cluster at few start positions, likely residual PCR duplicates |
+
+**Coverage stability**: Perfectly coverage-invariant — the normalization by
+log₂(min(N, 20)) ensures FSSE measures start position *diversity* independent
+of total depth. A 50% duplicate contamination rate produces the same FSSE
+value at 30× and 300×.
+
+---
+
+## ALT-Haplotype Discordance Delta (`AHDD`)
+
+**Purpose**: Detect assembly hallucinations — variants where the graph
+assembler constructed an ALT haplotype that does not actually match the
+reads supporting it.
+
+**Computation**:
+
+1. During genotyping, each read is re-aligned (minimap2) against the SPOA
+   consensus haplotype it was assigned to. The edit distance (NM) against
+   its *own* haplotype is stored as `mOwnHapNm`.
+2. Reads are grouped by allele assignment (REF vs ALT).
+3. `AHDD = mean(ALT reads' NM vs ALT haplotype) − mean(REF reads' NM vs REF haplotype)`.
+4. If either group is empty, return `.` (untestable).
+
+**Rationale**: For a true variant, ALT reads should align well to the ALT
+haplotype (low NM) and REF reads should align well to the REF haplotype
+(low NM), producing AHDD ≈ 0. When the assembler hallucinates a spurious
+path, the ALT reads do not actually match their assigned haplotype
+(high NM), producing AHDD >> 0.
+
+**Value range**: (−∞, +∞), or `.` (untestable)
+
+**Interpretation**:
+
+| AHDD Range | Meaning |
+|:-----------|:--------|
+| < 0.5 | Good haplotype-read concordance — reads match their assigned assembly path |
+| 0.5–2.0 | Moderate discordance — possible noisy region or complex variant |
+| > 2.0 | High discordance — ALT reads poorly match the assembled ALT haplotype, likely assembly hallucination |
+
+**Coverage stability**: Near-invariant. The mean NM converges rapidly
+(stabilizes above ~10 reads per allele). Minor variation at very low per-allele
+coverage (< 5 reads) due to sampling noise.
+
+---
+
+## Haplotype Segregation Entropy (`HSE`)
+
+**Purpose**: Measure how concentrated ALT reads are on a single SPOA
+haplotype path vs. scattered across many.
+
+**Rationale**: True variants arise from a single biological allele. All
+ALT reads should consistently align to the same assembled haplotype path,
+producing a low-entropy distribution (HSE near 0). Random
+sequencing errors scatter across multiple haplotypes
+because each error generates a slightly different assembly path, producing
+a high-entropy distribution (HSE near 1).
+
+**Computation**:
+
+1. After genotyping assigns reads to alleles and SPOA paths, collect the
+   haplotype ID for each ALT-supporting read.
+2. Compute Shannon entropy over haplotype assignment counts:
+   `H = -Σ(p_i × log₂(p_i))`, where `p_i = reads_on_haplotype_i / total_ALT_reads`.
+3. Normalize: `HSE = H / log₂(total_haplotypes)`, where total_haplotypes is the
+   total number of SPOA haplotype paths in this graph component (including REF).
+4. If fewer than 3 ALT reads or only 1 haplotype, return `.` (untestable).
+
+**Value range**: [0, 1], or `.` (untestable)
+
+**Interpretation**:
+
+| HSE Range | Meaning |
+|:----------|:--------|
+| < 0.2 | Concentrated — ALT reads consistently map to one haplotype (strong true variant signal) |
+| 0.2–0.5 | Moderate concentration — possible complex variant or noisy assembly |
+| > 0.5 | Scattered — ALT reads distribute across multiple haplotypes (likely noise or error) |
+
+**Coverage stability**: Perfectly coverage-invariant — HSE measures
+concentration shape (entropy), not magnitude. The same 80/20 read
+split across two haplotypes produces the same HSE at any depth.
+
+---
+
+## Path Depth Coefficient of Variation (`PDCV`)
+
+**Purpose**: Detect chimeric assembly artifacts from the de Bruijn graph
+construction. Chimeric junctions (where unrelated sequences are stitched
+together) produce paths with sharp, localized drops in k-mer coverage.
+
+**Computation**:
+
+1. During graph construction, each node in the de Bruijn graph tracks its
+   k-mer coverage (the number of reads contributing to that k-mer).
+2. For each assembled haplotype path, the coverage of each node along the
+   path is collected, and the coefficient of variation is computed:
+   `CV = σ(node_coverages) / μ(node_coverages)`.
+3. PDCV takes the maximum CV across all ALT haplotype paths in the graph
+   component. The worst-case path highlights the most suspicious junction.
+4. If a path has fewer than 2 nodes, CV is undefined (variance requires
+   ≥ 2 data points) and the metric returns `.`.
+
+**Value range**: [0, ∞), or `.` (untestable)
+
+**Interpretation**:
+
+| PDCV Range | Meaning |
+|:-----------|:--------|
+| < 0.3 | Uniform path coverage — consistent k-mer support along the entire ALT path |
+| 0.3–0.8 | Moderate variation — possible coverage fluctuation from repetitive sequences |
+| > 0.8 | High variation — sharp coverage drops along the path, likely chimeric junction or assembly artifact |
+
+**Coverage stability**: Near-invariant — CV is a ratio (σ/μ). A chimeric
+junction producing a 10× drop at one node produces similar PDCV at 30×
+and 300× total coverage. Minor noise at very low k-mer coverage (< 3×)
+where integer quantization effects become significant.

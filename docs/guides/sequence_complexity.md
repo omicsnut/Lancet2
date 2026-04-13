@@ -1,9 +1,9 @@
 # Sequence Complexity (`SEQ_CX`)
 
-This optional INFO field captures 11 independent sequence complexity features
+This INFO field captures 11 independent sequence complexity features
 distilled from raw multi-scale metrics (homopolymer runs, Shannon entropy,
-LongdustQ k-mer concentration, tandem repeat motifs). It requires
-`--enable-sequence-complexity-features` to enable.
+LongdustQ k-mer concentration, tandem repeat motifs). Emitted as the `SEQ_CX`
+INFO tag in every VCF record.
 
 All 11 features are computed from assembled haplotype sequences and are
 **completely coverage-invariant**: they measure properties of the genomic

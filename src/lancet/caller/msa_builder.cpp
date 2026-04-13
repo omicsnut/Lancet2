@@ -75,7 +75,7 @@ void MsaBuilder::WriteGfa(FsPath const& out_path) const {
     auto const* const hap_prefix = seq_idx == 0 ? "ref" : "hap";
     fmt::print(out_handle, "P\t{}{}\t", hap_prefix, seq_idx);
 
-    // Iteratively trace node Successors to construct the sequence path organically
+    // Trace node successors to construct the sequence path
     spoa::Graph::Node const* curr_node = mGraph.sequences()[seq_idx];
     bool is_first = true;
     while (curr_node != nullptr) {

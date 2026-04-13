@@ -19,10 +19,9 @@ namespace lancet::caller {
 // ============================================================================
 // VariantSet: Multiallelic Graph Extraction Engine
 //
-// Extracts biologically complex multiallelic variants natively from SPOA
-// directed acyclic graphs by aggressively sweeping the topology concurrently.
-// It tracks divergent structural paths per haplotype and mathematically merges
-// them into fully bundled `RawVariant` outputs with zero overlapping biases.
+// Extracts multiallelic variants from SPOA directed acyclic graphs by sweeping
+// the topology per haplotype. Tracks divergent paths and merges them into
+// bundled `RawVariant` outputs with no overlapping biases.
 // ============================================================================
 class VariantSet {
  public:

@@ -30,8 +30,10 @@ using VariantID = u64;
 //     Input:  {chr1:100 A→T, A→G}  (One Multiallelic RawVariant)
 //     Output: VCF record: chr1 100 . A T,G ... (comma-separated ALTs)
 //
+// clang-format off
 // FORMAT fields (per-sample):
-//   GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ
+//   GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ
+// clang-format on
 //
 //   GT   - Genotype (e.g., 0/1, 1/2 for multi-allelic)
 //   AD   - Number=R: read depth per allele (REF, ALT1, ALT2, ...)
@@ -51,18 +53,16 @@ using VariantID = u64;
 //   PRAD - Number=1: Polar Radius log10(1 + sqrt(AD_Ref² + AD_Alt²))
 //   PANG - Number=1: Polar Angle atan2(AD_Alt, AD_Ref) in radians
 //   CMLOD - Number=A: Continuous Mixture LOD per ALT (quality-weighted)
+//   FSSE  - Number=1: Fragment Start Shannon Entropy [0,1] (ALT start position diversity)
+//   AHDD  - Number=1: ALT-Haplotype Discordance Delta (ALT reads vs own haplotype)
+//   HSE   - Number=1: Haplotype Segregation Entropy [0,1] (ALT path concentration)
+//   PDCV  - Number=1: Path Depth Coefficient of Variation (graph coverage uniformity)
 //   PL    - Number=G: Phred-scaled genotype likelihoods (Dirichlet-Multinomial)
 //   GQ    - Genotype quality (second-lowest DM PL, capped at 99)
 // ============================================================================
 class VariantCall {
  public:
   using Samples = absl::Span<core::SampleInfo const>;
-
-  /// Feature gate flags — replaces the old string-based AnnotationFeatures.
-  struct FeatureFlags {
-    bool mEnableGraphComplexity = false;
-    bool mEnableSequenceComplexity = false;
-  };
 
   struct SampleGenotypeData {
     // 8B Align: Vectors/Pointers
@@ -87,6 +87,10 @@ class VariantCall {
     std::optional<f32> mBaseQualCohenD;
     std::optional<f32> mMapQualCohenD;
     std::optional<f32> mAlleleMismatchDelta;
+    std::optional<f32> mFragStartEntropy;
+    std::optional<f32> mAltHapDiscordDelta;
+    std::optional<f32> mHaplotypeSegEntropy;
+    std::optional<f32> mPathDepthCv;
 
     f32 mSiteDepthFoldChange{0.0F};
     f32 mPolarRadius{0.0F};
@@ -107,7 +111,7 @@ class VariantCall {
   using SupportsByVariant = absl::flat_hash_map<RawVariant const*, SupportArray>;
   using PerSampleCov = absl::flat_hash_map<std::string_view, f64>;
   VariantCall(RawVariant const* var, SupportsByVariant const& all_supports, Samples samps,
-              FeatureFlags features, PerSampleCov per_sample_cov);
+              PerSampleCov per_sample_cov);
 
   [[nodiscard]] auto ChromIndex() const -> usize { return mChromIndex; }
   [[nodiscard]] auto ChromName() const -> std::string_view { return mChromName; }
@@ -205,6 +209,11 @@ class VariantCall {
   usize mTotalSampleCov{0};
   f64 mSiteQuality{0};
 
+  // Raw variant pointer — valid for the lifetime of the VariantBuilder's
+  // btree_set (which outlives all VariantCall instances). Needed by
+  // BuildFormatFields to access mNumTotalHaps (HSE) and mMaxPathCv (PDCV).
+  RawVariant const* mRawVariant{nullptr};
+
   PerSampleCov mPerSampleCov;
 
   std::string mChromName;
@@ -216,7 +225,7 @@ class VariantCall {
   std::vector<RawVariant::Type> mCategories;
   std::vector<SampleGenotypeData> mSampleGenotypes;
 
-  // ── Sequence complexity (11 ML-ready features, from RawVariant) ─────────
+  // ── Sequence complexity (11 coverage-invariant features, from RawVariant) ─
   // ── Graph complexity metrics (from RawVariant, transcribed) ────────────
   base::SequenceComplexity mSeqCx;
   RawVariant::GraphMetrics mGraphCx;
@@ -225,7 +234,6 @@ class VariantCall {
   RawVariant::State mState = RawVariant::State::NONE;
 
   // ── 1B Alignment ────────────────────────────────────────────────────────
-  FeatureFlags mFeatureFlags;
   bool mIsMultiallelic = false;
   bool mHasAltSupport = false;
 
@@ -241,7 +249,7 @@ class VariantCall {
   // ── Evidence collection (shared by both constructors) ──────────────────
 
   /// Common finalization after evidence is assembled: builds FORMAT, state, and INFO fields.
-  void Finalize(SupportArray const& evidence, Samples samps, FeatureFlags features);
+  void Finalize(SupportArray const& evidence, Samples samps);
 
   // ── Modular field builders ─────────────────────────────────────────────
   struct PerAlleleMetrics {
@@ -279,8 +287,8 @@ class VariantCall {
   void ComputeState(SupportArray const& evidence, Samples samps, bool tumor_normal_mode);
 
   /// Assemble the INFO field string (TYPE, LENGTH,
-  /// optional state prefix, optional complexity annotations).
-  void BuildInfoField(bool tumor_normal_mode, FeatureFlags features);
+  /// optional state prefix, complexity annotations).
+  void BuildInfoField(bool tumor_normal_mode);
 };
 
 }  // namespace lancet::caller

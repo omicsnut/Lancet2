@@ -111,7 +111,7 @@ All FORMAT annotations are designed to be **coverage-invariant** — they measur
 | Strand Bias (SB) | Log odds ratio | Measures imbalance magnitude, not significance |
 | NPBQ | Normalized PBQ | Raw PBQ / allele depth → converges to ~Q30 at any depth |
 
-Optionally, sequence complexity (LongdustQ, Shannon Entropy) and graph topology (Graph Entanglement Index) annotations are added as INFO-level ML features when `--enable-sequence-complexity-features` / `--enable-graph-complexity-features` are enabled.
+Sequence complexity (LongdustQ, Shannon Entropy) and graph topology (Graph Entanglement Index) annotations are always computed and emitted as INFO-level ML features (`SEQ_CX`, `GRAPH_CX`) in every VCF record.
 
 * **Read more:** [Variant Discovery & Genotyping](variant_discovery_genotyping.md), [Sequence Complexity](sequence_complexity.md), [Polar Coordinate Features](polar_features.md), [VCF Output Reference](vcf_output.md), [Scoring Somatic Variants](scoring_somatic_variants.md)
 

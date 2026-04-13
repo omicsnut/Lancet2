@@ -132,16 +132,6 @@ Output directory to write per-window graphs in DOT and GFA format.
 Must be a non-existing directory path that will be created. Produces two subdirectories: DOT files for Graphviz visualization (one per pruning stage) and GFA files for the SPOA POA graph.
 See [Custom Visualization](guides/custom_visualization.md) for rendering instructions and interpretation.
 
-#### `--enable-graph-complexity-features`
-Emit `GRAPH_CX` INFO tag with per-variant graph complexity metrics (GEI, TipToPathCovRatio, MaxSingleDirDegree).
-Topology-derived features that are coverage-stable above 20×.
-See [Graph Complexity](guides/graph_complexity.md) and [VCF Output Reference](guides/vcf_output.md#optional-complexity-annotations) for details.
-
-#### `--enable-sequence-complexity-features`
-Emit `SEQ_CX` INFO tag with 11 multi-scale sequence complexity metrics (HRun, entropy, TR motifs, LongdustQ).
-These features are perfectly coverage-invariant (sequence-only) and designed for ML-based variant filtering.
-See [Sequence Complexity](guides/sequence_complexity.md) and [VCF Output Reference](guides/vcf_output.md#optional-complexity-annotations) for details.
-
 #### `--genome-gc-bias`
 > [0.0-1.0]. Default value --> 0.41
 
@@ -151,8 +141,6 @@ Default value (0.41) is the human genome-wide GC average. Adjust for non-human g
 
 ```bash
 Lancet2 pipeline \
-    --enable-graph-complexity-features \
-    --enable-sequence-complexity-features \
     --genome-gc-bias 0.41 \
     --normal normal.bam --tumor tumor.bam \
     --reference ref.fasta --region "chr22" \

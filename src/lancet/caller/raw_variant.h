@@ -8,6 +8,7 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,13 +50,13 @@ class RawVariant {
     std::string mSequence;
 
     // 3. MULTI-ALLELIC LOCAL MATRIX MAP (ALTs):
-    // A single multi-allelic locus inherently possesses different string offsets
-    // depending unilaterally on which specific structural path (Haplotype ID) a read traversed
-    // to reach it. A 100bp insertion earlier in Haplotype 3 shifts this ALTs local index
-    // mathematically by +100 relative to Haplotype 1!
-    // -> Maps natively: Haplotype ID -> variant's exact Local Matrix Start on THAT string.
-    absl::flat_hash_map<usize, usize>
-        mLocalHapStart0Idxs;  // Moved up to satisfy 8B -> 4B -> 2B -> 1B constraints
+    // A single multi-allelic locus has different string offsets depending on
+    // which haplotype path a read traversed to reach it. A 100bp insertion
+    // earlier in Haplotype 3 shifts this ALT's local index by +100 relative
+    // to Haplotype 1.
+    // Maps: Haplotype ID -> variant's exact local matrix start on that string.
+    // Moved up to satisfy 8B -> 4B -> 2B -> 1B constraints
+    absl::flat_hash_map<usize, usize> mLocalHapStart0Idxs;
 
     i64 mLength = -1;
     Type mType = Type::REF;
@@ -106,9 +107,8 @@ class RawVariant {
   // allocations for very small multiallelic blocks (as most sites have 1 or 2 alts max).
   std::vector<AltAllele> mAlts;
 
-  // ── Graph complexity metrics (ML-ready independent features) ────────────
-  // Populated when --enable-graph-complexity-features is set.
-  // 3 fields matching the GRAPH_CX VCF INFO tag.
+  // ── Graph complexity metrics (coverage-invariant features) ──────────────
+  // Always populated. 3 fields matching the GRAPH_CX VCF INFO tag.
   //
   // Coverage stability: GEI uses CovCV (σ/μ, self-normalizing ratio),
   // TipToPathCovRatio is a coverage ratio, MaxSingleDirDegree is pure
@@ -141,11 +141,23 @@ class RawVariant {
 
   mutable GraphMetrics mGraphMetrics;
 
-  // ── Sequence complexity (11 ML-ready features) ────────────────────────
-  // Populated when --enable-sequence-complexity-features is set.
-  // Distilled from raw multi-scale metrics (HRun, Entropy, LongdustQ, TR motifs)
-  // into 3 groups: Context (REF), Delta (ALT−REF), TR Motif (ALT).
+  // ── Sequence complexity (11 coverage-invariant features) ────────────────
+  // Always populated. Distilled from raw multi-scale metrics (HRun, Entropy,
+  // LongdustQ, TR motifs) into 3 groups: Context (REF), Delta (ALT−REF),
+  // TR Motif (ALT). Matches the SEQ_CX VCF INFO tag.
   mutable base::SequenceComplexity mSeqCx;
+
+  // Total SPOA haplotype count for this graph component (for HSE
+  // normalization). Populated in VariantBuilder::ProcessWindow().
+  // Does NOT participate in operator==, operator<, or AbslHashValue —
+  // mutable annotation, same pattern as mGraphMetrics and mSeqCx.
+  mutable usize mNumTotalHaps = 0;
+
+  // Maximum path depth CV across all ALT de Bruijn graph paths.
+  // Computed in VariantBuilder::ProcessWindow() from a single O(nhaps)
+  // pass over comp_paths[1..]. std::optional because -ffast-math prohibits
+  // NaN; nullopt when no ALT path has ≥ 2 nodes.
+  mutable std::optional<f64> mMaxPathCv;
 
   template <typename HashState>
   friend auto AbslHashValue(HashState hash_state, RawVariant const& var) -> HashState {
@@ -154,7 +166,7 @@ class RawVariant {
   }
 
   friend auto operator==(RawVariant const& lhs, RawVariant const& rhs) -> bool {
-    // Array equality operator `==` handles validating entire Multiallelic arrays instantly natively
+    // std::vector operator== handles multi-allelic array comparison element-by-element
     return lhs.mChromIndex == rhs.mChromIndex &&
            lhs.mGenomeChromPos1 == rhs.mGenomeChromPos1 &&
            lhs.mChromName == rhs.mChromName &&
@@ -195,9 +207,9 @@ class RawVariant {
 // WHY DO WE SQUEEZE THE STRINGS AGAIN IF THE `VariantExtractor` FSM ALREADY APPLIES PARSIMONY?
 //
 // While `VariantBubble::NormalizeVcfParsimony` performs a simultaneous VT-style right-trim
-// and left-alignment, it mathematically MUST execute identically universally across ALL alleles
-// in a single Multi-Allelic Bubble block. Therefore, the global trimmer is inherently restricted
-// by the structural topological bounds of the WIDEST allele in the cluster.
+// and left-alignment, it MUST apply the same trim across ALL alleles in a multi-allelic
+// bubble block. Therefore, the global trimmer is restricted by the bounds of the WIDEST
+// allele in the cluster.
 //
 // -> THE MULTI-ALLELIC SHIELDING PROBLEM:
 // Consider a bubble traversing 3 paths:

@@ -70,7 +70,7 @@ class VariantSupport {
     // ── 4B Alignment ──────────────────────────────────────────────────────
     u32 mRnameHash;            // hash of read name (for dedup)
     u32 mRefNm;                // edit distance to REF haplotype (for ASMD)
-    u32 mAltNm;                // edit distance to assigned ALT haplotype (for AHDD)
+    u32 mOwnHapNm;             // edit distance to assigned haplotype (for AHDD)
     u32 mAssignedHaplotypeId;  // SPOA path index this read was assigned to (for HSE)
 
     // ── 1B Alignment ──────────────────────────────────────────────────────
@@ -189,6 +189,56 @@ class VariantSupport {
   //   Returns 0.0 when no excess mismatch detected (genuine zero).
   [[nodiscard]] auto AlleleMismatchDelta(usize variant_length = 0) const -> std::optional<f64>;
 
+  // Fragment Start Shannon Entropy (FSSE FORMAT field):
+  // Measures spatial diversity of ALT read alignment start positions.
+  // Catches PCR duplicate jackpot artifacts that survive upstream
+  // MarkDuplicates, which is binary, global-coordinate, and allele-blind.
+  //
+  // Five failure modes MarkDuplicates misses:
+  //   1. Exonuclease fraying: 1–4 bp enzymatic nibbling staggers clone
+  //      starts past exact-coordinate dedup. 3 bp binning absorbs this.
+  //   2. Alignment jitter: BWA-MEM maps complex variants chaotically,
+  //      giving clones divergent global POS. FSSE operates post-SPOA.
+  //   3. Birthday Paradox: at ≥5,000× Poisson crowding, coordinate
+  //      collisions among independent fragments are expected.
+  //   4. Representative read roulette: Picard keeps the highest-BQ read,
+  //      potentially amplifying a single error to 100% VAF.
+  //   5. Continuous vs binary: Shannon entropy preserves distributional
+  //      information that binary dedup destroys.
+  //
+  // Computation: bin ALT starts into 3 bp windows → H = −Σ pᵢ log₂(pᵢ),
+  // normalized by log₂(min(N, 20)) to [0, 1].
+  //   Returns std::nullopt when < 3 ALT reads (insufficient data).
+  [[nodiscard]] auto ComputeFSSE() const -> std::optional<f64>;
+
+  // ALT-Haplotype Discordance Delta (AHDD FORMAT field):
+  // mean(ALT reads' NM against their assigned ALT haplotype) −
+  // mean(REF reads' NM against REF haplotype).
+  //
+  // Both NM values come from the same mOwnHapNmValues vector, which
+  // stores each read's edit distance against its assigned haplotype
+  // (after the mAltNm → mOwnHapNm rename and guard removal — see
+  // genotyper.cpp). This ensures an apples-to-apples comparison: both
+  // groups use the same ComputeEditDistance() path.
+  //
+  // ASMD asks "do ALT reads fit the REF haplotype?" — AHDD asks "do ALT
+  // reads fit their OWN assembled haplotype?" High AHDD means the SPOA
+  // consensus doesn't match its supporting reads, signaling an assembly
+  // hallucination.
+  //   Returns std::nullopt when either group is empty (untestable).
+  [[nodiscard]] auto ComputeAHDD() const -> std::optional<f64>;
+
+  // Haplotype Segregation Entropy (HSE FORMAT field):
+  // Shannon entropy of ALT reads' SPOA haplotype path assignments,
+  // normalized to [0, 1].
+  //
+  // True somatic variants concentrate ALT reads on a single haplotype
+  // (HSE ≈ 0). Random sequencer errors scatter across multiple assembly
+  // paths (HSE > 0.5). With only one haplotype, segregation is
+  // undefined — entropy requires at least two categories.
+  //   Returns std::nullopt when < 3 ALT reads or total_haplotypes < 2.
+  [[nodiscard]] auto ComputeHSE(usize total_haplotypes) const -> std::optional<f64>;
+
   // ── Multi-Allelic Genotype Likelihoods (Dirichlet-Multinomial Model) ──
 
   // Computes Phred-scaled genotype likelihoods (PLs) for all possible diploid
@@ -204,8 +254,8 @@ class VariantSupport {
   // preventing extreme PL values at ultra-high depth.
   //
   // The DM model generalizes the overdispersed Beta-Binomial to K dimensions,
-  // naturally absorbing correlated sequencing errors at ultra-high depths
-  // (2500x+). PLs plateau organically — no depth-division clamping needed.
+  // absorbing correlated sequencing errors at ultra-high depths
+  // (2500x+). PLs plateau without depth-division clamping.
   //
   // For K alleles (0=REF, 1..K-1=ALTs), there are K*(K+1)/2 diploid genotypes.
   // For each genotype (a1, a2), expected allele fractions μ_i are:
@@ -249,7 +299,7 @@ class VariantSupport {
   //
   // Unlike DM-based PLs (which evaluate discrete diploid genotype states), the
   // CMLOD operates over continuous frequency space and integrates exact per-read
-  // base qualities. This separates Q40 reads from Q10 noise natively, solving
+  // base qualities. This separates Q40 reads from Q10 noise, solving
   // the identifiability problem where count-based models can't distinguish a 2%
   // true mosaic from a 2% systematic artifact.
   //
@@ -307,9 +357,11 @@ class VariantSupport {
     // Genomic coordinates — high repeat count at the same position signals PCR duplicates.
     std::vector<i64> mAlignmentStarts;
 
-    // Edit distances (NM) against assigned ALT haplotype for AHDD.
-    // Stored as f64 for mean computation. Only populated for ALT-assigned reads.
-    std::vector<f64> mAltNmValues;
+    // Edit distances (NM) against each read's assigned haplotype for AHDD.
+    // Stored as f64 for mean computation. Populated for ALL reads — REF reads
+    // are scored against haplotype 0 (the REF), ALT reads against their
+    // winning ALT haplotype.
+    std::vector<f64> mOwnHapNmValues;
 
     // SPOA path IDs for HSE (Haplotype Segregation Entropy).
     // Tracks which assembled haplotype each ALT read was assigned to.

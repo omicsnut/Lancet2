@@ -1,6 +1,8 @@
 #include "lancet/hts/fisher_exact.h"
 
+extern "C" {
 #include "htslib/kfunc.h"
+}
 
 namespace lancet::hts {
 

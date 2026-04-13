@@ -58,20 +58,20 @@ namespace lancet::caller {
 // ============================================================================
 // Multi-allelic constructor
 //
-// Unspools a natively multi-allelic RawVariant exactly into the VCF array mapping!
+// Unspools a multi-allelic RawVariant into the VCF array mapping.
 // ============================================================================
 VariantCall::VariantCall(RawVariant const* var, SupportsByVariant const& all_supports,
-                         Samples samps, FeatureFlags features, PerSampleCov per_sample_cov)
+                         Samples samps, PerSampleCov per_sample_cov)
     : mVariantId(HashRawVariant(var)),
       mChromIndex(var->mChromIndex),
       mStartPos1(var->mGenomeChromPos1),
 
+      mRawVariant(var),
       mPerSampleCov(std::move(per_sample_cov)),
       mChromName(var->mChromName),
       mRefAllele(var->mRefAllele),
       mGraphCx(var->mGraphMetrics),
       mSeqCx(var->mSeqCx),
-      mFeatureFlags(features),
       mIsMultiallelic(mAltAlleles.size() > 1) {
   auto const num_alts = var->mAlts.size();
   mAltAlleles.reserve(num_alts);
@@ -85,9 +85,9 @@ VariantCall::VariantCall(RawVariant const* var, SupportsByVariant const& all_sup
   });
 
   if (auto const var_it = all_supports.find(var); var_it != all_supports.end()) {
-    Finalize(var_it->second, samps, features);
+    Finalize(var_it->second, samps);
   } else {
-    Finalize(SupportArray(), samps, features);
+    Finalize(SupportArray(), samps);
   }
 }
 
@@ -100,7 +100,7 @@ VariantCall::VariantCall(RawVariant const* var, SupportsByVariant const& all_sup
 //   2. ComputeState       — SHARED/NORMAL/TUMOR classification
 //   3. BuildInfoField     — INFO string assembly
 // ============================================================================
-void VariantCall::Finalize(SupportArray const& evidence, Samples samps, FeatureFlags features) {
+void VariantCall::Finalize(SupportArray const& evidence, Samples samps) {
   static auto const IS_TUMOR = [](auto const& sinfo) -> bool {
     return sinfo.TagKind() == cbdg::Label::TUMOR;
   };
@@ -112,13 +112,15 @@ void VariantCall::Finalize(SupportArray const& evidence, Samples samps, FeatureF
 
   BuildFormatFields(evidence, samps, tumor_normal_mode);
   ComputeState(evidence, samps, tumor_normal_mode);
-  BuildInfoField(tumor_normal_mode, features);
+  BuildInfoField(tumor_normal_mode);
 }
 
 // ============================================================================
 // BuildFormatFields: per-sample FORMAT strings and site quality.
 //
-// FORMAT: GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ
+// clang-format off
+// FORMAT: GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ
+// clang-format on
 //
 //   GT    - Genotype derived from minimum PL
 //   AD    - Number=R: allele depths (REF, ALT1, ALT2, ...)
@@ -138,6 +140,10 @@ void VariantCall::Finalize(SupportArray const& evidence, Samples samps, FeatureF
 //   PRAD  - Number=1: Polar Radius log10(1 + sqrt(AD_Ref² + AD_Alt²))
 //   PANG  - Number=1: Polar Angle atan2(AD_Alt, AD_Ref) in radians
 //   CMLOD - Number=A: Continuous Mixture LOD per ALT (quality-weighted)
+//   FSSE  - Number=1: Fragment Start Shannon Entropy [0,1] (ALT start position diversity)
+//   AHDD  - Number=1: ALT-Haplotype Discordance Delta (ALT reads vs own haplotype)
+//   HSE   - Number=1: Haplotype Segregation Entropy [0,1] (ALT path concentration)
+//   PDCV  - Number=1: Path Depth Coefficient of Variation (graph coverage uniformity)
 //   PL    - Number=G: Phred-scaled genotype likelihoods (Dirichlet-Multinomial)
 //   GQ    - Genotype quality (second-lowest PL from Dirichlet-Multinomial, capped at 99)
 // ============================================================================
@@ -201,6 +207,18 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     sample.mContinuousMixtureLods.reserve(cmlod_scores.size());
     sample.mContinuousMixtureLods.insert(sample.mContinuousMixtureLods.end(), cmlod_scores.cbegin(),
                                          cmlod_scores.cend());
+
+    // ── Artifact detection metrics ─────────────────────────────────────
+    sample.mFragStartEntropy = ToOptF32(support->ComputeFSSE());
+    sample.mAltHapDiscordDelta = ToOptF32(support->ComputeAHDD());
+
+    if (mRawVariant != nullptr) {
+      sample.mHaplotypeSegEntropy = ToOptF32(support->ComputeHSE(mRawVariant->mNumTotalHaps));
+      sample.mPathDepthCv = ToOptF32(mRawVariant->mMaxPathCv);
+    } else {
+      sample.mHaplotypeSegEntropy = std::nullopt;
+      sample.mPathDepthCv = std::nullopt;
+    }
 
     sample.mPhredLikelihoods = pls;
     mSampleGenotypes.push_back(std::move(sample));
@@ -404,12 +422,12 @@ void VariantCall::ComputeState(SupportArray const& evidence, Samples samps,
 //   STATE     — SHARED/NORMAL/TUMOR (tumor-normal mode only; omitted otherwise)
 //   TYPE      — SNV, INS, DEL, MNP (always present)
 //   LENGTH    — variant length in bp (always present)
-//   GRAPH_CX  — optional graph complexity (GEI, TipToPathCovRatio, MaxDegree)
-//   SEQ_CX    — optional sequence complexity (11 ML-ready features)
+//   GRAPH_CX  — graph complexity (GEI, TipToPathCovRatio, MaxDegree)
+//   SEQ_CX    — sequence complexity (11 coverage-invariant features)
 //
 // Note: SCA, FLD, and MQCD are per-sample FORMAT fields, not site-level INFO.
 // ============================================================================
-void VariantCall::BuildInfoField(bool const tumor_normal_mode, FeatureFlags features) {
+void VariantCall::BuildInfoField(bool const tumor_normal_mode) {
   using namespace std::string_view_literals;
 
   static constexpr std::array<std::string_view, 6> TYPE_MAP = {
@@ -438,14 +456,8 @@ void VariantCall::BuildInfoField(bool const tumor_normal_mode, FeatureFlags feat
   absl::StrAppend(&info, "TYPE=", absl::StrJoin(vcategories, ","),
                   ";LENGTH=", absl::StrJoin(mVariantLengths, ","));
 
-  // Optional complexity annotations — each struct owns its own VCF formatting
-  if (features.mEnableGraphComplexity) {
-    absl::StrAppend(&info, ";GRAPH_CX=", mGraphCx.FormatVcfValue());
-  }
-
-  if (features.mEnableSequenceComplexity) {
-    absl::StrAppend(&info, ";SEQ_CX=", mSeqCx.FormatVcfValue());
-  }
+  absl::StrAppend(&info, ";GRAPH_CX=", mGraphCx.FormatVcfValue());
+  absl::StrAppend(&info, ";SEQ_CX=", mSeqCx.FormatVcfValue());
 
   mInfoField = std::move(info);
 }
@@ -457,23 +469,26 @@ auto VariantCall::AsVcfRecord() const -> std::string {
   auto const alt_field = absl::StrJoin(mAltAlleles, ",");
   std::vector<std::string> format_strings;
   format_strings.reserve(mSampleGenotypes.size() + 1);
-  format_strings.emplace_back(
-      "GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ");
+  // clang-format off
+  format_strings.emplace_back("GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ");
+  // clang-format on
 
   for (auto const& sample : mSampleGenotypes) {
     format_strings.push_back(sample.RenderVcfString());
   }
 
+  // clang-format off
   return fmt::format("{CHROM}\t{POS}\t.\t{REF}\t{ALT}\t{QUAL:.2f}\t.\t{INFO}\t{FORMAT}",
                      fmt::arg("CHROM", mChromName), fmt::arg("POS", mStartPos1),
                      fmt::arg("REF", mRefAllele), fmt::arg("ALT", alt_field),
                      fmt::arg("QUAL", mSiteQuality), fmt::arg("INFO", mInfoField),
                      fmt::arg("FORMAT", absl::StrJoin(format_strings, "\t")));
+  // clang-format on
 }
 
 auto VariantCall::SampleGenotypeData::RenderVcfString() const -> std::string {
   if (mIsMissingSupport) {
-    return "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.";
+    return "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.";
   }
 
   auto const gt_str = (mGenotypeIndices.first == -1 && mGenotypeIndices.second == -1)
@@ -502,18 +517,23 @@ auto VariantCall::SampleGenotypeData::RenderVcfString() const -> std::string {
                              : absl::StrJoin(mContinuousMixtureLods.begin() + 1,
                                              mContinuousMixtureLods.end(), ",", format_f64);
 
-  // Optional-safe formatting: 5 metrics can be std::nullopt (untestable) → "." in VCF.
+  // Optional-safe formatting: 9 metrics can be std::nullopt (untestable) → "." in VCF.
   // All other fields are always populated (not optional-capable).
   auto const fld_str = FormatOptional(mFragLenDelta, "{:.1f}");
   auto const rpcd_str = FormatOptional(mReadPosCohenD, "{:.4f}");
   auto const bqcd_str = FormatOptional(mBaseQualCohenD, "{:.4f}");
   auto const mqcd_str = FormatOptional(mMapQualCohenD, "{:.4f}");
   auto const asmd_str = FormatOptional(mAlleleMismatchDelta, "{:.3f}");
+  auto const fsse_str = FormatOptional(mFragStartEntropy, "{:.4f}");
+  auto const ahdd_str = FormatOptional(mAltHapDiscordDelta, "{:.3f}");
+  auto const hse_str = FormatOptional(mHaplotypeSegEntropy, "{:.4f}");
+  auto const pdcv_str = FormatOptional(mPathDepthCv, "{:.4f}");
 
   // clang-format off
   return fmt::format(
       "{GT}:{AD}:{ADF}:{ADR}:{DP}:{RMQ}:{NPBQ}:{SB:.3f}:{SCA:.4f}:{FLD}:{RPCD}:"
-      "{BQCD}:{MQCD}:{ASMD}:{SDFC:.2f}:{PRAD:.4f}:{PANG:.4f}:{CMLOD}:{PL}:{GQ}",
+      "{BQCD}:{MQCD}:{ASMD}:{SDFC:.2f}:{PRAD:.4f}:{PANG:.4f}:{CMLOD}:"
+      "{FSSE}:{AHDD}:{HSE}:{PDCV}:{PL}:{GQ}",
       fmt::arg("GT",    gt_str),           fmt::arg("AD",    ad_str),
       fmt::arg("ADF",   adf_str),          fmt::arg("ADR",   adr_str),
       fmt::arg("DP",    mTotalDepth),      fmt::arg("RMQ",   rmq_str),
@@ -523,6 +543,8 @@ auto VariantCall::SampleGenotypeData::RenderVcfString() const -> std::string {
       fmt::arg("MQCD",  mqcd_str),         fmt::arg("ASMD",  asmd_str),
       fmt::arg("SDFC",  mSiteDepthFoldChange), fmt::arg("PRAD",  mPolarRadius),
       fmt::arg("PANG",  mPolarAngle),      fmt::arg("CMLOD", cmlod_str),
+      fmt::arg("FSSE",  fsse_str),         fmt::arg("AHDD",  ahdd_str),
+      fmt::arg("HSE",   hse_str),          fmt::arg("PDCV",  pdcv_str),
       fmt::arg("PL",    pl_str),           fmt::arg("GQ",    mGenotypeQuality));
   // clang-format on
 }

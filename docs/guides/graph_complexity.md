@@ -1,8 +1,8 @@
 # Graph Complexity (`GRAPH_CX`)
 
 Graph-level metrics describe the structural complexity of the colored de
-Bruijn graph component surrounding a variant. Requires
-`--enable-graph-complexity-features` to enable.
+Bruijn graph component surrounding a variant. Emitted as the `GRAPH_CX`
+INFO tag in every VCF record.
 
 ---
 

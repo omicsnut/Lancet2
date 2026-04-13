@@ -8,7 +8,7 @@
 namespace lancet::caller::tests {
 
 // FORMAT field order:
-//   GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:PL:GQ
+//   GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ
 TEST_CASE("SampleGenotypeData compactly serializes VCF genotype structure strings precisely",
           "[lancet][caller][VariantCall]") {
   VariantCall::SampleGenotypeData sample;
@@ -37,9 +37,9 @@ TEST_CASE("SampleGenotypeData compactly serializes VCF genotype structure string
   auto const vcf_str = sample.RenderVcfString();
   REQUIRE(vcf_str == "0/1:30,20:15,10:15,10:50:59.5,60.0:30.1,35.2:2.450:0.5000:5.2:"
                      "0.1000:0.2000:-0.5000:0.050:1.25:5.5100:0.5880:12.5432:"
-                     "10,0,100:10");
+                     ".:.:.:.:10,0,100:10");
   sample.mIsMissingSupport = true;
-  REQUIRE(sample.RenderVcfString() == "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.");
+  REQUIRE(sample.RenderVcfString() == "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.");
 }
 
 TEST_CASE("SampleGenotypeData renders nullopt metrics as VCF missing value dot",
@@ -64,10 +64,10 @@ TEST_CASE("SampleGenotypeData renders nullopt metrics as VCF missing value dot",
   sample.mIsMissingSupport = false;
 
   auto const vcf_str = sample.RenderVcfString();
-  // FLD, RPCD, BQCD, MQCD, ASMD should all render as "." (nullopt -> dot)
+  // FLD, RPCD, BQCD, MQCD, ASMD, FSSE, AHDD, HSE, PDCV should all render as "." (nullopt → dot)
   REQUIRE(vcf_str == "0/0:10,0:5,0:5,0:10:60.0,0.0:30.0,0.0:0.000:0.0000:.:"
                      ".:.:.:.:1.00:1.0000:0.0000:0.0000:"
-                     "0,10,50:0");
+                     ".:.:.:.:0,10,50:0");
 }
 
 }  // namespace lancet::caller::tests

@@ -674,12 +674,12 @@ auto Genotyper::EvaluateAlignment(Mm2AlnResult const& aln, RawVariant const& var
     // SPOA path ID for HSE: which haplotype did this read align to?
     best.mAssignedHaplotypeId = static_cast<u32>(aln.mHapIdx);
 
-    // ALT NM for AHDD: how well does this read fit its assigned haplotype?
-    // `target` (line 666) is the encoded span for aln.mHapIdx.
-    // Only computed for ALT-assigned reads; REF reads keep the default 0.
-    if (mapped_allele_idx != REF_ALLELE_IDX) {
-      best.mAltNm = hts::ComputeEditDistance(aln.mCigar, qry_seq_encoded, target);
-    }
+    // Edit distance against this read's assigned haplotype (for AHDD FORMAT
+    // field). Computed for ALL reads — both REF and ALT. For REF reads,
+    // aln.mHapIdx == 0 (the REF haplotype); for ALT reads, aln.mHapIdx
+    // points to the winning ALT haplotype. This gives AHDD an apples-to-
+    // apples baseline: mean(ALT NM vs own hap) − mean(REF NM vs own hap).
+    best.mOwnHapNm = hts::ComputeEditDistance(aln.mCigar, qry_seq_encoded, target);
 
     // ── Folded read position ──────────────────────────────────
     usize var_start_in_aln = 0;
@@ -753,10 +753,9 @@ void Genotyper::AddToTable(Result& out_vars_table, cbdg::Read const& qry_read,
   for (auto const& [var_ptr, assignment] : allele_assignments) {
     // Look up (or create) the per-sample evidence aggregator for this variant.
     // Result is keyed: variant → sample_name → VariantSupport.
-    // Default insertion occurs seamlessly at both tier levels:
+    // Default insertion occurs at both tier levels:
     //   rslt[var_ptr]               → inserts an empty SupportArray interface
-    //   .FindOrCreate(sample_name)  → intercepts key searches, appending and allocating
-    //                                 a unique_ptr<VariantSupport> on-the-fly dynamically.
+    //   .FindOrCreate(sample_name)  → creates a unique_ptr<VariantSupport> on first access.
     auto& support = out_vars_table[var_ptr].FindOrCreate(sample_name);
 
     auto const evidence = VariantSupport::ReadEvidence{
@@ -766,7 +765,7 @@ void Genotyper::AddToTable(Result& out_vars_table, cbdg::Read const& qry_read,
         .mFoldedReadPos = assignment.mFoldedReadPos,
         .mRnameHash = static_cast<u32>(rname_hash),
         .mRefNm = assignment.mRefNm,
-        .mAltNm = assignment.mAltNm,
+        .mOwnHapNm = assignment.mOwnHapNm,
         .mAssignedHaplotypeId = assignment.mAssignedHaplotypeId,
         .mAllele = assignment.mAllele,
         .mStrand = strand,

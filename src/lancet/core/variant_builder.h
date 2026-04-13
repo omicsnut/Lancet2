@@ -25,8 +25,6 @@ class VariantBuilder {
 
   struct Params {
     bool mSkipActiveRegion = false;
-    bool mEnableGraphComplexity = false;
-    bool mEnableSequenceComplexity = false;
     std::filesystem::path mOutGraphsDir;
 
     /// Global genome GC fraction for LongdustQ bias correction.
@@ -65,7 +63,7 @@ class VariantBuilder {
   std::shared_ptr<Params const> mParamsPtr;
   caller::MsaBuilder mSpoaState;
 
-  /// Variant annotator — produces ML-ready complexity features per variant.
+  /// Variant annotator — produces coverage-invariant complexity features per variant.
   VariantAnnotator mAnnotator;
 
   StatusCode mCurrentCode = StatusCode::UNKNOWN;

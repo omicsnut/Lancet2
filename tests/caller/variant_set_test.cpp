@@ -66,8 +66,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     REQUIRE(var.mGenomeChromPos1 == 100);
   }
 
-  SECTION("Encapsulates massively overlapping varying mutations tracking natively identically to "
-          "Haplotypes") {
+  SECTION("Extracts overlapping multi-allelic mutations with correct haplotype tracking") {
     // Deep Overlap Multi-allelic test:
     // [REF]:    A T G T G C
     // [ALT1]:   A C G T G C     => (SNV T->C)
@@ -139,7 +138,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     REQUIRE(var.mGenomeChromPos1 == 101);
   }
 
-  SECTION("Safeguards symmetrical boundaries against MNP shattering properly natively") {
+  SECTION("Preserves symmetrical MNP boundaries without shattering") {
     //                         .-->(A) --> (A) --.
     //                        /                    \
     //          (A) ---------+                      +----> (G)
@@ -157,15 +156,14 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
 
     REQUIRE(caller_set.Count() == 1);
     auto var = *caller_set.begin();
-    // Since VCF normalizers strip rightward and leftward independently, if the internal string core
-    // differs, they cannot strip identically. MNP's logically hold their total structure
-    // identically natively!
+    // VCF normalizers strip rightward and leftward independently. If the internal string core
+    // differs, they cannot strip further. MNPs retain their full structure.
     REQUIRE(var.mRefAllele == "TC");
     REQUIRE(var.mAlts.size() == 1);
     REQUIRE(var.mAlts[0].mSequence == "AA");
   }
 
-  SECTION("Fuses massive Complex Variants natively without misalignment biases during Extraction") {
+  SECTION("Fuses complex variants without misalignment biases during extraction") {
     //                         .-->(A) --> (A) --> (A) --.
     //                        /                            \
     //          (A) ---------+                              +----> (G)
@@ -181,15 +179,15 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     VariantSet caller_set;
     caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
 
-    // SPOA logically optimizes this topological structure! Instead of a massive monolithic
-    // mismatch, the engine perfectly decoupled them into two isolated dynamic events natively:
+    // SPOA optimizes this topological structure: instead of a monolithic
+    // mismatch, the aligner decoupled them into two isolated events:
     // 1. Insertion of 'A' (Between the A and T anchors)
     // 2. MNP of 'TC' -> 'AA'
     REQUIRE(caller_set.Count() == 2);
 
     auto first_var = *caller_set.begin();
     REQUIRE(first_var.mGenomeChromPos1 == 100);
-    REQUIRE(first_var.mRefAllele.empty());  // Natively evaluated pure raw insertion
+    REQUIRE(first_var.mRefAllele.empty());  // Pure raw insertion — no REF allele
     REQUIRE(first_var.mAlts[0].mSequence == "A");
 
     auto second_var = *std::next(caller_set.begin());

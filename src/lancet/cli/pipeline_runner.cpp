@@ -155,7 +155,7 @@ void PipelineRunner::Run() {
     std::filesystem::create_directories(mParamsPtr->mVariantBuilder.mOutGraphsDir);
   }
 
-  // Helper lambda to identify remote web/cloud buckets natively.
+  // Helper lambda to identify remote cloud bucket URIs.
   // We explicitly bypass std::filesystem::absolute() for these paths,
   // since local systems interpret anything without a leading `/` as a relative local directory.
   auto const is_cloud_uri = [](std::filesystem::path const& fpath) -> bool {
@@ -175,14 +175,12 @@ void PipelineRunner::Run() {
     }
   }
 
-  // AWS and GCP inherently employ 5MB+ Multipart Chunk caching over libcurl natively.
-  // Because small VCF headers won't surpass this local threshold, libcurl deliberately
-  // defers all HTTP network handshakes securely until BgzfOstream::Close() finishes
-  // the very last component flush of the 40-hour pipeline execution logic.
-  // To avoid failing entirely silently after 40 hours due to missing access tokens,
-  // we deliberately force an immediate zero-byte HTTP PUT directly using standard hopen("w").
-  // This explicitly bypasses the Multipart chunk cache algorithms and violently validates
-  // cloud authentication upfront instantly against the API.
+  // AWS and GCP use 5MB+ multipart chunk caching over libcurl. Small VCF
+  // headers won't reach this threshold, so libcurl defers the HTTP handshake
+  // until BgzfOstream::Close() flushes after the full pipeline run.
+  // To avoid a silent authentication failure after 40 hours, force an
+  // immediate zero-byte HTTP PUT via hopen("w") to validate cloud credentials
+  // upfront before starting the pipeline.
   if (is_cloud_uri(mParamsPtr->mOutVcfGz)) {
     auto* fptr = hopen(mParamsPtr->mOutVcfGz.c_str(), "w");
     if (fptr == nullptr || hclose(fptr) < 0) {
@@ -286,15 +284,15 @@ void PipelineRunner::Run() {
   // whether the subsequent queue read succeeds or times out.
   //
   // wait_dequeue_timed serves as a blocking futex call preventing hardware thread-spin.
-  // If the timeout triggers without a payload, we seamlessly `continue` the loop,
-  // structurally allowing the top-level feed evaluation to re-poll state.
+  // If the timeout triggers without a payload, we `continue` the loop,
+  // allowing the top-level feed evaluation to re-poll state.
   constexpr auto QUEUE_TIMEOUT = std::chrono::milliseconds(10);
   while (num_completed != num_total_windows) {
     if (use_batching && global_idx < num_total_windows && send_qptr->size_approx() < BATCH_SIZE) {
       feed_next_batch();
     }
 
-    // NOTE: Sleep is natively handled by the wait_dequeue_timed futex block.
+    // NOTE: Sleep is handled by the wait_dequeue_timed futex block.
     if (!recv_qptr->wait_dequeue_timed(result_consumer_token, async_worker_result, QUEUE_TIMEOUT)) {
       continue;
     }
@@ -405,6 +403,10 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
 ##FORMAT=<ID=PRAD,Number=1,Type=Float,Description="Polar radius: log10(1 + sqrt(AD_Ref^2 + AD_Alt^2))">
 ##FORMAT=<ID=PANG,Number=1,Type=Float,Description="Polar angle: allele identity ratio atan2(AD_Alt, AD_Ref) in radians">
 ##FORMAT=<ID=CMLOD,Number=A,Type=Float,Description="Continuous mixture log-odds score per ALT allele (base-quality-weighted LOD vs null)">
+##FORMAT=<ID=FSSE,Number=1,Type=Float,Description="Fragment start Shannon entropy [0,1]. Measures spatial diversity of ALT read start positions. Catches PCR jackpot duplicates that survive MarkDuplicates via exonuclease fraying, alignment jitter, and representative read roulette. Missing (.) if fewer than 3 ALT-supporting reads.">
+##FORMAT=<ID=AHDD,Number=1,Type=Float,Description="ALT-haplotype discordance delta. Mean ALT NM against own haplotype minus mean REF NM against REF. High values signal assembly hallucinations. Missing (.) if either group is empty.">
+##FORMAT=<ID=HSE,Number=1,Type=Float,Description="Haplotype segregation entropy [0,1]. How concentrated ALT reads are on a single SPOA path. Near 0 = concentrated (true variant). Near 1 = scattered (noise). Missing (.) if fewer than 3 ALT reads or single haplotype.">
+##FORMAT=<ID=PDCV,Number=1,Type=Float,Description="Path depth coefficient of variation. K-mer coverage uniformity along the ALT de Bruijn graph path. High values signal chimeric junctions with uneven support. Missing (.) if path has fewer than 2 nodes.">
 ##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Phred-scaled genotype likelihoods (Dirichlet-Multinomial model)">
 ##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality (second-lowest PL from the Dirichlet-Multinomial model, capped at 99)">
 )raw"sv;
@@ -431,22 +433,14 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
     // clang-format on
   }
 
-  // Complexity feature INFO headers — only when requested via CLI flags
+  // Complexity feature INFO headers — always emitted
   std::string annotation_info_lines;
-  auto const& vb_cfg = params.mVariantBuilder;
-  if (vb_cfg.mEnableGraphComplexity) {
-    // clang-format off
-    absl::StrAppend(&annotation_info_lines,
-      "##INFO=<ID=GRAPH_CX,Number=3,Type=String,Description=\"Graph complexity metrics: GEI,TipToPathCovRatio,MaxSingleDirDegree\">\n");
-    // clang-format on
-  }
-  if (vb_cfg.mEnableSequenceComplexity) {
-    // clang-format off
-    absl::StrAppend(&annotation_info_lines,
-      "##INFO=<ID=SEQ_CX,Number=11,Type=String,Description=\"Sequence complexity features: "
-      "ContextHRun,ContextEntropy,ContextFlankLQ,ContextHaplotypeLQ,DeltaHRun,DeltaEntropy,DeltaFlankLQ,TrAffinity,TrPurity,TrPeriod,IsStutterIndel\">\n");
-    // clang-format on
-  }
+  // clang-format off
+  absl::StrAppend(&annotation_info_lines,
+    "##INFO=<ID=GRAPH_CX,Number=3,Type=String,Description=\"Graph complexity metrics: GEI,TipToPathCovRatio,MaxSingleDirDegree\">\n"
+    "##INFO=<ID=SEQ_CX,Number=11,Type=String,Description=\"Sequence complexity features: "
+    "ContextHRun,ContextEntropy,ContextFlankLQ,ContextHaplotypeLQ,DeltaHRun,DeltaEntropy,DeltaFlankLQ,TrAffinity,TrPurity,TrPeriod,IsStutterIndel\">\n");
+  // clang-format on
 
   auto full_hdr = fmt::format(
       // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)

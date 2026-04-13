@@ -1,5 +1,6 @@
 #include "lancet/core/variant_builder.h"
 
+#include "lancet/base/assert.h"
 #include "lancet/base/logging.h"
 #include "lancet/base/repeat.h"
 #include "lancet/base/sliding.h"
@@ -12,6 +13,7 @@
 #include "lancet/core/sample_info.h"
 #include "lancet/core/window.h"
 
+#include "absl/base/call_once.h"
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
@@ -20,8 +22,10 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -93,6 +97,66 @@ constexpr i8 MSA_EXTEND2_SCORE = -1;
 constexpr u8 DNA_ALPHABET_SIZE = 4;
 constexpr u32 PREALLOC_WINDOW_LENGTH_MULTIPLIER = 3;
 
+// ============================================================================
+// AnnotatePathMetrics: populate haplotype count + path depth CV on a RawVariant.
+//
+// Sets two mutable fields on the variant (same pattern as mGraphMetrics):
+//   mNumTotalHaps — total SPOA paths in this component (for HSE normalization)
+//   mMaxPathCv    — max path depth CV across ALT paths (for PDCV FORMAT field)
+// ============================================================================
+void AnnotatePathMetrics(caller::RawVariant const& var,
+                         absl::Span<cbdg::Graph::Path const> comp_paths) {
+  var.mNumTotalHaps = comp_paths.size();
+
+  // Max path depth CV across ALT paths — O(nhaps) single pass.
+  std::optional<f64> max_cv;
+  for (usize hap = 1; hap < comp_paths.size(); ++hap) {
+    auto const cv_val = comp_paths[hap].CoefficientOfVariationCoverage();
+    max_cv = max_cv.has_value() ? std::max(*max_cv, cv_val) : cv_val;
+  }
+  var.mMaxPathCv = max_cv;
+}
+
+// ============================================================================
+// CollectPathSequences: extract haplotype sequences from graph paths.
+// ============================================================================
+auto CollectPathSequences(absl::Span<cbdg::Graph::Path const> paths) -> std::vector<std::string> {
+  std::vector<std::string> seqs;
+  seqs.reserve(paths.size());
+  std::ranges::transform(paths, std::back_inserter(seqs),
+                         [](auto const& path) -> std::string { return std::string(path.Sequence()); });
+  return seqs;
+}
+
+// ============================================================================
+// BuildPerSampleCov: compute per-sample window coverage for SDFC normalization.
+// ============================================================================
+auto BuildPerSampleCov(absl::Span<SampleInfo const> samples, usize win_len)
+    -> caller::VariantCall::PerSampleCov {
+  caller::VariantCall::PerSampleCov result;
+  for (auto const& sinfo : samples) {
+    result[sinfo.SampleName()] = sinfo.SampledCov(win_len);
+  }
+  return result;
+}
+
+// ============================================================================
+// CountAssembledHaplotypes: total non-REF haplotypes across all graph components.
+// ============================================================================
+auto CountAssembledHaplotypes(absl::Span<std::vector<cbdg::Graph::Path> const> components) -> u64 {
+  return std::accumulate(components.begin(), components.end(), u64{0},
+                         [](u64 sum, auto const& comp) -> u64 { return sum + comp.size() - 1; });
+}
+
+// ============================================================================
+// HasAltSupport: true if any sample has > 0 ALT-supporting reads.
+// ============================================================================
+auto HasAltSupport(caller::SupportArray const& evidence) -> bool {
+  return std::ranges::any_of(evidence, [](auto const& item) -> bool {
+    return item.mData && item.mData->TotalAltCov() > 0;
+  });
+}
+
 }  // namespace
 
 VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const window_length)
@@ -116,7 +180,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
       absl::Hash<std::thread::id>()(std::this_thread::get_id());
   LOG_DEBUG("Processing window {} in thread {:#x}", reg_str, THREAD_ID)
 
-  if (static_cast<usize>(std::ranges::count(window->SeqView(), 'N')) == window->Length()) {
+  if (std::ranges::all_of(window->SeqView(), [](char base) { return base == 'N'; })) {
     LOG_DEBUG("Skipping window {} since it has only N bases in reference", reg_str)
     mCurrentCode = StatusCode::SKIPPED_NONLY_REF_BASES;
     return {};
@@ -156,11 +220,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
   auto const dbg_rslt = mDebruijnGraph.BuildComponentHaplotypes(window->AsRegionPtr(), reads);
   auto const& component_haplotypes = dbg_rslt.mGraphHaplotypes;
 
-  static auto const SUMMER = [](u64 const sum, auto const& comp_haps) -> u64 {
-    return sum + comp_haps.size() - 1;
-  };
-  auto const num_asm_haps =
-      std::accumulate(component_haplotypes.cbegin(), component_haplotypes.cend(), 0, SUMMER);
+  auto const num_asm_haps = CountAssembledHaplotypes(absl::MakeConstSpan(component_haplotypes));
   if (num_asm_haps == 0) {
     LOG_DEBUG("Could not assemble any haplotypes for window {} with k={}", reg_str,
               mDebruijnGraph.CurrentK())
@@ -168,52 +228,31 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     return {};
   }
 
-  // Loop-invariant: feature flags and per-sample window coverage are
-  // the same for every variant in every graph component of this window.
-  caller::VariantCall::FeatureFlags const feat_flags{
-      .mEnableGraphComplexity = mParamsPtr->mEnableGraphComplexity,
-      .mEnableSequenceComplexity = mParamsPtr->mEnableSequenceComplexity,
-  };
-
-  caller::VariantCall::PerSampleCov const per_sample_cov = [&]() {
-    caller::VariantCall::PerSampleCov result;
-    auto const win_len = window->Length();
-    for (auto const& sinfo : samples) {
-      result[sinfo.SampleName()] = sinfo.SampledCov(win_len);
-    }
-    return result;
-  }();
-
   WindowResults variants;
+  auto const per_sample_cov = BuildPerSampleCov(samples, window->Length());
   for (usize idx = 0; idx < component_haplotypes.size(); ++idx) {
     auto const nhaps = component_haplotypes[idx].size();
     auto const anchor_start = window->StartPos1() + dbg_rslt.mAnchorStartIdxs[idx];
     std::vector<cbdg::Graph::Path> const& comp_paths = component_haplotypes[idx];
 
-    std::vector<std::string> comp_haps;
-    comp_haps.reserve(comp_paths.size());
-    for (auto const& path : comp_paths) {
-      comp_haps.emplace_back(path.Sequence());
-    }
+    auto const comp_haps = CollectPathSequences(comp_paths);
 
     LOG_DEBUG("Building MSA for graph component {} from window {} with {} haplotypes", idx, reg_str,
               nhaps)
 
     absl::Span<std::string const> const ref_and_alt_haps = absl::MakeConstSpan(comp_haps);
     mSpoaState.UpdateSpoaState(ref_and_alt_haps);
-    // only serialize if we have a path to serialize to
+    // SerializeGraph is a no-op when MakeGfaPath returns an empty path
+    // (i.e., --out-graphs-dir was not specified on the CLI).
     mSpoaState.SerializeGraph(MakeGfaPath(*window, idx));
 
     caller::VariantSet vset;
     vset.ExtractVariantsFromGraph(mSpoaState.mGraph, *window, anchor_start);
 
-    // Annotate complexity features if enabled — gated on CLI flags
-    if (mParamsPtr->mEnableSequenceComplexity) {
-      mAnnotator.AnnotateSequenceComplexity(vset, absl::MakeConstSpan(comp_haps));
-    }
-    if (mParamsPtr->mEnableGraphComplexity && idx < dbg_rslt.mComponentMetrics.size()) {
-      VariantAnnotator::AnnotateGraphComplexity(vset, dbg_rslt.mComponentMetrics[idx]);
-    }
+    // Annotate complexity features on every variant
+    mAnnotator.AnnotateSequenceComplexity(vset, absl::MakeConstSpan(comp_haps));
+    LANCET_ASSERT(idx < dbg_rslt.mComponentMetrics.size())
+    VariantAnnotator::AnnotateGraphComplexity(vset, dbg_rslt.mComponentMetrics[idx]);
 
     if (vset.IsEmpty()) {
       LOG_DEBUG("No variants found in graph component {} for window {} with {} haplotypes", idx,
@@ -225,24 +264,18 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
               reg_str, nhaps)
     auto genotyped = mGenotyper.Genotype(ref_and_alt_haps, reads, vset);
 
-    // Drop variants where the graph assembled a haplotype but no reads actually support it.
-    static auto const HAS_ALT_SUPPORT = [](caller::SupportArray const& evidence) -> bool {
-      return std::ranges::any_of(evidence, [](auto const& item) -> bool {
-        return item.mData && item.mData->TotalAltCov() > 0;
-      });
-    };
-
     std::ranges::for_each(vset, [&](auto const& var) -> void {
+      auto iter = genotyped.find(&var);
       caller::VariantCall::SupportsByVariant var_supports;
-      if (auto iter = genotyped.find(&var);
-          iter != genotyped.end() && HAS_ALT_SUPPORT(iter->second)) {
+      if (iter != genotyped.end() && HasAltSupport(iter->second)) {
         var_supports.emplace(&var, std::move(iter->second));
       }
 
       if (var_supports.empty()) return;
 
-      variants.emplace_back(std::make_unique<caller::VariantCall>(
-          &var, std::move(var_supports), samples, feat_flags, per_sample_cov));
+      AnnotatePathMetrics(var, comp_paths);
+      variants.emplace_back(std::make_unique<caller::VariantCall>(&var, std::move(var_supports),
+                                                                  samples, per_sample_cov));
     });
   }
 
@@ -263,11 +296,12 @@ auto VariantBuilder::MakeGfaPath(Window const& win, usize const comp_id) const
     -> std::filesystem::path {
   if (mParamsPtr->mOutGraphsDir.empty()) return {};
 
-  auto const fname = fmt::format("msa__{}_{}_{}__c{}.gfa", win.ChromName(), win.StartPos1(),
+  auto const graph_dir = mParamsPtr->mOutGraphsDir / "poa_graph";
+  static absl::once_flag dir_created;
+  absl::call_once(dir_created, [&] { std::filesystem::create_directories(graph_dir); });
+
+  return graph_dir / fmt::format("msa__{}_{}_{}__c{}.gfa", win.ChromName(), win.StartPos1(),
                                  win.EndPos1(), comp_id);
-  auto out_path = mParamsPtr->mOutGraphsDir / "poa_graph" / fname;
-  std::filesystem::create_directories(mParamsPtr->mOutGraphsDir / "poa_graph");
-  return out_path;
 }
 
 auto ToString(VariantBuilder::StatusCode const status_code) -> std::string {

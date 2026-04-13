@@ -274,15 +274,6 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
       ->check(CLI::NonexistentPath | CLI::ExistingDirectory)
       ->group("Optional");
   subcmd
-      ->add_flag("--enable-graph-complexity-features", vb_prms.mEnableGraphComplexity,
-                 "Emit GRAPH_CX INFO tag with per-variant graph complexity metrics")
-      ->group("Optional");
-  subcmd
-      ->add_flag("--enable-sequence-complexity-features", vb_prms.mEnableSequenceComplexity,
-                 "Emit ULTRA/MICRO/MACRO_*_CX INFO tags with multi-scale "
-                 "sequence complexity metrics (HRun, entropy, TR motifs, LongdustQ)")
-      ->group("Optional");
-  subcmd
       ->add_option("--genome-gc-bias", vb_prms.mGcFraction,
                    "Global genome GC fraction for LongdustQ score correction. "
                    "Default: 0.41 (human genome-wide average). "
