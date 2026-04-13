@@ -197,7 +197,7 @@ Rules:
 ### When to Link
 
 Link to another page when:
-- You mention a concept that has its own dedicated page (e.g., "See [Graph Complexity](graph_complexity.md)")
+- You mention a concept that has its own dedicated page (e.g., "See [Graph Complexity](guides/graph_complexity.md)")
 - A CLI flag has behavioral implications documented elsewhere
 - A VCF FORMAT field has a detailed explanation in the annotations guide
 
@@ -461,7 +461,7 @@ When any refactor changes a field name, metric computation, or behavioral semant
 
 # Part 4 — C++ Code Style & Linting
 
-Lancet2 enforces code style via **clang-format** (formatting) and **clang-tidy** (static analysis). Both run as CI checks on every push and pull request via `.github/workflows/lint_cpp.yml`. Violations block merging.
+Lancet2 enforces code style via **clang-format** (formatting) and **clang-tidy** (static analysis). Both tools are managed by [pixi](https://pixi.sh) and installed into the project-local `.pixi/` directory — no system-wide installation needed. Run `pixi task list` to see all available developer tasks. Both checks run as CI gates on every push and pull request via `.github/workflows/lint_cpp.yml`. Violations block merging.
 
 ## Configuration Files
 
@@ -677,37 +677,170 @@ absl::Span<u8 const> const mTarget;        // 16B
 
 ## Running Locally
 
+All build tools, linters, and documentation generators are managed by [pixi](https://pixi.sh) and installed into the project-local `.pixi/` directory. Every developer operation is available as a `pixi run <task>` command. Run `pixi task list` for the full catalog with descriptions.
+
+### Build & Test
+```bash
+# Configure and build in Release mode
+pixi run configure                    # CMake Release (static, no cloud I/O)
+pixi run build                        # Build Release (auto-runs configure first)
+
+# Configure and build in Debug mode (with tests)
+pixi run configure-debug              # CMake Debug (tests ON, compile_commands.json)
+pixi run build-debug                  # Build Debug (auto-runs configure-debug first)
+
+# Run tests (auto-builds Debug first)
+pixi run test
+
+# Run benchmarks in Release mode
+# Step 1: configure with benchmarks enabled (one-time)
+pixi run configure -- -DLANCET_BENCHMARKS=ON
+# Step 2: build and run
+pixi run bench                        # builds Release, then runs benchmarks
+```
+
+Both `configure` and `configure-debug` accept extra CMake flags via `--`. The preset flags (`BUILD_TYPE`, `BUILD_STATIC`, `ENABLE_CLOUD_IO`) define the build "personality". Optional flags (`BENCHMARKS`, `PROFILE_MODE`, `BUILD_ARCH`) persist in CMake's cache once set:
+
+```bash
+# Release + cloud I/O + custom CPU arch
+pixi run configure -- -DLANCET_ENABLE_CLOUD_IO=ON -DLANCET_BUILD_ARCH=native
+
+# Debug + benchmarks (e.g. for linting all targets)
+pixi run configure-debug -- -DLANCET_BENCHMARKS=ON
+```
+
 ### Formatting
 ```bash
-# Check (dry-run) — reports files that need formatting
-python3 scripts/run_clang_format.py
+pixi run fmt-check                    # dry-run — reports files that need formatting
+pixi run fmt                          # applies formatting in-place to all sources
+```
 
-# Fix — applies formatting in-place
-python3 scripts/run_clang_format.py --fix
-
-# Check a specific directory or file
+For file-specific or directory-specific formatting, invoke the script directly:
+```bash
 python3 scripts/run_clang_format.py src/lancet/cbdg
 python3 scripts/run_clang_format.py --fix src/lancet/caller/genotyper.cpp
 ```
 
 ### Static Analysis
 ```bash
-# Requires a build directory with compile_commands.json
-python3 scripts/run_clang_tidy.py
+pixi run lint-check                   # check-only (auto-builds Debug first for compile_commands.json)
+pixi run lint-fix                     # apply auto-fixes (review changes carefully)
+pixi run lint-all                     # run both fmt-check and lint-check
+```
 
-# With auto-fix (review changes carefully)
-python3 scripts/run_clang_tidy.py --fix
-
-# Custom build directory
+For custom build directories, invoke the script directly:
+```bash
 python3 scripts/run_clang_tidy.py --build-dir cmake-build-release
 ```
 
+### Documentation
+```bash
+pixi run docs-serve                   # local preview at http://127.0.0.1:8000
+pixi run docs-build                   # strict validation (zero-warning required)
+pixi run docs-export                  # export all docs to single Markdown file
+```
+
+### Release & Deployment
+```bash
+pixi run version-bump                 # bump patch version, update changelog, push
+pixi run version-bump --kind minor    # bump minor version
+pixi run version-bump --kind major    # bump major version
+pixi run update-changelog             # regenerate changelog standalone (requires Go)
+pixi run conda-build-local            # build local conda package via rattler-build
+pixi run docker-push                  # build and push Docker image to GCR
+```
+
 ### CI Behavior
-The `lint_cpp.yml` workflow runs both checks on every push and pull request:
+The `lint_cpp.yml` workflow runs both linting checks on every push and pull request —
+the same tools invoked by `pixi run fmt-check` and `pixi run lint-check`:
+
 1. **clang-format** — dry-run check on all `src/lancet/`, `tests/`, `benchmarks/` files
 2. **clang-tidy** — full build + analysis with `compile_commands.json`
 
 Concurrency guards (`lint-${{ github.ref }}`) cancel in-progress runs when new commits are pushed.
+
+---
+
+## Git Commit Messages
+
+Lancet2 uses [Conventional Commits](https://www.conventionalcommits.org/) with a simplified pattern — no scopes. The changelog (`CHANGELOG.md`) is auto-generated from commit messages by `git-chglog` (via `pixi run version-bump` or `pixi run update-changelog`). Only commits matching recognized types appear in the changelog; all other commits are silently excluded.
+
+### Format
+
+```
+type: concise imperative summary of the change
+
+Optional body — explains what changed and why. Wrap all lines at 72
+characters. Use the same language standards as website documentation:
+active voice, no filler, no hedging, quantify when possible.
+```
+
+The commit message is documentation for someone trying to understand what changed *without reading the diff*. Write it for that reader.
+
+- **Subject line** (first line): standalone summary of the entire commit. Must be self-contained — a developer scanning `git log --oneline` should understand the change from this line alone. Lowercase, imperative mood ("add" not "added"), no trailing period.
+- **Blank line**: separates subject from body. Required if a body is present.
+- **Body** (optional): explains *what* changed and *why*. Wrap every line at **72 characters** — this ensures readability in `git log`, terminal pagers, and email-based review tools. Use bullet points or short paragraphs for multi-part changes. Do not restate the diff — describe the intent, rationale, and anything non-obvious.
+
+**Type** is one of exactly four values:
+
+| Type | Changelog Section | When to Use |
+|:-----|:------------------|:------------|
+| `feat` | New Features | New user-facing functionality: CLI flags, VCF fields, algorithm capabilities |
+| `fix` | Bug Fixes | Corrects incorrect behavior: wrong output, crashes, logic errors |
+| `perf` | Performance Improvements | Measurable performance change: reduced allocations, faster hot paths, lower memory |
+| `chore` | Refactoring | Everything else: refactoring, dependency updates, CI changes, docs, formatting, tooling |
+
+### Examples
+
+```bash
+# ✅ Subject-only (most commits) — self-contained one-liner
+feat: add AHDD and PDCV artifact metrics to VCF output
+fix: correct NM spec violation in ASMD computation
+perf: eliminate per-read heap allocations via zero-copy bam1_t proxying
+chore: resolve clang-tidy warnings in tests
+```
+
+```
+# ✅ Subject + body — for changes that benefit from context
+feat: add Dirichlet-Multinomial genotype likelihoods and CMLOD field
+
+Replace the per-allele binomial model with a Dirichlet-Multinomial
+that accounts for overdispersion from PCR duplicates. The collapsed
+model log-odds (CMLOD) is emitted as a new Float FORMAT field.
+
+- VariantBuilder: thread alpha prior through GenotypeLikelihoods()
+- variant_call.h: add mCMLOD member (8B, f64)
+- VCF header: register CMLOD with Number=1, Type=Float
+```
+
+```bash
+# ❌ Bad — wrong type, past tense, vague, or missing type
+Added new metrics                      # missing type, past tense
+feat: Update stuff                     # uppercase subject, vague
+refactor: rename function              # "refactor" is not a recognized type, use "chore"
+fix: fixes the bug                     # not imperative ("fix" not "fixes")
+```
+
+### Breaking Changes
+
+For changes that break backward compatibility (e.g., renamed CLI flags, removed VCF fields, changed output format), add a `BREAKING CHANGE` paragraph to the commit body:
+
+```
+feat: replace STR_SCORE with LCR_SCORE in VCF output
+
+BREAKING CHANGE: The STR_SCORE FORMAT field has been removed and replaced
+by LCR_SCORE. Downstream parsers that depend on STR_SCORE will need to be
+updated to read LCR_SCORE instead.
+```
+
+Breaking changes produce a dedicated "BREAKING CHANGE" section in the changelog.
+
+### What NOT to Do
+
+- **Do not use scopes** — the `.chglog` parser does not extract scopes (`feat(graph): ...` is parsed but the scope is discarded)
+- **Do not capitalize the subject** — the changelog renders subjects verbatim; capitalized subjects look inconsistent
+- **Do not use types other than `feat`/`fix`/`perf`/`chore`** — anything else is silently excluded from the changelog
+- **Do not end the subject with a period** — it reads as a sentence fragment in the changelog bullet list
 
 ---
 
@@ -716,7 +849,7 @@ Concurrency guards (`lint-${{ github.ref }}`) cancel in-progress runs when new c
 Before merging any change, verify:
 
 ### Website Documentation
-- [ ] `pixi run mkdocs build --strict` passes with zero warnings
+- [ ] `pixi run docs-build` passes with zero warnings
 - [ ] All internal links resolve (no "anchor not found" messages)
 - [ ] New pages are added to the `nav:` block in `mkdocs.yml`
 - [ ] All numerical values and thresholds are verified against the current source code
@@ -733,8 +866,8 @@ Before merging any change, verify:
 - [ ] Constants have rationale comments explaining the chosen value
 
 ### Code Style & Linting
-- [ ] `python3 scripts/run_clang_format.py` reports zero formatting violations
-- [ ] `python3 scripts/run_clang_tidy.py` reports zero warnings
+- [ ] `pixi run fmt-check` reports zero formatting violations
+- [ ] `pixi run lint-check` reports zero warnings
 - [ ] All new identifiers follow the naming convention table
 - [ ] East const is used throughout (`int const x`, not `const int x`)
 - [ ] New/modified structs declare members in descending alignment order (8B → 4B → 2B → 1B)

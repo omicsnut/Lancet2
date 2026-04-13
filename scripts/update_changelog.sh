@@ -4,6 +4,12 @@
 set -e
 
 function ensure_deps() {
+  if ! command -v go &> /dev/null; then
+    echo "ERROR: Go toolchain not found."
+    echo "Install Go from https://go.dev/dl/ then re-run: pixi run version-bump"
+    exit 1
+  fi
+
   if ! command -v git-chglog &> /dev/null; then
     echo "Installing git-chglog via go install..."
     go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest
