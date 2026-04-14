@@ -14,7 +14,7 @@ Lancet2 operates in two modes that affect which INFO fields are present:
 | Mode | Inputs | INFO State Tags | QUAL Source |
 |:-----|:-------|:----------------|:------------|
 | **Somatic** (case-control) | `--normal` + (`--tumor` and/or `--sample` with role `case`) | `SHARED`, `CTRL`, `CASE` | Somatic log odds ratio (SOLOR) |
-| **Germline** (normal-only) | `--normal` BAM/CRAM only | *(none — state is UNKNOWN)* | Ref-hom PL (DM model, naturally asymptotes) |
+| **Germline** (normal-only) | `--normal` BAM/CRAM only | *(none — state is UNKNOWN)* | Ref-hom PL (Dirichlet-Multinomial model, naturally asymptotes) |
 
 In somatic mode, state tags classify each variant by ALT allele
 presence across sample roles. In germline mode, state classification
@@ -104,7 +104,7 @@ The FORMAT column header is: `GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQC
 | `HSE` | 1 | Float | Haplotype Segregation Entropy | [0, 1] | How concentrated ALT reads are on a single SPOA path, normalized by log₂(total_haplotypes). Near 0 = concentrated (true variant). Near 1 = scattered (noise). `.` if < 3 ALT reads or single haplotype. See [details](alignment_annotations.md#haplotype-segregation-entropy-hse). |
 | `PDCV` | 1 | Float | Path Depth Coefficient of Variation | [0, ∞) | K-mer coverage uniformity along the ALT de Bruijn graph path. Max across ALT alleles. High values signal chimeric junctions with uneven support. `.` if path has < 2 nodes. See [details](alignment_annotations.md#path-depth-coefficient-of-variation-pdcv). |
 | `PL` | G | Integer | Phred-scaled genotype likelihoods | [0, ∞) | Lower = more likely genotype. Computed via the Dirichlet-Multinomial model — PLs plateau at high depth due to overdispersion. PL[0]=RR, PL[1]=RA, PL[2]=AA. |
-| `GQ` | 1 | Integer | Genotype quality | [0, 99] | Second-lowest DM PL, capped at 99. Reaches cap quickly at ≥30×; effectively coverage-stable above this threshold. |
+| `GQ` | 1 | Integer | Genotype quality | [0, 99] | Second-lowest Dirichlet-Multinomial PL, capped at 99. Reaches cap quickly at ≥30×; effectively coverage-stable above this threshold. |
 
 ### QUAL Column
 
@@ -117,7 +117,7 @@ The VCF QUAL field depends on operating mode:
   measures effect size, not statistical significance. Range: [0, ~10].
   `QUAL > 4` = strong somatic evidence at any coverage.
 
-- **Control-Only mode**: Ref-hom PL directly (PL[0/0] from the DM model).
+- **Control-Only mode**: Ref-hom PL directly (PL[0/0] from the Dirichlet-Multinomial model).
   The Dirichlet-Multinomial overdispersion parameter causes PLs to asymptote
   naturally at high depth — no artificial capping or depth-normalization is
   needed. Takes the maximum across samples (strongest evidence wins).

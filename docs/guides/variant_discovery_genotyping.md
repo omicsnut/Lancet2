@@ -167,51 +167,53 @@ Folding maps both read ends to the same low-value space. Without folding, artifa
 
 ### Genotype Likelihood Model
 
-After allele assignment, genotype likelihoods are computed using a **Dirichlet-Multinomial (DM)** count-based model rather than the standard per-read binomial model used by tools like GATK HaplotypeCaller.
+After allele assignment, genotype likelihoods are computed using a **Dirichlet-Multinomial (DM)** count-based model that replaces the per-read product structure common to both pileup-based and haplotype-aware variant callers.
 
-#### Why Not the Standard Per-Read Binomial?
+#### Why Not the Per-Read Product Model?
 
-The standard multiallelic binomial model computes per-read likelihoods independently:
+Variant callers — whether pileup-based or haplotype-aware — compute the total genotype likelihood as a **product of independent per-read terms**:
+
+```
+P(Data | GT) = Π P(read_i | GT)
+```
+
+Under the simplest error model, the per-read likelihood for a diploid genotype `GT = (a₁, a₂)` expands to:
 
 ```
 P(read | GT=(a₁,a₂)) = 0.5 × P(read | a₁) + 0.5 × P(read | a₂)
 P(read | allele a) = (1−ε) if read matches a, else ε/(K−1)
 ```
 
-The total likelihood is the product across all reads: `P(Data | GT) = Π P(read | GT)`. Converting to Phred-scaled PLs via `PL = -10 × log₁₀(P)`, each read adds an independent contribution, so **PLs scale linearly with depth**. A true heterozygous variant at 30× might produce PL[0/0]=90; at 3000× (the same variant, just deeper), PL[0/0]=9,000. This creates two problems:
+Haplotype-aware callers replace this inner `P(read | allele)` with more sophisticated likelihoods (e.g., alignment-based HMM scores that integrate over gaps and mismatches), but the **outer product structure** is shared. Converting to Phred-scaled PLs via `PL = -10 × log₁₀(P)`, each read adds an independent contribution to the sum, so **PLs scale linearly with depth**. A true heterozygous variant at 30× might produce PL[0/0]=90; at 3000× (the same variant, just deeper), PL[0/0]=9,000. This creates two problems regardless of how sophisticated the per-read likelihood is:
 
 1. **Runaway scaling.** Ultra-deep targeted panels and UMI-deduplicated libraries produce PL values in the tens of thousands. Downstream ML models trained on 30× WGS data see entirely different feature distributions at 2000×.
-2. **Missing overdispersion.** The binomial model assumes reads are independent coin flips. In reality, correlated errors (flow-cell lane effects, PCR duplication, systematic mismapping) cause allele count variance to exceed the binomial expectation at high depth. The per-read model cannot capture this — it treats every read as equally informative.
+2. **Missing overdispersion.** The per-read product model assumes reads are independent observations. In reality, correlated errors (flow-cell lane effects, PCR duplication, systematic mismapping) cause allele count variance to exceed the independent-observation expectation at high depth. No per-read product model can capture this — it treats every read as equally informative.
 
 #### The Dirichlet-Multinomial (DM) Model
 
-The DM model replaces per-read iteration with a single count-based evaluation. For K alleles with observed counts `c = (c₀, c₁, ..., c_{K−1})`:
+The DM model replaces per-read iteration with a single count-based evaluation. For K alleles with observed counts `c = (c₀, c₁, ..., c_{K−1})`, expected allele fractions `μ_i` under a genotype hypothesis, and precision parameter `M = (1−ρ)/ρ` controlling overdispersion:
 
 ```
 ln P(c | μ, M) = lnΓ(ΣMμ_i) − lnΓ(N + ΣMμ_i) + Σ[lnΓ(c_i + Mμ_i) − lnΓ(Mμ_i)]
 ```
-
-**In plain terms:** imagine you have a bag of colored marbles (alleles) and you draw N marbles (reads). Each genotype hypothesis says "I expect roughly this mix of colors." The DM formula asks: "given what I expected, how surprised am I by what I actually drew?" The `lnΓ` (log-gamma) terms are a bookkeeping device that accounts for all the ways the observed counts could arise from the expected mix. Unlike the binomial model which treats each draw independently, the DM model says "draws from the same sequencing run are correlated" — controlled by the precision parameter M.
-
-where `μ_i` is the expected allele fraction under genotype hypothesis GT and `M = (1−ρ)/ρ` is the precision parameter controlling overdispersion.
 
 For each diploid genotype `(a₁, a₂)`:
 
 - **Homozygous** (`a₁ == a₂`): `μ[a₁] = 1 − ε`, `μ[other] = ε/(K−1)`
 - **Heterozygous**: `μ[a₁] = μ[a₂] = (1−ε)/2`, `μ[other] = ε/(K−1)`
 
-The DM model has two key implications:
+**In plain terms:** imagine drawing N marbles (reads) from a bag of colored marbles (alleles). Each genotype hypothesis predicts a mix of colors, and the DM formula asks: "how surprised am I by what I actually drew?" The `lnΓ` (log-gamma) terms account for all the ways the observed counts could arise from the expected mix. Unlike the per-read product model which treats each draw independently, the DM model says "draws from the same sequencing run are correlated" — like asking 100 people vs. 10,000 the same question: the extra 9,900 answers share the same biases (same methodology, same population) and don't make you 100× more confident. In sequencing, those shared biases are PCR duplicates, flow-cell artifacts, and systematic mismapping.
 
-1. **Natural asymptote.** As depth N → ∞, the lgamma ratio terms in the DM log-likelihood converge, causing PLs to plateau at a ceiling determined by ρ. No artificial `PL / SAMPLE_DP` normalization is needed.
-2. **Correlated error absorption.** The overdispersion parameter ρ (default 0.01, precision M=99) widens the count variance beyond the binomial expectation. This means that at 2000× depth, adding more reads of the same evidence does not infinitely increase genotype confidence — matching the empirical reality of sequencing data.
+This produces two key improvements over the per-read product model:
 
-**In plain terms:** the standard model says "every extra read is equally valuable evidence." The DM model says "after a certain amount of evidence, additional reads tell you less and less" — like asking 100 people the same yes/no question vs. 10,000. The extra 9,900 answers don't make you 100× more confident because they share the same biases (same survey methodology, same population). In sequencing, those shared biases are things like PCR duplicates, flow-cell artifacts, and systematic mismapping. The DM model captures this diminishing-returns behavior automatically.
+1. **Natural asymptote.** As depth N → ∞, the lgamma ratio terms converge, causing PLs to plateau at a ceiling determined by ρ. No artificial `PL / SAMPLE_DP` normalization is needed.
+2. **Correlated error absorption.** The overdispersion parameter ρ (default 0.01, precision M=99) widens the count variance beyond the independent-observation expectation. At 2000× depth, additional reads of the same evidence produce diminishing confidence returns — matching the empirical reality of sequencing data.
 
 The default parameters `ε = 0.005` (background error) and `ρ = 0.01` (overdispersion) are tuned for Illumina short-read sequencing. See the in-code documentation in `variant_support.cpp` for guidance on adjusting these for ONT, HiFi, or ultra-deep targeted panels.
 
 #### Continuous Mixture Log-Odds (CMLOD)
 
-In addition to DM-based PLs, each ALT allele receives a **CMLOD** (Continuous Mixture Log-Odds) score. Unlike PLs, which evaluate rigid diploid genotype states (0/0, 0/1, 1/1), CMLOD operates over continuous allele frequency space and integrates exact per-read base qualities:
+DM-based PLs solve the depth-scaling and overdispersion problems, but they evaluate only rigid diploid genotype states (0%, 50%, 100% ALT). For somatic and mosaic variants at continuous frequencies like 2% or 15% VAF, none of these states represents the true frequency. Each ALT allele therefore also receives a **CMLOD** (Continuous Mixture Log-Odds) score that operates over continuous allele frequency space and integrates exact per-read base qualities:
 
 ```
 P(read called as s | f) = Σ_t f[t] × P(s | true origin = t)
