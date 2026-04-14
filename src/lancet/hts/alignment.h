@@ -12,7 +12,9 @@ extern "C" {
 
 #include "lancet/base/types.h"
 #include "lancet/hts/cigar_unit.h"
+#include "lancet/hts/mate_info.h"
 #include "lancet/hts/reference.h"
+#include "lancet/hts/sam_flag.h"
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -47,44 +49,6 @@ class Alignment {
     AUX_RGAUX = CIGAR_SEQ_QUAL | SAM_AUX | SAM_RGAUX,
   };
 
-  enum class Strand : bool { FWD = true, REV = false };
-
-  class BitwiseFlag {
-   public:
-    explicit BitwiseFlag(u16 flags) : mFlag(flags) {}
-    BitwiseFlag() = default;
-
-    [[nodiscard]] auto GetStrand() const noexcept -> Strand;
-    [[nodiscard]] auto GetMateStrand() const noexcept -> Strand;
-    [[nodiscard]] auto IsFwdStrand() const noexcept -> bool;
-    [[nodiscard]] auto IsRevStrand() const noexcept -> bool;
-    [[nodiscard]] auto IsMateFwdStrand() const noexcept -> bool;
-    [[nodiscard]] auto IsMateRevStrand() const noexcept -> bool;
-    [[nodiscard]] auto IsQcFail() const noexcept -> bool;
-    [[nodiscard]] auto IsDuplicate() const noexcept -> bool;
-    [[nodiscard]] auto IsPrimary() const noexcept -> bool;
-    [[nodiscard]] auto IsSecondary() const noexcept -> bool;
-    [[nodiscard]] auto IsSupplementary() const noexcept -> bool;
-    [[nodiscard]] auto IsMapped() const noexcept -> bool;
-    [[nodiscard]] auto IsUnmapped() const noexcept -> bool;
-    [[nodiscard]] auto IsMateMapped() const noexcept -> bool;
-    [[nodiscard]] auto IsMateUnmapped() const noexcept -> bool;
-    [[nodiscard]] auto IsPairedInSequencing() const noexcept -> bool;
-    [[nodiscard]] auto IsMappedProperPair() const noexcept -> bool;
-    [[nodiscard]] auto IsRead1() const noexcept -> bool;
-    [[nodiscard]] auto IsRead2() const noexcept -> bool;
-    [[nodiscard]] auto HasFlagsSet(u16 check_flags) const noexcept -> bool;
-    [[nodiscard]] auto HasFlagsUnset(u16 check_flags) const noexcept -> bool;
-
-    [[nodiscard]] explicit operator u16() const noexcept { return mFlag; }
-
-    auto operator==(BitwiseFlag const& rhs) const -> bool { return mFlag == rhs.mFlag; }
-    auto operator!=(BitwiseFlag const& rhs) const -> bool { return !(rhs == *this); }
-
-   private:
-    u16 mFlag = 0;
-  };
-
   // ---------------------------------------------------------------------------
   // Core fields: these read directly from cached scalar fields (always populated)
   // ---------------------------------------------------------------------------
@@ -93,7 +57,7 @@ class Alignment {
   [[nodiscard]] auto InsertSize() const noexcept -> i64 { return mInsertSize; }
   [[nodiscard]] auto ChromIndex() const noexcept -> i32 { return mChromIdx; }
   [[nodiscard]] auto MateChromIndex() const noexcept -> i32 { return mMateChromIdx; }
-  [[nodiscard]] auto Flag() const noexcept -> BitwiseFlag { return BitwiseFlag(mSamFlag); }
+  [[nodiscard]] auto Flag() const noexcept -> SamFlag { return SamFlag(mSamFlag); }
   [[nodiscard]] auto FlagRaw() const noexcept -> u16 { return mSamFlag; }
   [[nodiscard]] auto MapQual() const noexcept -> u8 { return mMapQual; }
 
@@ -126,11 +90,6 @@ class Alignment {
   /// Copies the raw quality values into a new vector.
   /// This allocates a new std::vector<u8> on every call.
   [[nodiscard]] auto BuildQualities() const -> std::vector<u8>;
-
-  struct MateInfo {
-    i32 mChromIndex = -1;
-    i64 mMateStartPos0 = -1;
-  };
 
   [[nodiscard]] auto MateLocation() const noexcept -> MateInfo;
   [[nodiscard]] auto MateOverlapsRegion(Reference::Region const& region) const noexcept -> bool;

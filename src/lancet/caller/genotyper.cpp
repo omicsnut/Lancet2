@@ -748,7 +748,7 @@ void Genotyper::AddToTable(Result& out_vars_table, cbdg::Read const& qry_read,
                            PerVariantAssignment const& allele_assignments) {
   auto const sample_name = qry_read.SampleName();
   auto const rname_hash = absl::HashOf(qry_read.QnameView());
-  auto const strand = qry_read.BitwiseFlag().IsRevStrand() ? Strand::REV : Strand::FWD;
+  auto const strand = qry_read.Flag().IsRevStrand() ? Strand::REV : Strand::FWD;
 
   for (auto const& [var_ptr, assignment] : allele_assignments) {
     // Look up (or create) the per-sample evidence aggregator for this variant.

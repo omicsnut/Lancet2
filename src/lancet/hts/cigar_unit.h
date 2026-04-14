@@ -7,6 +7,8 @@ extern "C" {
 
 #include "lancet/base/types.h"
 
+#include <array>
+
 namespace lancet::hts {
 
 enum class CigarOp : char {
@@ -16,27 +18,27 @@ enum class CigarOp : char {
   ALIGNMENT_MATCH = 'M',
 
   /// Bases from the read inserted into the reference.
-  /// Consumes only query mDfltSeq.
+  /// Consumes only query sequence.
   INSERTION = 'I',
 
   /// Bases from the reference deleted in the read.
-  /// Consumes only reference mDfltSeq.
+  /// Consumes only reference sequence.
   DELETION = 'D',
 
   /// Bases from the read have skipped the reference, but have not been deleted.
-  /// Consumes only reference mDfltSeq.
+  /// Consumes only reference sequence.
   REFERENCE_SKIP = 'N',
 
   /// Bases from the read omitted from alignment, but left in the read.
-  /// Consumes only query mDfltSeq.
+  /// Consumes only query sequence.
   SOFT_CLIP = 'S',
 
   /// Bases from the read omitted from alignment and removed from the read.
-  /// Consumes neither query nor reference mDfltSeq.
+  /// Consumes neither query nor reference sequence.
   HARD_CLIP = 'H',
 
   /// Used to represent a padding in both query and reference.
-  /// Consumes neither query nor reference mDfltSeq.
+  /// Consumes neither query nor reference sequence.
   ALIGNMENT_PAD = 'P',
 
   /// Bases aligned and exactly matching to reference.
@@ -51,6 +53,40 @@ enum class CigarOp : char {
   UNKNOWN_OP = '?'
 };
 
+// ── CIGAR consume-query/reference lookup tables ─────────────────────────────
+// Branchless O(1) lookups indexed by the underlying CigarOp char value.
+// SAM spec §1.4.6: M/I/S/=/X consume query; M/D/N/=/X consume reference.
+//
+// 128-entry LUT avoids needing to remap char → dense index.
+// Only entries at 'M','I','D','N','S','H','P','=','X' positions are set;
+// everything else defaults to false (including UNKNOWN_OP '?').
+namespace detail {
+
+constexpr auto MakeConsumesRefLut() -> std::array<bool, 128> {
+  std::array<bool, 128> lut{};
+  lut['M'] = true;  // ALIGNMENT_MATCH
+  lut['D'] = true;  // DELETION
+  lut['N'] = true;  // REFERENCE_SKIP
+  lut['='] = true;  // SEQUENCE_MATCH
+  lut['X'] = true;  // SEQUENCE_MISMATCH
+  return lut;
+}
+
+constexpr auto MakeConsumesQryLut() -> std::array<bool, 128> {
+  std::array<bool, 128> lut{};
+  lut['M'] = true;  // ALIGNMENT_MATCH
+  lut['I'] = true;  // INSERTION
+  lut['S'] = true;  // SOFT_CLIP
+  lut['='] = true;  // SEQUENCE_MATCH
+  lut['X'] = true;  // SEQUENCE_MISMATCH
+  return lut;
+}
+
+inline constexpr auto CONSUMES_REF = MakeConsumesRefLut();
+inline constexpr auto CONSUMES_QRY = MakeConsumesQryLut();
+
+}  // namespace detail
+
 class CigarUnit {
  public:
   explicit CigarUnit(u32 sam_cigop)
@@ -63,41 +99,13 @@ class CigarUnit {
   [[nodiscard]] auto Length() const noexcept -> u32 { return mLength; }
 
   [[nodiscard]] auto ConsumesReference() const noexcept -> bool {
-    switch (mCigOp) {
-      case CigarOp::ALIGNMENT_MATCH:
-      case CigarOp::DELETION:
-      case CigarOp::REFERENCE_SKIP:
-      case CigarOp::SEQUENCE_MATCH:
-      case CigarOp::SEQUENCE_MISMATCH:
-        return true;
-
-      case CigarOp::INSERTION:
-      case CigarOp::SOFT_CLIP:
-      case CigarOp::HARD_CLIP:
-      case CigarOp::ALIGNMENT_PAD:
-      case CigarOp::UNKNOWN_OP:
-      default:
-        return false;
-    }
+    auto const idx = static_cast<unsigned char>(mCigOp);
+    return idx < detail::CONSUMES_REF.size() && detail::CONSUMES_REF[idx];
   }
 
   [[nodiscard]] auto ConsumesQuery() const noexcept -> bool {
-    switch (mCigOp) {
-      case CigarOp::ALIGNMENT_MATCH:
-      case CigarOp::INSERTION:
-      case CigarOp::SOFT_CLIP:
-      case CigarOp::SEQUENCE_MATCH:
-      case CigarOp::SEQUENCE_MISMATCH:
-        return true;
-
-      case CigarOp::DELETION:
-      case CigarOp::REFERENCE_SKIP:
-      case CigarOp::HARD_CLIP:
-      case CigarOp::ALIGNMENT_PAD:
-      case CigarOp::UNKNOWN_OP:
-      default:
-        return false;
-    }
+    auto const idx = static_cast<unsigned char>(mCigOp);
+    return idx < detail::CONSUMES_QRY.size() && detail::CONSUMES_QRY[idx];
   }
 
  private:

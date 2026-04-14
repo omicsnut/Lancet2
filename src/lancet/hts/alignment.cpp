@@ -193,79 +193,11 @@ auto Alignment::ExtractTagValue<std::string_view>(u8 const* raw_aux, std::string
 }
 
 // ---------------------------------------------------------------------------
-// BitwiseFlag implementation
-// ---------------------------------------------------------------------------
-
-auto Alignment::BitwiseFlag::GetStrand() const noexcept -> Strand {
-  return IsFwdStrand() ? Strand::FWD : Strand::REV;
-}
-auto Alignment::BitwiseFlag::GetMateStrand() const noexcept -> Strand {
-  return IsMateFwdStrand() ? Strand::FWD : Strand::REV;
-}
-auto Alignment::BitwiseFlag::IsFwdStrand() const noexcept -> bool {
-  return (mFlag & BAM_FREVERSE) == 0;
-}
-auto Alignment::BitwiseFlag::IsRevStrand() const noexcept -> bool {
-  return (mFlag & BAM_FREVERSE) != 0;
-}
-auto Alignment::BitwiseFlag::IsMateFwdStrand() const noexcept -> bool {
-  return (mFlag & BAM_FMREVERSE) == 0;
-}
-auto Alignment::BitwiseFlag::IsMateRevStrand() const noexcept -> bool {
-  return (mFlag & BAM_FMREVERSE) != 0;
-}
-auto Alignment::BitwiseFlag::IsQcFail() const noexcept -> bool {
-  return (mFlag & BAM_FQCFAIL) != 0;
-}
-auto Alignment::BitwiseFlag::IsDuplicate() const noexcept -> bool {
-  return (mFlag & BAM_FDUP) != 0;
-}
-auto Alignment::BitwiseFlag::IsPrimary() const noexcept -> bool {
-  return (mFlag & BAM_FSECONDARY) == 0;
-}
-auto Alignment::BitwiseFlag::IsSecondary() const noexcept -> bool {
-  return (mFlag & BAM_FSECONDARY) != 0;
-}
-auto Alignment::BitwiseFlag::IsSupplementary() const noexcept -> bool {
-  return (mFlag & BAM_FSUPPLEMENTARY) != 0;
-}
-auto Alignment::BitwiseFlag::IsMapped() const noexcept -> bool {
-  return (mFlag & BAM_FUNMAP) == 0;
-}
-auto Alignment::BitwiseFlag::IsUnmapped() const noexcept -> bool {
-  return (mFlag & BAM_FUNMAP) != 0;
-}
-auto Alignment::BitwiseFlag::IsMateMapped() const noexcept -> bool {
-  return (mFlag & BAM_FMUNMAP) == 0;
-}
-auto Alignment::BitwiseFlag::IsMateUnmapped() const noexcept -> bool {
-  return (mFlag & BAM_FMUNMAP) != 0;
-}
-auto Alignment::BitwiseFlag::IsPairedInSequencing() const noexcept -> bool {
-  return (mFlag & BAM_FPAIRED) != 0;
-}
-auto Alignment::BitwiseFlag::IsMappedProperPair() const noexcept -> bool {
-  return (mFlag & BAM_FPROPER_PAIR) != 0;
-}
-auto Alignment::BitwiseFlag::IsRead1() const noexcept -> bool {
-  return (mFlag & BAM_FREAD1) != 0;
-}
-auto Alignment::BitwiseFlag::IsRead2() const noexcept -> bool {
-  return (mFlag & BAM_FREAD2) != 0;
-}
-auto Alignment::BitwiseFlag::HasFlagsSet(u16 check_flags) const noexcept -> bool {
-  return (mFlag & check_flags) != 0;
-}
-auto Alignment::BitwiseFlag::HasFlagsUnset(u16 check_flags) const noexcept -> bool {
-  return (mFlag & check_flags) == 0;
-}
-
-// ---------------------------------------------------------------------------
 // Location and region helpers
 // ---------------------------------------------------------------------------
 
 auto Alignment::MateLocation() const noexcept -> MateInfo {
-  return {.mChromIndex = mMateChromIdx, .mMateStartPos0 = mMateStart0};
+  return {.mMateStartPos0 = mMateStart0, .mChromIndex = mMateChromIdx};
 }
 
 auto Alignment::MateOverlapsRegion(Reference::Region const& region) const noexcept -> bool {

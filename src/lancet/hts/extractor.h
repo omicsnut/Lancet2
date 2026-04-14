@@ -69,6 +69,9 @@ class Extractor {
 
   void SetNumThreads(int nthreads);
 
+  /// Returns an Iterator that yields Alignment proxies one at a time.
+  /// WARNING: each Alignment is invalidated on the next `++itr` call.
+  /// See Iterator class documentation for the full lifetime contract.
   [[nodiscard]] auto begin() -> Iterator;
   [[nodiscard]] auto end() -> Iterator;
 
@@ -109,7 +112,7 @@ class Extractor {
   // Ensure file is a BAM or CRAM and has a valid EOF block
   static void EnsureValidBamOrCram(htsFile* raw_fp, std::string_view aln_path);
 
-  // Check if all contigs present in reference FASTA match the BAM/CRAM mDfltSeq headers
+  // Check if all contigs present in reference FASTA match the BAM/CRAM sequence headers
   static void HeaderContigsCheck(sam_hdr_t* raw_hdr, Reference const& ref);
 
   static void SetDefaultHtsOpts(htsFile* raw_fp, Reference const& ref, std::string_view aln_path);

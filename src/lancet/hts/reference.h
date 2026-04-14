@@ -46,8 +46,8 @@ class Reference {
 
   class Region;
 
-  // 1-based inclusive closed position coordinates. Use std::nullopt to skip providing a
-  // co-ordinate.
+  // Coordinate system: 1-based closed (VCF/samtools convention).
+  // Use std::nullopt to default start=1 or end=chrom_length.
   using OneBasedClosedOptional = std::array<std::optional<u64>, 2>;
   static constexpr auto NULL_INTERVAL = OneBasedClosedOptional{std::nullopt, std::nullopt};
 
@@ -73,7 +73,7 @@ class Reference {
   [[nodiscard]] auto ParseRegion(char const* region_spec) const -> ParseRegionResult;
 
   // Makes a `Reference::Region` after removing any shorthand for start and end co-ordinates.
-  // Throws if 0-based co-ordinates given (or) any of the co-ordinates > chromosome mVarLength (or)
+  // Throws if 0-based co-ordinates given (or) any of the co-ordinates > chromosome length (or)
   // if end is < start.
   [[nodiscard]] auto MakeRegion(std::string const& chrom_name,
                                 OneBasedClosedOptional const& interval) const -> Region;
@@ -134,11 +134,21 @@ class Reference::Chrom {
         mName(chrom_name) {}
 };
 
+// ============================================================================
+// Reference::Region — a resolved genomic interval with its reference sequence.
+//
+// Coordinate system: 1-based closed (VCF/samtools convention).
+// StartPos1() and EndPos1() both return 1-based inclusive positions.
+// Length() = EndPos1() - StartPos1() + 1.
+//
+// Format: RNAME[:STARTPOS[-ENDPOS]]
+//   chr1           →  entire chromosome
+//   chr1:1000-1200 →  bases 1000..1200 inclusive
+//   chr1:100-      →  bases 100..end_of_chrom
+//   chr1:-100      →  bases 1..100
+// ============================================================================
 class Reference::Region {
  public:
-  // Region specified as: RNAME[:STARTPOS[-ENDPOS]]. Both coordinates are 1-based. i.e. one based
-  // closed coordinates. e.g: `chr1`, `chr1:1000-1200`, `chr1:100-` -> short for `chr1:100-${END}`,
-  // `chr1:-100` -> short for `chr1:1-100`
   [[nodiscard]] auto ToSamtoolsRegion() const -> std::string;
 
   [[nodiscard]] auto ChromName() const -> std::string { return mName; }

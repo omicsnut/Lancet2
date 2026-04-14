@@ -4,6 +4,7 @@
 #include "lancet/base/types.h"
 #include "lancet/cbdg/label.h"
 #include "lancet/hts/alignment.h"
+#include "lancet/hts/sam_flag.h"
 
 #include "absl/types/span.h"
 
@@ -51,9 +52,7 @@ class Read {
 
   [[nodiscard]] auto StartPos0() const noexcept -> i64 { return mStart0; }
   [[nodiscard]] auto ChromIndex() const noexcept -> i32 { return mChromIdx; }
-  [[nodiscard]] auto BitwiseFlag() const noexcept -> hts::Alignment::BitwiseFlag {
-    return hts::Alignment::BitwiseFlag(mSamFlag);
-  }
+  [[nodiscard]] auto Flag() const noexcept -> hts::SamFlag { return hts::SamFlag(mSamFlag); }
   [[nodiscard]] auto MapQual() const noexcept -> u8 { return mMapQual; }
 
   [[nodiscard]] auto PassesAlnFilters() const noexcept -> bool { return mPassesAlnFilters; }

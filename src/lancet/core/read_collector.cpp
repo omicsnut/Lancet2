@@ -491,7 +491,7 @@ auto ReadCollector::RevSortMateRegions(MateRegionsMap const& data)
   return results;
 }
 
-auto ReadCollector::MakeRegSpec(hts::Alignment::MateInfo const& info, hts::Extractor const* ext)
+auto ReadCollector::MakeRegSpec(hts::MateInfo const& info, hts::Extractor const* ext)
     -> std::string {
   auto const mate_chrom = ext->ChromName(info.mChromIndex);
   auto const mate_pos1 = info.mMateStartPos0 + 1;

@@ -6,6 +6,7 @@
 #include "lancet/core/sample_info.h"
 #include "lancet/hts/alignment.h"
 #include "lancet/hts/extractor.h"
+#include "lancet/hts/mate_info.h"
 #include "lancet/hts/reference.h"
 
 #include "absl/container/flat_hash_map.h"
@@ -68,7 +69,7 @@ class ReadCollector {
 
   /// Maps qname hash (u64) -> mate location info for out-of-region mate retrieval.
   /// Using u64 hashes instead of std::string keys avoids string copies during Pass 1.
-  using MateRegionsMap = absl::flat_hash_map<u64, hts::Alignment::MateInfo>;
+  using MateRegionsMap = absl::flat_hash_map<u64, hts::MateInfo>;
 
   Params mParams;
   bool mIsCaseCtrlMode{false};
@@ -80,11 +81,11 @@ class ReadCollector {
   /// Computes a deterministic u64 hash for a query name string_view.
   [[nodiscard]] static auto HashQname(std::string_view qname) -> u64;
 
-  using MateHashAndLocation = std::pair<u64, hts::Alignment::MateInfo>;
+  using MateHashAndLocation = std::pair<u64, hts::MateInfo>;
   [[nodiscard]] static auto RevSortMateRegions(MateRegionsMap const& data)
       -> std::vector<MateHashAndLocation>;
-  [[nodiscard]] static auto MakeRegSpec(hts::Alignment::MateInfo const& info,
-                                        hts::Extractor const* ext) -> std::string;
+  [[nodiscard]] static auto MakeRegSpec(hts::MateInfo const& info, hts::Extractor const* ext)
+      -> std::string;
 };
 
 }  // namespace lancet::core

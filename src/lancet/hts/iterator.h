@@ -14,6 +14,16 @@ extern "C" {
 
 namespace lancet::hts {
 
+/// BAM/CRAM record iterator over a region set by Extractor.
+///
+/// WARNING — Alignment lifetime contract:
+/// Alignment objects returned by dereferencing this iterator (`*itr`) are
+/// invalidated when the iterator advances (`++itr`). The underlying bam1_t*
+/// is reused across steps to avoid per-record allocation. Consequently:
+///   - Do NOT store Alignment objects across iterator increments.
+///   - Do NOT hold string_views from QnameView() across increments.
+///   - Use BuildSequence()/BuildQualities() to deep-copy data
+///     that must outlive the current step.
 class Iterator {
  public:
   // NOLINTBEGIN(readability-identifier-naming)  // std::iterator_traits mandates snake_case

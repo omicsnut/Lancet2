@@ -49,6 +49,9 @@ class BgzfStreambuf : public std::streambuf {
 
 enum class BgzfFormat : u8 { UNSPECIFIED, GFF, BED, VCF };
 
+/// Thread safety: NOT thread-safe. Each writer thread must use its own
+/// BgzfOstream instance. Concurrent writes to the same underlying BGZF
+/// handle corrupt the block structure.
 // NOLINTNEXTLINE(misc-multiple-inheritance)
 class BgzfOstream : public std::ostream {
  public:

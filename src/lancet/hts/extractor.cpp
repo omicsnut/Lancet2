@@ -124,7 +124,7 @@ auto Extractor::ChromName(i32 chrom_index) const -> std::string {
   auto const* result = sam_hdr_tid2name(mHdrPtr.get(), chrom_index);
   if (result == nullptr) {
     auto const err_msg =
-        fmt::format("Reference mIdx {} is not found in BAM/CRAM header", chrom_index);
+        fmt::format("Reference index {} is not found in BAM/CRAM header", chrom_index);
     throw std::invalid_argument(err_msg);
   }
   return {result};
@@ -160,7 +160,7 @@ auto Extractor::InitSamHdr(htsFile* raw_fp, std::string_view aln_path) -> SamHdr
 }
 
 auto Extractor::InitHtsIdx(htsFile* raw_fp, std::string const& aln_path) -> HtsIdx {
-  // Try loading alternative mIdx before failing
+  // Try loading alternative index before failing
   auto idx_ptr = HtsIdx(sam_index_load(raw_fp, aln_path.c_str()));
   if (idx_ptr == nullptr) {
     usize const dot_position = aln_path.rfind('.', std::string::npos);
@@ -172,7 +172,7 @@ auto Extractor::InitHtsIdx(htsFile* raw_fp, std::string const& aln_path) -> HtsI
   }
 
   if (idx_ptr == nullptr) {
-    auto const err_msg = fmt::format("Could not load mIdx for BAM/CRAM: {}", aln_path);
+    auto const err_msg = fmt::format("Could not load index for BAM/CRAM: {}", aln_path);
     throw std::runtime_error(err_msg);
   }
 
@@ -247,7 +247,7 @@ auto Extractor::ParseSampleName(sam_hdr_t* raw_hdr, std::string_view aln_path) -
 // ──────────────────────────────────────────────────────────────────────────────
 void Extractor::EnsureValidBamOrCram(htsFile* raw_fp, std::string_view aln_path) {
   if (raw_fp->format.category != sequence_data) {
-    auto const err_msg = fmt::format("Cannot read alignment from non-mDfltSeq data: {}", aln_path);
+    auto const err_msg = fmt::format("Cannot read alignment from non-sequence data: {}", aln_path);
     throw std::invalid_argument(err_msg);
   }
 

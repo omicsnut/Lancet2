@@ -13,7 +13,7 @@ namespace lancet::hts {
 // ErrorProbToPhred converts the other direction (e.g., 0.01 → Q20).
 //
 // Both use the formula P = 10^(−Q/10). PhredToErrorProb uses a precomputed
-// lookup table for speed since the same conversion is called per-read.
+// constexpr lookup table — thread-safe with zero runtime initialization cost.
 static constexpr u8 MAX_PHRED_SCORE = 255;
 [[nodiscard]] auto PhredToErrorProb(u32 phred_score) -> f64;
 [[nodiscard]] auto ErrorProbToPhred(f64 prob) -> f64;

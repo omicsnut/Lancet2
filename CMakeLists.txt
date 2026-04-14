@@ -106,9 +106,10 @@ set_target_properties(lancet_base PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIR
 add_library(lancet_hts STATIC
 		src/lancet/hts/bgzf_ostream.cpp src/lancet/hts/bgzf_ostream.h
 		src/lancet/hts/phred_quality.cpp src/lancet/hts/phred_quality.h
-		src/lancet/hts/fisher_exact.cpp src/lancet/hts/fisher_exact.h
 		src/lancet/hts/reference.cpp src/lancet/hts/reference.h
-		src/lancet/hts/cigar_unit.h src/lancet/hts/aux_tag.h
+		src/lancet/hts/cigar_unit.h src/lancet/hts/cigar_utils.h
+		src/lancet/hts/aux_tag.h src/lancet/hts/mate_info.h
+		src/lancet/hts/sam_flag.cpp src/lancet/hts/sam_flag.h
 		src/lancet/hts/alignment.cpp src/lancet/hts/alignment.h
 		src/lancet/hts/iterator.cpp src/lancet/hts/iterator.h
 		src/lancet/hts/extractor.cpp src/lancet/hts/extractor.h)

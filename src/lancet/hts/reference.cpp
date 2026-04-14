@@ -32,7 +32,7 @@ Reference::Reference(std::filesystem::path reference) : mFastaPath(std::move(ref
   mFastaIndex = FastaIndex(fai_load3(mFastaPath.c_str(), nullptr, nullptr, 0));
   if (mFastaIndex == nullptr) {
     auto const fname = mFastaPath.filename().string();
-    auto const msg = fmt::format("Could not load mIdx for reference: {}", fname);
+    auto const msg = fmt::format("Could not load index for reference: {}", fname);
     throw std::runtime_error(msg);
   }
 
@@ -101,7 +101,7 @@ auto Reference::MakeRegion(std::string const& chrom_name,
   }
 
   if (given_start > matching_chrom->Length() || given_end > matching_chrom->Length()) {
-    throw std::out_of_range("Expected start and end positions to be <= chromosome mVarLength");
+    throw std::out_of_range("Expected start and end positions to be <= chromosome length");
   }
 
   if (given_start > given_end) {
@@ -122,6 +122,9 @@ auto Reference::MakeRegion(char const* region_spec) const -> Region {
   return MakeRegion(result.mChromName, result.mRegionSpan);
 }
 
+// Coordinate system bridge: htslib's fai_parse_region returns 0-based half-open
+// [begin_zero, end_one). We convert to 1-based closed [begin_zero+1, end_one]
+// before storing in ParseRegionResult.
 auto Reference::ParseRegion(char const* region_spec) const -> ParseRegionResult {
   int tid = 0;
   hts_pos_t begin_zero = 0;
@@ -156,7 +159,7 @@ auto Reference::FetchSeq(std::string const& chrom, OneBasedClosedInterval const&
     auto const colon_in_chrom = chrom.find(':') != std::string::npos;
     auto const regspec = colon_in_chrom ? fmt::format("{{{}}}:{}-{}", chrom, start_pos1, end_pos1)
                                         : fmt::format("{}:{}-{}", chrom, start_pos1, end_pos1);
-    auto const err_msg = fmt::format("Got zero mVarLength mDfltSeq from region: {}", regspec);
+    auto const err_msg = fmt::format("Got zero length sequence from region: {}", regspec);
     throw std::runtime_error(err_msg);
   }
 
