@@ -47,9 +47,9 @@ class Kmer {
   }
 
  private:
-  Sign mDfltSign = Sign::PLUS;
-  u64 mIdentifier = 0;
-  std::string mDfltSeq;
+  u64 mIdentifier = 0;          // 8B
+  std::string mDfltSeq;         // 32B (8B align)
+  Sign mDfltSign = Sign::PLUS;  // 1B
 };
 
 [[nodiscard]] inline static auto MakeFwdEdgeKind(std::array<Kmer::Sign, 2> const& sign_pair)

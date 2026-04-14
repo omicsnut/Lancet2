@@ -54,8 +54,9 @@ void Graph::Path::Finalize() {
   if (mNodeCoverages.empty()) return;
 
   lancet::base::OnlineStats stats;
-  std::for_each(mNodeCoverages.begin(), mNodeCoverages.end(),
-                [&stats](auto const cov) { stats.Add(cov); });
+  for (auto const cov : mNodeCoverages) {
+    stats.Add(cov);
+  }
 
   mMeanCov = stats.Mean();
   mStdDevCov = stats.StdDev();
@@ -434,8 +435,8 @@ auto Graph::IsPotentialBuddyEdge(Node const& src, Edge const& conn) const -> boo
 
   // Check edge case where the only nodes between src and nbour are each other
   if (src.NumOutEdges() == 1 && nbour.NumOutEdges() == 1) {
-    auto const edge_from_src = std::vector<Edge>(src.cbegin(), src.cend())[0];
-    auto const edge_from_nbour = std::vector<Edge>(nbour.cbegin(), nbour.cend())[0];
+    auto const& edge_from_src = *src.cbegin();
+    auto const& edge_from_nbour = *nbour.cbegin();
     if (edge_from_src.DstId() == nbour.Identifier() &&
         edge_from_nbour.DstId() == src.Identifier()) {
       return false;
@@ -690,7 +691,7 @@ auto Graph::BuildTraversalIndex(usize const component_id) const -> TraversalInde
     Node const* node = traversal_index.mNodes[node_idx];
     for (Edge const& edge : *node) {
       // Only count edges whose destination is in this component
-      if (nid_to_flat.find(edge.DstId()) == nid_to_flat.end()) continue;
+      if (!nid_to_flat.contains(edge.DstId())) continue;
 
       u32 const state = TraversalIndex::MakeState(node_idx, edge.SrcSign());
       traversal_index.mAdjRanges[state].mCount++;

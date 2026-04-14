@@ -114,9 +114,9 @@ Kmer::Kmer(std::string_view seq) {
 
 void Kmer::Merge(Kmer const& other, EdgeKind const conn_kind, usize currk) {
   if (IsEmpty()) {
-    mDfltSign = other.mDfltSign;
     mIdentifier = other.mIdentifier;
     mDfltSeq = other.mDfltSeq;
+    mDfltSign = other.mDfltSign;
     return;
   }
 
