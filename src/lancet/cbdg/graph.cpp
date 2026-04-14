@@ -231,7 +231,8 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
   };
 
   // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
-  auto const num_haps = std::accumulate(per_comp_haps.cbegin(), per_comp_haps.cend(), 0, SUMMER);
+  auto const num_haps =
+      std::accumulate(per_comp_haps.cbegin(), per_comp_haps.cend(), u64{0}, SUMMER);
 
   // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
   auto const human_rt = timer.HumanRuntime();
@@ -479,20 +480,16 @@ void Graph::RemoveTips(usize const component_id) {
   while (curr_tips > 0) {
     remove_nids.clear();
 
-    std::ranges::for_each(
-        mNodes, [&remove_nids, &component_id, this](NodeTable::const_reference item) -> void {
-          auto const [source_id, sink_id] = this->mSourceAndSinkIds;
-          if (item.second->GetComponentId() != component_id || item.second->NumOutEdges() > 1) {
-            return;
-          }
+    auto const [source_id, sink_id] = mSourceAndSinkIds;
+    for (auto const& [nid, node_ptr] : mNodes) {
+      if (node_ptr->GetComponentId() != component_id || node_ptr->NumOutEdges() > 1) continue;
+      if (nid == source_id || nid == sink_id) continue;
 
-          if (item.first == source_id || item.first == sink_id) return;
+      auto const uniq_sequence_length = node_ptr->SeqLength() - mCurrK + 1;
+      if (uniq_sequence_length >= mCurrK) continue;
 
-          auto const uniq_sequence_length = item.second->SeqLength() - mCurrK + 1;
-          if (uniq_sequence_length >= this->mCurrK) return;
-
-          remove_nids.emplace_back(item.first);
-        });
+      remove_nids.emplace_back(nid);
+    }
 
     if (!remove_nids.empty()) {
       total_tips += curr_tips;
@@ -818,9 +815,9 @@ auto Graph::MarkConnectedComponents() -> std::vector<ComponentInfo> {
   }
 
   auto const total_num_nodes = static_cast<f64>(mNodes.size());
-  std::ranges::for_each(results_info, [&total_num_nodes](ComponentInfo& cinfo) -> void {
+  for (auto& cinfo : results_info) {
     cinfo.mPctNodes = 100.0 * (static_cast<f64>(cinfo.mNumNodes) / total_num_nodes);
-  });
+  }
 
   std::ranges::sort(results_info, [](ComponentInfo const& lhs, ComponentInfo const& rhs) -> bool {
     return lhs.mNumNodes > rhs.mNumNodes;
@@ -835,22 +832,20 @@ void Graph::RemoveLowCovNodes(usize const component_id) {
   std::vector<NodeID> remove_nids;
   remove_nids.reserve(mNodes.size());
 
-  std::ranges::for_each(
-      std::as_const(mNodes),
-      [&remove_nids, &component_id, this](NodeTable::const_reference item) -> void {
-        auto const [source_id, sink_id] = this->mSourceAndSinkIds;
-        if (item.second->GetComponentId() != component_id) return;
-        if (item.first == source_id || item.first == sink_id) return;
+  auto const [source_id, sink_id] = mSourceAndSinkIds;
+  for (auto const& [nid, node_ptr] : mNodes) {
+    if (node_ptr->GetComponentId() != component_id) continue;
+    if (nid == source_id || nid == sink_id) continue;
 
-        // Remove nodes where every sample has at most 1 read (unreliable k-mers)
-        // or total coverage is below the user-configured minimum.
-        auto const all_singletons = item.second->IsAllSingletons();
-        auto const total_sample_cov = item.second->TotalReadSupport();
+    // Remove nodes where every sample has at most 1 read (unreliable k-mers)
+    // or total coverage is below the user-configured minimum.
+    auto const all_singletons = node_ptr->IsAllSingletons();
+    auto const total_sample_cov = node_ptr->TotalReadSupport();
 
-        if (all_singletons || total_sample_cov < this->mParams.mMinNodeCov) {
-          remove_nids.emplace_back(item.first);
-        }
-      });
+    if (all_singletons || total_sample_cov < mParams.mMinNodeCov) {
+      remove_nids.emplace_back(nid);
+    }
+  }
 
   if (!remove_nids.empty()) {
     // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
@@ -878,8 +873,9 @@ void Graph::RemoveNode(NodeTable::iterator itr) {
 }
 
 void Graph::RemoveNodes(absl::Span<NodeID const> node_ids) {
-  std::ranges::for_each(
-      node_ids, [this](NodeID const nid) -> void { this->RemoveNode(this->mNodes.find(nid)); });
+  for (auto const nid : node_ids) {
+    RemoveNode(mNodes.find(nid));
+  }
 }
 
 void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
@@ -909,16 +905,16 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
     usize offset = 0;
     auto added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
 
-    std::ranges::for_each(added_nodes, [&read, &offset, &mate_mers, this](Node* node) -> void {
+    for (auto* node : added_nodes) {
       MateMer mm_pair{
           .mQname = read.QnameView(), .mTagKind = read.TagKind(), .mKmerHash = node->Identifier()};
-      auto const curr_qual = read.QualView().subspan(offset, this->mCurrK);
+      auto const curr_qual = read.QualView().subspan(offset, mCurrK);
       offset++;
 
-      if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) return;
+      if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) continue;
       node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
       mate_mers.emplace(mm_pair);
-    });
+    }
   }
 }
 
