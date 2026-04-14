@@ -1,5 +1,4 @@
 set(LANCET_FULL_DATA_DIR "${PROJECT_SOURCE_DIR}/data")
-set(LANCET_TEST_DATA_DIR "${PROJECT_SOURCE_DIR}/tests/data")
 set(LANCET_TEST_CONFIG_H "${CMAKE_BINARY_DIR}/generated/lancet_test_config.h")
 configure_file(test_config.h.inc ${LANCET_TEST_CONFIG_H} @ONLY)
 
