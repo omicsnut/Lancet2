@@ -1,44 +1,81 @@
 
-<a name="v2.10.2"></a>
-## [v2.10.2](https://github.com/nygenome/Lancet2/compare/v2.10.1...v2.10.2) (2026-04-10)
+<a name="v2.9.0"></a>
+## [v2.9.0](https://github.com/nygenome/Lancet2/compare/v2.8.7...v2.9.0) (2026-04-14)
 
 ### Bug Fixes
 
+* FLD directionality, ASMD variant length, and SDFC per-sample normalization
+* correct NM spec violation, FLD directionality, and ASMD variant contrib
+* cap germline site qual at 100 instead of 10
+* Resolve VCF output violations and standardize variant topological formatting
+* add full build step before clang-tidy in CI lint workflow
 * correct PREFIX_API_KEY env var and bump docs to v2.10.2
-
-### Refactoring
-
-* Update release notes in changelog
-
-
-<a name="v2.10.1"></a>
-## [v2.10.1](https://github.com/nygenome/Lancet2/compare/v2.10.0...v2.10.1) (2026-04-10)
-
-### Refactoring
-
-* fix CI workflows and add pixi bootstrap to dev scripts
-* Update release notes in changelog
-
-
-<a name="v2.10.0"></a>
-## [v2.10.0](https://github.com/nygenome/Lancet2/compare/v2.9.0...v2.10.0) (2026-04-10)
-
-### Bug Fixes
-
 * normalize CLI exit codes for help, version, and no-arg invocations
 * resolve VCF sorting failure from missing chromosome name and variant identity redesign
 * typo in vcf by using fmt instead of printf style
+* disable mimalloc overrides on macOS to prevent trace trap crashes
+* enable minimap2 compilation on macOS ARM64 Apple Silicon
+* revert dynamic spectrum-based thresholding to restore variant calling sensitivity
+* bug in Graph::BuildGraph: correct AddNodes label
 
 ### New Features
 
+* generalize to N-sample case/control architecture
+* add FSSE, AHDD, HSE, PDCV artifact detection metrics
+* extend ReadEvidence with 3 fields for FSSE, AHDD, and HSE metrics
+* add missing-value semantics for 5 artifact metrics   (FLD, RPCD, BQCD, MQCD, ASMD)
+* Add Dirichlet-Multinomial GLs and CMLOD FORMAT field
+* add algorithmic deep-dive guides and restructure documentation site
 * integrate SPOA-native variant extraction and optimize genotyping
+* enable native cloud streaming and GHCR automation
+* add RPRS, BQRS, ASMD, SDFC FORMAT fields and refactor annotation pipeline
+* Add multi-scale LCR scoring with dual k-mer sizes and calibration tooling
+* optimize spoa parameters for local variant extraction
 
 ### Performance Improvements
 
 * streamline pipeline orchestrator and strictly encapsulate AoS memory models
+* Hoist spoa::AlignmentEngine to VariantBuilder for per-thread reuse
+* Eliminate per-read heap allocations via zero-copy bam1_t proxying and uniform paired downsampling
+* optimize hot-path allocs & access patterns
 
 ### Refactoring
 
+* untrack .idea directory and simplify gitignore
+* remove unused tests/data directory and config references
+* move base utilities into lancet::base namespace
+* refactor hts module for modularity and readability
+* fix flow issues in guide page
+* update docs with seq cx metrics info
+* update dev tooling dependencies
+* consolidate dev tooling into pixi tasks and document commit convention
+* minor formatting fix for clang-format
+* remove filler jargon and fix third-party include conventions
+* resolve clang tidy warning in tests
+* add memory alignment convention
+* add/improve comment blocks and other cosmetic fixes
+* add developer convention style guide doc
+* add no embed images flag to export docs script
+* fix export_docs script to handle internal links & assets
+* add python script to export docs to single markdown file
+* add doc site tools to dev dependencies
+* remove redundant mermaid plugin
+* update dev dependencies in pixi workspace
+* fix warning note format typo
+* add dark mode friendly architecture chart asset
+* remove mermaid plugin conflict with theme
+* resolve clang format lint errors
+* minor cosmetic fixes
+* resolve ssl linker errors by using static builds for linting
+* add C++ lint workflow and concurrency guards for CI pipelines
+* bump prefix-dev/setup-pixi from 0.8.8 to 0.9.5 ([#14](https://github.com/nygenome/Lancet2/issues/14))
+* bump actions/setup-python from 5 to 6 ([#16](https://github.com/nygenome/Lancet2/issues/16))
+* bump actions/checkout from 4 to 6 ([#15](https://github.com/nygenome/Lancet2/issues/15))
+* point mkdocs site to v2.8.7 for now
+* Update release notes in changelog
+* Update release notes in changelog
+* fix CI workflows and add pixi bootstrap to dev scripts
+* Update release notes in changelog
 * add prefix.dev deployment pipeline and update install docs
 * resolve clang tidy check warnings
 * apply clang format fixes
@@ -49,33 +86,6 @@
 * update conda recipe with new tag
 * Update release notes in changelog
 * fix changelog script
-
-
-<a name="v2.9.0"></a>
-## [v2.9.0](https://github.com/nygenome/Lancet2/compare/v2.8.7...v2.9.0) (2026-04-07)
-
-### Bug Fixes
-
-* disable mimalloc overrides on macOS to prevent trace trap crashes
-* enable minimap2 compilation on macOS ARM64 Apple Silicon
-* revert dynamic spectrum-based thresholding to restore variant calling sensitivity
-* bug in Graph::BuildGraph: correct AddNodes label
-
-### New Features
-
-* enable native cloud streaming and GHCR automation
-* add RPRS, BQRS, ASMD, SDFC FORMAT fields and refactor annotation pipeline
-* Add multi-scale LCR scoring with dual k-mer sizes and calibration tooling
-* optimize spoa parameters for local variant extraction
-
-### Performance Improvements
-
-* Hoist spoa::AlignmentEngine to VariantBuilder for per-thread reuse
-* Eliminate per-read heap allocations via zero-copy bam1_t proxying and uniform paired downsampling
-* optimize hot-path allocs & access patterns
-
-### Refactoring
-
 * separate bump & changelog scripts
 * update bump script
 * update bump script
@@ -112,6 +122,24 @@
 * minor fixes to bump helper script
 * use different semver helper tool
 * add profile mode to enable cpu profiling in release mode
+
+### BREAKING CHANGE
+
+
+--enable-graph-complexity-features and
+--enable-sequence-complexity-features flags are removed. GRAPH_CX
+and SEQ_CX INFO fields are now always present in VCF output.
+
+NM values decrease (soft-clip penalty removed).
+ASMD values decrease for indels (variant length subtracted).
+SDFC values now differ between tumor and normal samples.
+
+NM values decrease (soft-clip penalty removed).
+ASMD values decrease for indels (variant length subtracted).
+
+VCF output for FLD, RPCD, BQCD, MQCD, ASMD now
+emits "." instead of "0.0" when untestable. FLD range changed
+from [0, inf) to (-inf, +inf).
 
 
 <a name="v2.8.7"></a>
@@ -338,10 +366,8 @@
 * minor fix to prep_stm_viz.sh
 * temp remove for lfs tracking
 * temp clean git index
-* update ide config files
 * update dependencies
 * update default version string
-* update ide files for new dev vm
 * Update Dockerfile
 * resolve multiple clang-tidy warnings
 * resolve multiple clang-tidy warnings
@@ -374,7 +400,6 @@
 * Bump version to v2.4.0
 * rename function
 * set ends non gap len to 11
-* revert back run config
 * update deps
 * rename actions config
 * remove and re-add yml to debug
@@ -385,11 +410,9 @@
 * auto-use git tag version
 * Bump version to v2.3.0
 * Bump version to v2.2.0
-* remove redundant flag from run config
 * remove runtime stats option
 * comment out profiling code from release build
 * update deps
-* use 10mb non gap window for testing
 * update dependencies
 * update dependencies and docker file
 * update deps and dockerfile
@@ -409,7 +432,6 @@
 * update CMP0135 policy
 * update deps
 * keep only gcc build Former-commit-id: facbfe77ae435592f8cd0e029e00b8349a2ff446 Former-commit-id: 6d01d6a27eb1c7fdf65dfe33bdbae974bf4d810b Former-commit-id: 4dcb3a240bde0daf58d98d139bd0fb3c9263fe7e
-* update graphviz image
 * remove ghcr from build to prevent push 403 errors Former-commit-id: 4f83100db7dcea3e5f953573c1ce498831bdc3ed Former-commit-id: a8fd94a3e496a1bc24fd319466b4501e054a38fe Former-commit-id: fae57a5d155e73bc566face970b44d53e6f0cefa
 * update readme Former-commit-id: a38e811ade0e6d800a06ec705c295db973eb7150 Former-commit-id: f4f01d634fd6c48fc75cfae8be8dbd5b74ff54b0 Former-commit-id: cc929dc6fc954ca834fa14f32a1ff97cad9b0edf
 * Update docs Former-commit-id: a464948922765af128e9f62f302aa3ce5271adf1 Former-commit-id: 80f708b507a345305a5c006b4d6f6514e1c8f65a Former-commit-id: a1302cd2c95236f53c7a5162c0a9caea9d52ea37
@@ -458,8 +480,6 @@
 * remove float specifier
 * bump to release candidate 1
 * use caught exception directly
-* add cmake ide profiles to vcs
-* update ide files
 * add status badge and change workflow name
 * fix case for docker image tag
 * add default dockerfile and change scope
@@ -484,15 +504,12 @@
 * update to BSD license Former-commit-id: b5aa128c6537916903d5871051bcfe1be65bee2c Former-commit-id: d810ed6a2f7766c88f0be7455b7688b89dfc7b71 Former-commit-id: 92e0c257074d24c61b5739e25443b942f948f8ff
 * add gh pages config
 * update dependencies and fix related issues for upgrade
-* update ide config files
 * ignore variable length check
 * always return true when fractionToKeep is 1
 * use cflags env var directly
 * add local cpp env dockerfile
 * add local editor files
-* add local editor files
 * run configure scripts in bash
-* add clion cfg files
 * add vscode prefs
 * fix diagnostics branch case
 * revert concurrentqueue version to fix gcc build error
@@ -519,7 +536,6 @@
 * increase required buffer windows
 * skip stripping build files in sanitizer images
 * remove build files from docker image, run GH action everyday
-* edit file watcher outdir
 * fix gcc build errors
 * remove LTO and remove deps message on build
 * rename queue tokens to clarify usage
@@ -555,7 +571,6 @@
 * fix typo and reorder deps
 * use alpine linux for release builds after SIGILL fix
 * add sha and ref tags only for clang release builds
-* include integration test data set
 * resolve typo in config
 * add thread annotations for tsan
 * fix tags for docker images
