@@ -9,6 +9,9 @@
 #include <string>
 #include <string_view>
 
+using lancet::base::HammingDistNaive;
+using lancet::base::HammingDistWord64;
+
 namespace {
 
 /// Generate a 5000bp random DNA sequence for Hamming distance fuzz testing.

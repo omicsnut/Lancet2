@@ -3,10 +3,13 @@
 
 #include "lancet/base/types.h"
 
+#include <algorithm>
 #include <array>
 #include <ranges>
 #include <string>
 #include <string_view>
+
+namespace lancet::base {
 
 // Constexpr lookup table for DNA complement: A↔T, C↔G, else→N.
 constexpr auto MakeDnaComplementTable() -> std::array<char, 256> {
@@ -34,13 +37,13 @@ inline constexpr std::array<char, 256> DNA_COMPLEMENT_TABLE = MakeDnaComplementT
 }
 
 [[nodiscard]] inline auto RevComp(std::string_view seq) -> std::string {
-  std::string rev_comp_seq(seq.size(), 'N');
-  usize rc_idx = 0;
-  for (char const& itr : std::ranges::reverse_view(seq)) {
-    rev_comp_seq[rc_idx] = DNA_COMPLEMENT_TABLE[static_cast<u8>(itr)];
-    ++rc_idx;
-  }
-  return rev_comp_seq;
+  std::string result(seq.size(), 'N');
+  std::ranges::transform(std::views::reverse(seq), result.begin(), [](char const base) {
+    return DNA_COMPLEMENT_TABLE[static_cast<u8>(base)];
+  });
+  return result;
 }
+
+}  // namespace lancet::base
 
 #endif  // SRC_LANCET_BASE_REV_COMP_H_

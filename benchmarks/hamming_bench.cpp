@@ -31,7 +31,7 @@ void BenchHammingNaive(benchmark::State& state) {
 
   // NOLINTNEXTLINE(readability-identifier-length)
   for ([[maybe_unused]] auto _ : state) {
-    auto result = HammingDistNaive(first, second);
+    auto result = lancet::base::HammingDistNaive(first, second);
     benchmark::DoNotOptimize(result);
   }
 }
@@ -42,7 +42,7 @@ void BenchHamming64(benchmark::State& state) {
 
   // NOLINTNEXTLINE(readability-identifier-length)
   for ([[maybe_unused]] auto _ : state) {
-    auto result = HammingDistWord64(first, second);
+    auto result = lancet::base::HammingDistWord64(first, second);
     benchmark::DoNotOptimize(result);
   }
 }

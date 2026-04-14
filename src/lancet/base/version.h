@@ -6,6 +6,8 @@
 
 #include <string>
 
+namespace lancet::base {
+
 static constexpr auto LANCET_VERSION_TAG = lancet::VersionTag;
 static constexpr auto LANCET_GIT_BRANCH = lancet::GitBranch;
 static constexpr auto LANCET_GIT_REVISION = lancet::GitRevision;
@@ -15,5 +17,7 @@ static constexpr auto LANCET_GIT_REVISION = lancet::GitRevision;
       fmt::format("{}-{}-{}", LANCET_VERSION_TAG, LANCET_GIT_BRANCH, LANCET_GIT_REVISION);
   return RESULT;
 }
+
+}  // namespace lancet::base
 
 #endif  // SRC_LANCET_BASE_VERSION_H_

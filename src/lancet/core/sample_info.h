@@ -57,9 +57,11 @@ class SampleInfo {
     using IsTransparent = void;
 
     auto operator()(SampleInfo const& sinfo) const -> usize {
-      return HashStr64(sinfo.SampleName());
+      return lancet::base::HashStr64(sinfo.SampleName());
     }
-    auto operator()(std::string_view sample_name) const -> usize { return HashStr64(sample_name); }
+    auto operator()(std::string_view sample_name) const -> usize {
+      return lancet::base::HashStr64(sample_name);
+    }
   };
 
   struct Equal {

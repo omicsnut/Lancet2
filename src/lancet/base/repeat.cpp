@@ -10,6 +10,8 @@
 #include <memory>
 #include <string_view>
 
+namespace lancet::base {
+
 // ============================================================================
 // HammingDistWord64 — SWAR (SIMD Within A Register) Hamming distance
 //
@@ -96,3 +98,5 @@ auto HasApproximateRepeat(absl::Span<std::string_view const> kmers,
 
   return false;
 }
+
+}  // namespace lancet::base

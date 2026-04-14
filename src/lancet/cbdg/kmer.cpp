@@ -58,7 +58,7 @@ void MergeCords(std::string& k1_dflt, std::string_view k2_dflt, lancet::cbdg::Ed
       // k2-->k1
       // k1_oppo  3'                 GGGAGAAATTGGGGCACACCTATTCCCGTAAGG 5'
       // k2_dflt  3' ACGAGGTTACCCTCATGGGAGAAATTGGGGCACACCTA            5'
-      k1_dflt.append(NonOvlSuffix(RevComp(k2_dflt), currk));
+      k1_dflt.append(NonOvlSuffix(lancet::base::RevComp(k2_dflt), currk));
       break;
 
     case EdgeKind::MINUS_PLUS:
@@ -72,7 +72,7 @@ void MergeCords(std::string& k1_dflt, std::string_view k2_dflt, lancet::cbdg::Ed
       // k2-->k1
       // k1_dflt  3'                 CCTTTTTTACGTAATTCATAGTACAAAAGTTCC 5'
       // k2_oppo  3' CGATTTCTATACAAGCCCTTTTTTACGTAATT                  5'
-      k1_dflt.insert(0, NonOvlPrefix(RevComp(k2_dflt), currk));
+      k1_dflt.insert(0, NonOvlPrefix(lancet::base::RevComp(k2_dflt), currk));
       break;
 
     case EdgeKind::MINUS_MINUS:
@@ -96,17 +96,17 @@ void MergeCords(std::string& k1_dflt, std::string_view k2_dflt, lancet::cbdg::Ed
 namespace lancet::cbdg {
 
 Kmer::Kmer(std::string_view seq) {
-  auto rc_seq = RevComp(seq);
+  auto rc_seq = lancet::base::RevComp(seq);
   mDfltSign = seq < rc_seq ? Sign::PLUS : Sign::MINUS;
 
   switch (mDfltSign) {
     case Sign::PLUS:
-      mIdentifier = HashStr64(seq);
+      mIdentifier = lancet::base::HashStr64(seq);
       mDfltSeq = seq;
       break;
 
     case Sign::MINUS:
-      mIdentifier = HashStr64(rc_seq);
+      mIdentifier = lancet::base::HashStr64(rc_seq);
       mDfltSeq = std::move(rc_seq);
       break;
   }
@@ -128,7 +128,7 @@ auto Kmer::SignFor(Ordering const order) const noexcept -> Sign {
 }
 
 auto Kmer::SequenceFor(Ordering const order) const -> std::string {
-  return order == Ordering::DEFAULT ? mDfltSeq : RevComp(mDfltSeq);
+  return order == Ordering::DEFAULT ? mDfltSeq : lancet::base::RevComp(mDfltSeq);
 }
 
 }  // namespace lancet::cbdg

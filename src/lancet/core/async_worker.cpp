@@ -33,7 +33,7 @@ void AsyncWorker::Process(std::stop_token stop_token,
       absl::Hash<std::thread::id>()(std::this_thread::get_id());
   LOG_DEBUG("Starting AsyncWorker thread {:#x}", THREAD_ID)
 
-  Timer timer;
+  lancet::base::Timer timer;
   usize num_done = 0;
   auto window_ptr = std::make_shared<Window>();
   moodycamel::ProducerToken const out_token(*mOutPtr);

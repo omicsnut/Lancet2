@@ -258,7 +258,7 @@ auto main(int argc, char** argv) -> int {
   }
 
   // ── Step 2: Stream and accumulate ───────────────────────────────────────
-  Timer timer;
+  lancet::base::Timer timer;
   // NOLINTNEXTLINE(modernize-avoid-c-arrays)
   char buf[65'536];
   Accumulators accum;

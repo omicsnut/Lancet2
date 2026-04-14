@@ -505,7 +505,7 @@ class EtaTimer {
  private:
   usize mDone = 0;
   usize mTotal;
-  Timer mTimer;
+  lancet::base::Timer mTimer;
   double mRate = 0;
 };
 

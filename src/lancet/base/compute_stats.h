@@ -9,10 +9,13 @@
 #include <concepts>
 #include <limits>
 #include <numeric>
+#include <ranges>
 #include <vector>
 
 #include <cmath>
 #include <cstdlib>
+
+namespace lancet::base {
 
 namespace detail {
 
@@ -157,12 +160,10 @@ template <Number T>
 
 template <Number T>
 [[nodiscard]] inline auto Minimum(absl::Span<T const> data) -> T {
-  static auto const ACCUMULATOR = [](T const curr_min, T const value) -> T {
-    return std::min(curr_min, value);
-  };
-  auto const result =
-      std::accumulate(data.cbegin(), data.cend(), std::numeric_limits<T>::max(), ACCUMULATOR);
-  return result == std::numeric_limits<T>::max() ? static_cast<T>(0) : result;
+  if (data.empty()) return static_cast<T>(0);
+  return *std::ranges::min_element(data);
 }
+
+}  // namespace lancet::base
 
 #endif  // SRC_LANCET_BASE_COMPUTE_STATS_H_

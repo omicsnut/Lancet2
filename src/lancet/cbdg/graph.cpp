@@ -53,7 +53,7 @@ void Graph::Path::AddNodeCoverage(u32 cov) {
 void Graph::Path::Finalize() {
   if (mNodeCoverages.empty()) return;
 
-  OnlineStats stats;
+  lancet::base::OnlineStats stats;
   std::for_each(mNodeCoverages.begin(), mNodeCoverages.end(),
                 [&stats](auto const cov) { stats.Add(cov); });
 
@@ -62,7 +62,7 @@ void Graph::Path::Finalize() {
   mTotalCov = mMeanCov * static_cast<f64>(stats.Count());
   if (mMeanCov > 0.0) mCvCov = mStdDevCov / mMeanCov;
 
-  mMedianCov = static_cast<f64>(Median(absl::MakeConstSpan(mNodeCoverages)));
+  mMedianCov = static_cast<f64>(lancet::base::Median(absl::MakeConstSpan(mNodeCoverages)));
 
   if (mNodeCoverages.size() >= 4) {
     std::ranges::sort(mNodeCoverages);
@@ -109,7 +109,7 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
   mReads = reads;
   mRegion = std::move(region);
 
-  Timer timer;
+  lancet::base::Timer timer;
   GraphHaps per_comp_haps;
   std::string_view ref_anchor_seq;
   std::vector<usize> anchor_start_idxs;
@@ -923,7 +923,7 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
 
 auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vector<Node*> {
   std::vector<Node*> result;
-  auto const kplus_ones = SlidingView(sequence, mCurrK + 1);
+  auto const kplus_ones = lancet::base::SlidingView(sequence, mCurrK + 1);
   result.reserve(kplus_ones.size() + 1);
 
   for (usize mer_idx = 0; mer_idx < kplus_ones.size(); ++mer_idx) {
@@ -956,11 +956,11 @@ auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vecto
 }
 
 auto Graph::HasExactOrApproxRepeat(std::string_view seq, usize window) -> bool {
-  auto const klen_seqs = SlidingView(seq, window);
+  auto const klen_seqs = lancet::base::SlidingView(seq, window);
   static constexpr usize NUM_ALLOWED_MISMATCHES = 3;
 
-  return HasExactRepeat(absl::MakeConstSpan(klen_seqs)) ||
-         HasApproximateRepeat(absl::MakeConstSpan(klen_seqs), NUM_ALLOWED_MISMATCHES);
+  return lancet::base::HasExactRepeat(absl::MakeConstSpan(klen_seqs)) ||
+         lancet::base::HasApproximateRepeat(absl::MakeConstSpan(klen_seqs), NUM_ALLOWED_MISMATCHES);
 }
 
 auto Graph::RefAnchorLength(RefAnchor const& source, RefAnchor const& sink, usize currk) -> usize {

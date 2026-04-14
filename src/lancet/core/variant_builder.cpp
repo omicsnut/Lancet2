@@ -187,7 +187,8 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     return {};
   }
 
-  if (HasExactRepeat(SlidingView(window->SeqView(), mParamsPtr->mGraphParams.mMaxKmerLen))) {
+  if (lancet::base::HasExactRepeat(
+          lancet::base::SlidingView(window->SeqView(), mParamsPtr->mGraphParams.mMaxKmerLen))) {
     LOG_DEBUG("Skipping window {} since reference has repeat {}-mers", reg_str,
               mParamsPtr->mGraphParams.mMaxKmerLen)
     mCurrentCode = StatusCode::SKIPPED_REF_REPEAT_SEEN;

@@ -119,7 +119,7 @@ static constexpr auto APP_NAME_FMT_STR = "Lancet, {}\nMicrosssembly based somati
 namespace lancet::cli {
 
 CliInterface::CliInterface()
-    : mCliApp(fmt::format(APP_NAME_FMT_STR, LancetFullVersion())),
+    : mCliApp(fmt::format(APP_NAME_FMT_STR, lancet::base::LancetFullVersion())),
       mParamsPtr(std::make_shared<CliParams>()) {
   // Allow 0 or 1 subcommands so that bare `Lancet2`, `Lancet2 -h`, and `Lancet2 -v`
   // can all be parsed without CLI11 throwing a RequiredError (exit code 106).
@@ -132,7 +132,8 @@ CliInterface::CliInterface()
 
   // Use CLI11's native version/help flag handlers. These throw CallForVersion/CallForHelp
   // (both subclasses of Success with exit code 0) which are caught cleanly in RunMain.
-  mCliApp.set_version_flag("-v,--version", LancetFullVersion(), "Print Lancet version information");
+  mCliApp.set_version_flag("-v,--version", lancet::base::LancetFullVersion(),
+                           "Print Lancet version information");
   mCliApp.set_help_flag("-h,--help", "Print this help message and exit");
 }
 
@@ -288,7 +289,7 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
     if (static_cast<bool>(isatty(fileno(stderr)))) fmt::print(std::cerr, FIGLET_LANCET_LOGO);
     if (params->mEnableVerboseLogging) SetLancetLoggerLevel(spdlog::level::trace);
 
-    LOG_INFO("Starting Lancet {}", LancetFullVersion())
+    LOG_INFO("Starting Lancet {}", lancet::base::LancetFullVersion())
     PipelineRunner pipeline_runner(params);
     pipeline_runner.Run();
   });

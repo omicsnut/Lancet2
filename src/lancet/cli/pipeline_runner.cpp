@@ -142,7 +142,7 @@ auto PipelineRunner::InitWindowBuilder(CliParams const& params) -> core::WindowB
 
 // NOLINTNEXTLINE(readability-function-size)  // TODO(lancet): refactor to reduce function size
 void PipelineRunner::Run() {
-  Timer timer;
+  lancet::base::Timer timer;
   static thread_local auto const THREAD_ID = std::this_thread::get_id();
   LOG_INFO("Using main thread {:#x} to synchronize variant calling pipeline",
            absl::Hash<std::thread::id>()(THREAD_ID))
@@ -446,7 +446,7 @@ auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
       FORMAT_STR_HEADER,
       fmt::arg("RUN_TIMESTAMP",
                absl::FormatTime(absl::RFC3339_sec, absl::Now(), absl::LocalTimeZone())),
-      fmt::arg("FULL_VERSION_TAG", LancetFullVersion()),
+      fmt::arg("FULL_VERSION_TAG", lancet::base::LancetFullVersion()),
       fmt::arg("FULL_COMMAND_USED", params.mFullCmdLine),
       fmt::arg("REFERENCE_PATH", params.mVariantBuilder.mRdCollParams.mRefPath.string()),
       fmt::arg("CONTIG_HDR_LINES", contig_hdr_lines),

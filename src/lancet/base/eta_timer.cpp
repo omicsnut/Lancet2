@@ -4,8 +4,6 @@
 
 #include "absl/time/time.h"
 
-#include <cmath>
-
 namespace lancet::base {
 
 EtaTimer::EtaTimer(usize const num_iterations) : mNumTotal(num_iterations) {}
@@ -22,9 +20,13 @@ auto EtaTimer::EstimatedEta() const -> absl::Duration {
 }
 
 auto EtaTimer::RatePerSecond() const -> f64 {
-  static constexpr f64 NS_TO_SECS = 1e-9;
-  static constexpr f64 WINDOWS_PER_SECOND_CONVERTER = -1.0;
-  return std::pow(mRunStats.Mean() * NS_TO_SECS, WINDOWS_PER_SECOND_CONVERTER);
+  // Dimensional analysis:
+  //   NS_PER_SECOND = nanosecs / second
+  //   mRunStats.Mean() = nanosecs / window
+  //   Result = (nanosecs/second) / (nanosecs/window)
+  //         ===> windows/second
+  static constexpr f64 NS_PER_SECOND = 1e9;
+  return NS_PER_SECOND / mRunStats.Mean();
 }
 
 }  // namespace lancet::base

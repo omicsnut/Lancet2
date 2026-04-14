@@ -78,9 +78,9 @@ TEST_CASE("Can merge two adjacent equal sized kmers", "[lancet][cbdg][Kmer]") {
   }
 
   for (auto const& sequence : sequences) {
-    auto const slides_list = SlidingView(sequence, 12);
+    auto const slides_list = lancet::base::SlidingView(sequence, 12);
     for (auto const& slide : slides_list) {
-      auto const rc_seq = RevComp(slide);
+      auto const rc_seq = lancet::base::RevComp(slide);
 
       CAPTURE(slide.substr(0, KMER_SIZE), slide.substr(1, KMER_SIZE));
       CAPTURE(rc_seq.substr(0, KMER_SIZE), rc_seq.substr(1, KMER_SIZE));
@@ -139,7 +139,7 @@ TEST_CASE("Can merge two adjacent unequal sized kmers", "[lancet][cbdg][Kmer]") 
     CAPTURE(kmer_size, total_length, first_length, second_start, second_length);
     auto const sequence = GenerateRandomDnaSequence(total_length);
     std::string_view const slide = sequence;
-    auto const rc_seq = RevComp(sequence);
+    auto const rc_seq = lancet::base::RevComp(sequence);
 
     SECTION("Forward direction merge") {
       auto fwd_first = Kmer(slide.substr(0, first_length));
@@ -180,7 +180,7 @@ TEST_CASE("Can merge multiple adjacent equal sized kmers", "[lancet][cbdg][Kmer]
     static constexpr usize MER_SIZE = 21;
 
     auto const sequence = GenerateRandomDnaSequence(LONG_SEQ_LEN);
-    auto const rc_sequence = RevComp(sequence);
+    auto const rc_sequence = lancet::base::RevComp(sequence);
     auto const mers_list = SlidingKmers(sequence, MER_SIZE);
 
     SECTION("Forward direction merge") {

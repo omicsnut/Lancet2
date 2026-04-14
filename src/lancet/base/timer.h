@@ -6,6 +6,8 @@
 
 #include <string>
 
+namespace lancet::base {
+
 class Timer {
  public:
   Timer() : mStartTime(absl::Now()) {}
@@ -18,5 +20,7 @@ class Timer {
  private:
   absl::Time mStartTime;
 };
+
+}  // namespace lancet::base
 
 #endif  // SRC_LANCET_BASE_TIMER_H_
