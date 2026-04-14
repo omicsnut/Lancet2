@@ -161,7 +161,7 @@ edge-biased artifacts (clustered at both 5' and 3' ends), but the mean
 of positions 5 and 145 in a 150bp read ≈ 75 — indistinguishable from a
 truly centered variant. Folding maps both ends to the same low-value space:
 
-`P_folded = min(P_raw, L − 1 − P_raw)`
+`P_folded = min(p, 1 − p)` where `p = variant_query_pos / read_length`
 
 **In plain terms**: folding maps both ends of the read to the same "edge
 zone." A variant seen at position 5 (near the start) and position 145

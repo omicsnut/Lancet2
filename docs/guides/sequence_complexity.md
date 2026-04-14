@@ -1,7 +1,7 @@
 # Sequence Complexity (`SEQ_CX`)
 
-This INFO field captures 11 independent sequence complexity features
-distilled from raw multi-scale metrics (homopolymer runs, Shannon entropy,
+This INFO field captures 11 sequence complexity features distilled from
+four raw measurement modules (homopolymer runs, Shannon entropy,
 LongdustQ k-mer concentration, tandem repeat motifs). Emitted as the `SEQ_CX`
 INFO tag in every VCF record.
 
@@ -14,6 +14,115 @@ regardless of whether 20 or 2000 reads cover it.
 
 ---
 
+## The Four Measurement Modules
+
+The 11 distilled features are built from four raw measurement modules, each
+capturing a different aspect of sequence complexity at different biological
+scales. Understanding these building blocks makes the distilled features
+intuitive.
+
+### 1. Homopolymer Run (HRun)
+
+The longest consecutive stretch of identical bases in a DNA window.
+
+**What it measures**: The length of the single longest same-base run — e.g.,
+`AATTTTTTTTGC` has an HRun of 8 (the T run).
+
+**Why it matters**: Homopolymers are the #1 source of Illumina INDEL errors.
+During sequencing, the polymerase can "stutter" on long same-base runs,
+adding or dropping 1–2 bases. A 12bp poly-A run produces ~10× more false
+1bp insertions than a random 12bp sequence. HRun directly quantifies this
+stutter risk.
+
+**Computation**: Single O(L) scan counting consecutive identical characters.
+Returns 0 for empty sequences, 1 for single-base sequences. No parameters.
+
+### 2. Shannon Entropy
+
+Base frequency diversity in a DNA window, measured in bits (0.0–2.0).
+
+**What it measures**: How evenly the four DNA bases (A, C, G, T) are
+distributed. The formula `H = −Σ pᵢ log₂(pᵢ)` counts the information
+content of the base composition.
+
+**Interpretation**:
+
+- **0.0** = all one base (e.g., `AAAAAAA`) — maximally repetitive
+- **1.0** = two equally frequent bases (e.g., alternating `ACACAC`)
+- **2.0** = perfectly balanced ACGT — maximally diverse
+
+**Why it matters**: Low-entropy regions are harder to align uniquely because
+many positions look identical to the aligner. Variants called in low-entropy
+windows are more likely to be mismapping artifacts. Shannon entropy
+captures this alignment ambiguity risk.
+
+**Computation**: O(L) base counting, then the entropy formula. No parameters.
+
+### 3. LongdustQ (k-mer Concentration)
+
+A k-mer-based complexity score that measures how repetitive a sequence is
+by comparing the observed k-mer count distribution against a random
+(Poisson) null model.
+
+**What it measures**: Whether any short DNA words (k-mers) appear more
+often than expected by chance. In random DNA, each k-mer appears roughly
+equally. In repetitive DNA, a few k-mers dominate — and LongdustQ
+quantifies this concentration.
+
+**Interpretation**:
+
+| LongdustQ Score | Meaning |
+|:----------------|:--------|
+| ≈ 0 | Random / unique sequence |
+| > 0.6 | Moderately repetitive (longdust's default LCR threshold) |
+| > 1.0 | Highly repetitive (strong tandem repeat signal) |
+| > 2.0 | Extremely repetitive (long homopolymer, satellite DNA) |
+
+**Why it matters**: LongdustQ detects repetitive structures that HRun and
+entropy miss — microsatellites, tandem repeats, and satellite DNA that cause
+systematic assembly errors. A dinucleotide repeat (CACACACA) has high
+entropy (1.0) and short HRun (1), but LongdustQ correctly flags it as
+repetitive because two k-mers dominate the distribution.
+
+**Provenance**: Adapted from Li, H. "Finding low-complexity filter with
+longdust" (2025). Lancet2 extracts just the Q(x) scoring formula and applies
+it directly to known subsequences around variants — no sliding-window
+scanning is needed because variant locations are already known from graph
+assembly. Two k-mer sizes are used: **k=4** for local ±50bp flanks (sensitive
+to short repeats) and **k=7** for full haplotype scoring (sensitive to
+macro-scale satellite structure).
+
+**GC-bias correction**: LongdustQ supports an optional GC-bias correction
+(default: human genome GC=0.41) to prevent AT-rich regions from being
+falsely scored as repetitive. See [GC-Bias Correction](#gc-bias-correction).
+
+### 4. Tandem Repeat (TR) Motif Detection
+
+Finds exact and approximate short tandem repeats (period 1–6) in a flanking
+window around the variant.
+
+**What it measures**: The presence, proximity, purity, and period of the
+nearest tandem repeat to the variant site. Searches for motifs that repeat
+≥2.5× (exact) or ≥3.0× (approximate, allowing 1 edit per repeat unit).
+
+**Why it matters**: Repeat proximity is the single strongest predictor of
+Illumina INDEL artifacts. A 1bp insertion adjacent to a (CA)₁₀ dinucleotide
+repeat is overwhelmingly likely to be polymerase stutter, not a real
+mutation. TR detection directly identifies this pattern and flags the
+canonical stutter signature.
+
+**Key outputs**:
+
+- **Distance**: bp distance from variant to nearest TR (0 = overlapping)
+- **Purity**: fraction of the repeat span that is error-free (1.0 = perfect)
+- **Period**: motif length (1=homopolymer, 2=dinucleotide, ..., 6=hexanucleotide)
+- **Stutter flag**: 1 if INDEL length ≤ period AND adjacent to TR (≤1bp)
+
+**Computation**: O(L × P) where L = window length and P = max period (6).
+See [Motif Detection Parameters](#motif-detection-parameters) for defaults.
+
+---
+
 ## Design: Context vs. Perturbation Paradigm
 
 Raw sequence complexity metrics at multiple scales (±5/10/20/50/100bp, full
@@ -23,7 +132,10 @@ which learn one feature's effect at a time, then combine them) and GAMs
 (Generalized Additive Models) — split importance weight across
 correlated features, producing noisy shape functions instead of confident ones.
 
-The distillation separates metrics into three independent groups:
+The distillation separates metrics into three groups that are independent
+**between** groups (Context, Delta, TR Motif measure fundamentally different
+things), while features **within** each group are deliberately chosen at
+non-overlapping scales to minimize correlation:
 
 1. **Context** (REF-only): "How brittle is the genome here, regardless of the variant?"
 2. **Deltas** (ALT−REF): "How did the variant alter the local complexity?"
