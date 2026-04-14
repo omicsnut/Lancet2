@@ -99,12 +99,12 @@ nav:
     - Read Filtering & Downsampling: guides/read_filtering.md
     - Variant Discovery & Genotyping: guides/variant_discovery_genotyping.md
     - Custom Visualization: guides/custom_visualization.md
+    - Scoring Somatic Variants: guides/scoring_somatic_variants.md
   - Annotations:
     - VCF Output Reference: guides/vcf_output.md
     - Alignment-Derived Annotations: guides/alignment_annotations.md
     - Polar Coordinate Features: guides/polar_features.md
     - Graph Complexity: guides/graph_complexity.md
     - Sequence Complexity: guides/sequence_complexity.md
-    - Scoring Somatic Variants: guides/scoring_somatic_variants.md
   - CLI Reference: reference.md
   - Publications: publications.md
