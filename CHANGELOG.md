@@ -9,7 +9,7 @@
 * cap germline site qual at 100 instead of 10
 * Resolve VCF output violations and standardize variant topological formatting
 * add full build step before clang-tidy in CI lint workflow
-* correct PREFIX_API_KEY env var and bump docs to v2.10.2
+* correct PREFIX_API_KEY env var and bump docs to v2.9.0
 * normalize CLI exit codes for help, version, and no-arg invocations
 * resolve VCF sorting failure from missing chromosome name and variant identity redesign
 * typo in vcf by using fmt instead of printf style
