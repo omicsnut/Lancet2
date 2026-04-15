@@ -13,6 +13,8 @@ configure = { cmd = [
   "cmake", "-GNinja",
   "-B", "cmake-build-release",
   "-DCMAKE_BUILD_TYPE=Release",
+  "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+  "-DLANCET_TESTS=ON",
   "-DLANCET_BUILD_STATIC=ON",
   "-DLANCET_ENABLE_CLOUD_IO=OFF",
 ], description = "Configure Release build (extra CMake flags via --)" }

@@ -1,3 +1,13 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lancet2 — Micro-assembly based somatic variant caller
+#
+# Build dependency chain (each layer depends on everything above it):
+#   lancet_base  → lancet_hts → lancet_cbdg → lancet_caller → lancet_core → lancet_cli → Lancet2
+#
+# Within each library, sources are ordered:
+#   1. Header-only files (types, constants, data structures)
+#   2. Implementation pairs (.cpp + .h), from foundational → orchestrator
+# ═══════════════════════════════════════════════════════════════════════════════
 message(STATUS "Current CMake version: ${CMAKE_VERSION}")
 cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
@@ -5,6 +15,7 @@ project(lancet LANGUAGES C CXX
 		HOMEPAGE_URL https://github.com/nygenome/Lancet2
 		DESCRIPTION "Micro-assembly based somatic variant caller")
 
+# ── Version & Options ─────────────────────────────────────────────────────────
 # https://gitlab.kitware.com/cmake/cmake/-/issues/16716
 include(cmake/version.cmake)
 include(CMakeDependentOption)
@@ -14,7 +25,7 @@ option(LANCET_TESTS "Builds the Lancet tests executable" "OFF")
 option(LANCET_BENCHMARKS "Builds the Lancet benchmarks executable" "OFF")
 option(LANCET_PROFILE_MODE "Enables CPU profiling for the Lancet executable" "OFF")
 option(LANCET_BUILD_STATIC "Build a statically linked Lancet executable" "ON")
-option(LANCET_BUILD_ARCH "Build the Lancet executable for given CPU architecture")
+option(LANCET_NATIVE_BUILD "Optimize for this specific CPU. Faster but binary may not run on different hardware" "OFF")
 set_property(CACHE LANCET_TESTS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_BENCHMARKS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_PROFILE_MODE PROPERTY STRINGS "OFF" "ON")
@@ -28,55 +39,22 @@ if (NOT LANCET_BUILD_STATIC)
 	set_property(CACHE LANCET_ENABLE_CLOUD_IO PROPERTY STRINGS "OFF" "ON")
 endif ()
 
+# ── Language Standard ─────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ── Build Configuration ───────────────────────────────────────────────────────
 message(STATUS "CMAKE_HOST_SYSTEM_NAME: ${CMAKE_HOST_SYSTEM_NAME}")
 message(STATUS "CMAKE_HOST_SYSTEM_PROCESSOR: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 MESSAGE(STATUS "CMAKE_C_COMPILER: ${CMAKE_C_COMPILER}")
 MESSAGE(STATUS "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
 
-if (LANCET_BUILD_STATIC)
-	set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_STATIC_LIBRARY_SUFFIX})
-endif ()
+include(cmake/platform_checks.cmake)
+include(cmake/optimization_flags.cmake)
+include(cmake/build_toolchain.cmake)
 
-if (NOT (CMAKE_HOST_SYSTEM_NAME MATCHES "Linux" OR CMAKE_HOST_SYSTEM_NAME MATCHES "Darwin"))
-	message(WARNING "Running Lancet build on a ${CMAKE_HOST_SYSTEM_NAME} machine")
-	message(FATAL_ERROR "Lancet can only be built on systems with Linux or macOS Operating System")
-endif ()
-
-if (NOT (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "x86_64" OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "amd64" OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64" OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "aarch64"))
-	message(WARNING "Running Lancet build on a ${CMAKE_HOST_SYSTEM_PROCESSOR} machine")
-	message(FATAL_ERROR "Lancet can only be built on a 64-bit x86 or ARM64 machine")
-endif ()
-
-if (NOT ${CMAKE_C_COMPILER_ID} MATCHES "GNU|Clang|AppleClang" OR NOT ${CMAKE_CXX_COMPILER_ID} MATCHES "GNU|Clang|AppleClang")
-	message(WARNING "Running Lancet build with ${CMAKE_C_COMPILER} and ${CMAKE_CXX_COMPILER}")
-	message(FATAL_ERROR "Lancet can only be built from source with GCC or Clang compilers")
-endif ()
-
-if (${CMAKE_CXX_COMPILER_ID} MATCHES "GNU" AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "12.0")
-	message(WARNING "Running Lancet build with GCC version ${CMAKE_CXX_COMPILER_VERSION}")
-	message(FATAL_ERROR "Lancet requires GCC version to be at least 12.0 or greater")
-endif ()
-
-if (${CMAKE_CXX_COMPILER_ID} MATCHES "Clang|AppleClang" AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "14.0")
-	message(WARNING "Running Lancet build with Clang version ${CMAKE_CXX_COMPILER_VERSION}")
-	message(FATAL_ERROR "Lancet requires Clang version to be at least 14.0 or greater")
-endif ()
-
-if (CMAKE_HOST_SYSTEM_NAME MATCHES "Darwin" AND LANCET_BUILD_STATIC)
-	message(WARNING "macOS does not support fully static builds. Forcing LANCET_BUILD_STATIC to OFF.")
-	set(LANCET_BUILD_STATIC OFF CACHE STRING "Build a statically linked Lancet executable" FORCE)
-endif ()
-
-if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-	message(STATUS "Setting CMAKE_BUILD_TYPE as Release since none was specified.")
-	set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
-	set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
-endif ()
-
+# ── External Dependencies ─────────────────────────────────────────────────────
 find_package(BZip2 REQUIRED)
 find_package(LibLZMA REQUIRED)
 
@@ -85,30 +63,56 @@ if (LANCET_ENABLE_CLOUD_IO)
 	find_package(OpenSSL REQUIRED)
 endif ()
 
-include(cmake/defaults.cmake)
 include(cmake/dependencies.cmake)
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer 1: lancet_base — types, math utilities, sequence analysis primitives
+# ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_base STATIC
-		src/lancet/base/version.h src/lancet/base/timer.h
-		src/lancet/base/types.h src/lancet/base/assert.h
-		src/lancet/base/logging.h src/lancet/base/rev_comp.h
-		src/lancet/base/compute_stats.h src/lancet/base/sliding.h
-		src/lancet/base/hash.h src/lancet/base/hash.cpp
-		src/lancet/base/repeat.h src/lancet/base/repeat.cpp
+		# ── Header-only: type aliases, macros, utilities ──────────────────
+		src/lancet/base/types.h
+		src/lancet/base/assert.h
+		src/lancet/base/version.h
+		src/lancet/base/logging.h
+		src/lancet/base/timer.h
+		src/lancet/base/rev_comp.h
+		src/lancet/base/compute_stats.h
+		src/lancet/base/sliding.h
+		src/lancet/base/polar_coords.h
+		src/lancet/base/longdust_scorer.h
+		# ── Implementation pairs: foundational → derived ──────────────────
+		src/lancet/base/hash.cpp src/lancet/base/hash.h
+		src/lancet/base/repeat.cpp src/lancet/base/repeat.h
 		src/lancet/base/eta_timer.cpp src/lancet/base/eta_timer.h
-		src/lancet/base/sequence_complexity.h src/lancet/base/sequence_complexity.cpp
-		src/lancet/base/longdust_scorer.h)
+		src/lancet/base/sequence_complexity.cpp src/lancet/base/sequence_complexity.h)
 target_link_libraries(lancet_base PRIVATE absl::flat_hash_set
 		PUBLIC spdlog::spdlog absl::span absl::fixed_array absl::strings absl::time)
 target_include_directories(lancet_base PUBLIC "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated")
 set_target_properties(lancet_base PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer 2: lancet_hts — HTSlib/BAM I/O, read extraction, CIGAR parsing
+#
+# Data flow:
+#
+#   cigar_unit, cigar_utils, aux_tag       BAM field types
+#       ↓
+#   reference                              FASTA reader
+#       ↓
+#   sam_flag → alignment                   read representation
+#       ↓
+#   iterator → extractor                   BAM region traversal
+# ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_hts STATIC
+		# ── Header-only: BAM field types ──────────────────────────────────
+		src/lancet/hts/cigar_unit.h
+		src/lancet/hts/cigar_utils.h
+		src/lancet/hts/aux_tag.h
+		src/lancet/hts/mate_info.h
+		# ── Implementation pairs: reference → alignment → extraction ─────
 		src/lancet/hts/bgzf_ostream.cpp src/lancet/hts/bgzf_ostream.h
 		src/lancet/hts/phred_quality.cpp src/lancet/hts/phred_quality.h
 		src/lancet/hts/reference.cpp src/lancet/hts/reference.h
-		src/lancet/hts/cigar_unit.h src/lancet/hts/cigar_utils.h
-		src/lancet/hts/aux_tag.h src/lancet/hts/mate_info.h
 		src/lancet/hts/sam_flag.cpp src/lancet/hts/sam_flag.h
 		src/lancet/hts/alignment.cpp src/lancet/hts/alignment.h
 		src/lancet/hts/iterator.cpp src/lancet/hts/iterator.h
@@ -124,10 +128,32 @@ if (LANCET_ENABLE_CLOUD_IO)
 	target_link_libraries(lancet_hts INTERFACE CURL::libcurl OpenSSL::Crypto)
 endif ()
 
-add_library(lancet_cbdg STATIC src/lancet/cbdg/label.h src/lancet/cbdg/graph_params.h
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer 3: lancet_cbdg — Colored de Bruijn Graph assembly engine
+#
+# Data flow:
+#
+#   label, graph_params                    configuration
+#       ↓
+#   sample_mask → kmer                     k-mer encoding + sample tagging
+#       ↓
+#   node → edge → path                     graph topology
+#       ↓
+#   cycle_finder, traversal_index          graph algorithms
+#       ↓
+#   max_flow, graph_complexity             flow + complexity metrics
+#       ↓
+#   graph                                  assembly orchestrator
+# ═══════════════════════════════════════════════════════════════════════════════
+add_library(lancet_cbdg STATIC
+		# ── Header-only: graph configuration ──────────────────────────────
+		src/lancet/cbdg/label.h
+		src/lancet/cbdg/graph_params.h
+		src/lancet/cbdg/edge.h
+		src/lancet/cbdg/read.h
+		# ── Implementation pairs: kmer → node → path → algorithms → graph ─
 		src/lancet/cbdg/sample_mask.cpp src/lancet/cbdg/sample_mask.h
 		src/lancet/cbdg/kmer.cpp src/lancet/cbdg/kmer.h
-		src/lancet/cbdg/edge.h src/lancet/cbdg/read.h
 		src/lancet/cbdg/node.cpp src/lancet/cbdg/node.h
 		src/lancet/cbdg/path.cpp src/lancet/cbdg/path.h
 		src/lancet/cbdg/cycle_finder.cpp src/lancet/cbdg/cycle_finder.h
@@ -140,11 +166,55 @@ target_include_directories(lancet_cbdg PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(lancet_cbdg PUBLIC lancet_hts absl::cord absl::inlined_vector absl::flat_hash_map)
 set_target_properties(lancet_cbdg PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-add_library(lancet_caller STATIC src/lancet/caller/raw_variant.h
-		src/lancet/caller/variant_support.cpp src/lancet/caller/variant_support.h
-		src/lancet/caller/variant_call.cpp src/lancet/caller/variant_call.h
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer 4: lancet_caller — variant calling: MSA, genotyping, VCF construction
+#
+# Data flow within the caller module:
+#
+#   alt_allele, raw_variant               data structures
+#       ↓
+#   variant_bubble, variant_extractor     SPOA DAG bubble detection
+#       ↓
+#   variant_set                           extraction orchestrator
+#       ↓
+#   local_scorer → combined_scorer        alignment scoring
+#       ↓
+#   genotype_likelihood, posterior_bq      statistical models
+#       ↓
+#   variant_support, support_array        per-allele evidence
+#       ↓
+#   sample_format_data, vcf_formatter     per-sample FORMAT fields
+#       ↓
+#   variant_call                          VCF record assembly
+#       ↓
+#   genotyper                             read-to-haplotype orchestrator
+# ═══════════════════════════════════════════════════════════════════════════════
+add_library(lancet_caller STATIC
+		# ── Header-only: constants, enums, data structures ────────────────
+		src/lancet/caller/allele_scoring_types.h
+		src/lancet/caller/alt_allele.h
+		src/lancet/caller/per_allele_data.h
+		src/lancet/caller/scoring_constants.h
+		src/lancet/caller/vcf_formatter.h
+		# ── MSA: SPOA graph construction ──────────────────────────────────
 		src/lancet/caller/msa_builder.cpp src/lancet/caller/msa_builder.h
+		# ── Variant discovery: data → bubble → extractor → set ────────────
+		src/lancet/caller/raw_variant.cpp src/lancet/caller/raw_variant.h
+		src/lancet/caller/variant_bubble.cpp src/lancet/caller/variant_bubble.h
+		src/lancet/caller/variant_extractor.cpp src/lancet/caller/variant_extractor.h
 		src/lancet/caller/variant_set.cpp src/lancet/caller/variant_set.h
+		# ── Alignment scoring: local → combined ───────────────────────────
+		src/lancet/caller/local_scorer.cpp src/lancet/caller/local_scorer.h
+		src/lancet/caller/combined_scorer.cpp src/lancet/caller/combined_scorer.h
+		# ── Statistical models: genotype likelihoods + base quality ───────
+		src/lancet/caller/genotype_likelihood.cpp src/lancet/caller/genotype_likelihood.h
+		src/lancet/caller/posterior_base_qual.cpp src/lancet/caller/posterior_base_qual.h
+		# ── Evidence aggregation: per-allele support → sample FORMAT ──────
+		src/lancet/caller/variant_support.cpp src/lancet/caller/variant_support.h
+		src/lancet/caller/support_array.cpp src/lancet/caller/support_array.h
+		src/lancet/caller/sample_format_data.cpp src/lancet/caller/sample_format_data.h
+		# ── VCF output: variant call assembly + genotyper orchestrator ────
+		src/lancet/caller/variant_call.cpp src/lancet/caller/variant_call.h
 		src/lancet/caller/genotyper.cpp src/lancet/caller/genotyper.h)
 add_dependencies(lancet_caller minimap2)
 target_include_directories(lancet_caller PUBLIC "${CMAKE_SOURCE_DIR}/src")
@@ -152,24 +222,62 @@ target_include_directories(lancet_caller SYSTEM PUBLIC "${MM2_ROOT_DIR}")
 target_link_libraries(lancet_caller PUBLIC lancet_cbdg spoa absl::btree boost_math ${LIB_MM2} PRIVATE zlibstatic)
 set_target_properties(lancet_caller PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-add_library(lancet_core STATIC src/lancet/core/window.h src/lancet/core/sample_info.h
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer 5: lancet_core — windowing, read collection, variant building pipeline
+#
+# Data flow:
+#
+#   window, sample_info                    genomic region + sample metadata
+#       ↓
+#   window_builder                         region partitioning
+#       ↓
+#   read_collector                         BAM read extraction per window
+#       ↓
+#   variant_builder                        assembly + calling per window
+#       ↓
+#   variant_annotator → variant_store      annotation + dedup + VCF output
+#       ↓
+#   async_worker                           thread pool executor
+# ═══════════════════════════════════════════════════════════════════════════════
+add_library(lancet_core STATIC
+		# ── Header-only: window + sample metadata ─────────────────────────
+		src/lancet/core/window.h
+		src/lancet/core/sample_info.h
+		# ── Implementation pairs: window → reads → build → store → worker ─
 		src/lancet/core/window_builder.cpp src/lancet/core/window_builder.h
 		src/lancet/core/read_collector.cpp src/lancet/core/read_collector.h
-		src/lancet/core/variant_store.cpp src/lancet/core/variant_store.h
-		src/lancet/core/variant_annotator.cpp src/lancet/core/variant_annotator.h
 		src/lancet/core/variant_builder.cpp src/lancet/core/variant_builder.h
+		src/lancet/core/variant_annotator.cpp src/lancet/core/variant_annotator.h
+		src/lancet/core/variant_store.cpp src/lancet/core/variant_store.h
 		src/lancet/core/async_worker.cpp src/lancet/core/async_worker.h)
 target_include_directories(lancet_core PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(lancet_core PUBLIC lancet_caller absl::synchronization concurrentqueue PRIVATE absl::hash)
 set_target_properties(lancet_core PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-add_library(lancet_cli STATIC src/lancet/cli/cli_params.h
+# ═══════════════════════════════════════════════════════════════════════════════
+# Layer 6: lancet_cli — command-line interface and pipeline orchestration
+#
+# Data flow:
+#
+#   cli_params                             user-facing option definitions
+#       ↓
+#   pipeline_runner                        end-to-end execution orchestrator
+#       ↓
+#   cli_interface                          CLI11 argument parser
+# ═══════════════════════════════════════════════════════════════════════════════
+add_library(lancet_cli STATIC
+		# ── Header-only: CLI parameter definitions ────────────────────────
+		src/lancet/cli/cli_params.h
+		# ── Implementation pairs: pipeline runner → CLI parser ────────────
 		src/lancet/cli/pipeline_runner.cpp src/lancet/cli/pipeline_runner.h
 		src/lancet/cli/cli_interface.cpp src/lancet/cli/cli_interface.h)
 target_include_directories(lancet_cli PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(lancet_cli PUBLIC lancet_core CLI11)
 set_target_properties(lancet_cli PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lancet2 — main executable
+# ═══════════════════════════════════════════════════════════════════════════════
 add_executable(Lancet2 src/lancet/main.cpp)
 target_include_directories(Lancet2 PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(Lancet2 PRIVATE lancet_cli absl::cleanup mimalloc-static)
@@ -181,7 +289,8 @@ if (${CMAKE_BUILD_TYPE} MATCHES Debug)
 	add_compile_definitions(LANCET_DEVELOP_MODE)
 endif ()
 
-# Helpful links for profiling – https://github.com/google/pprof
+# ── Optional: CPU profiling (Release only) ────────────────────────────────────
+# https://github.com/google/pprof
 # https://gperftools.github.io/gperftools/cpuprofile.html
 if (LANCET_PROFILE_MODE AND ${CMAKE_BUILD_TYPE} MATCHES Release)
 	add_compile_definitions(LANCET_PROFILE_MODE)
@@ -190,7 +299,7 @@ if (LANCET_PROFILE_MODE AND ${CMAKE_BUILD_TYPE} MATCHES Release)
 	target_link_libraries(lancet_cli PRIVATE ${LIB_PROFILER})
 endif ()
 
-# Helpful links to run tests
+# ── Optional: Tests & Benchmarks ──────────────────────────────────────────────
 # https://github.com/catchorg/Catch2/blob/v3.14.0/docs/Readme.md
 if (LANCET_TESTS)
 	add_subdirectory(tests)

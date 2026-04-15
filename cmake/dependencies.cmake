@@ -1,9 +1,44 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Third-Party Dependencies — fetched and built from source
+#
+# All dependencies are pinned to exact versions for reproducible builds.
+# FetchContent downloads at configure time; ExternalProject builds at build time.
+#
+# Core libraries:
+#   mimalloc      — high-performance allocator (replaces system malloc)
+#   abseil-cpp    — Abseil C++ utilities (containers, strings, hashing)
+#   spdlog        — structured logging (bundles fmtlib)
+#   CLI11         — command-line argument parsing
+#   concurrentqueue — lock-free multi-producer/consumer queue
+#
+# Compression (required by HTSlib):
+#   libdeflate    — fast DEFLATE/gzip compression
+#   zlib-ng       — zlib-compatible compression (SIMD-optimized)
+#
+# Cloud I/O (optional, dynamic-linked; enabled via -DLANCET_ENABLE_CLOUD_IO=ON):
+#   libcurl       — S3/GCS streaming (system, found via find_package)
+#   OpenSSL       — TLS for cloud transport (system, found via find_package)
+#
+# Bioinformatics:
+#   htslib        — BAM/CRAM/VCF I/O (ExternalProject, builds libhts.a)
+#   minimap2      — read-to-haplotype alignment (ExternalProject, builds libminimap2.a)
+#   spoa          — SIMD Partial Order Alignment (graph-based MSA)
+#
+# Math / Testing / Profiling:
+#   boost_math    — Dirichlet-Multinomial lgamma, beta functions
+#   Catch2        — unit test framework (amalgamated, tests only)
+#   benchmark     — Google Benchmark (benchmarks only)
+#   gperftools    — CPU profiler (profile mode only)
+# ═══════════════════════════════════════════════════════════════════════════════
 include(ExternalProject)
 include(FetchContent)
 include(ProcessorCount)
 ProcessorCount(NumCores)
 find_program(MAKE_EXE NAMES gmake nmake make REQUIRED)
 
+# Suppress CMake developer warnings from third-party FetchContent projects.
+# Many dependencies (abseil, zlib-ng, spoa) emit CMP* policy warnings that
+# clutter Lancet2's configure output and are not actionable from our side.
 set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON)
 
 set(MI_SECURE OFF)
@@ -19,7 +54,7 @@ endif ()
 FetchContent_Declare(mimalloc GIT_REPOSITORY https://github.com/microsoft/mimalloc.git GIT_TAG v3.2.8 SYSTEM)
 FetchContent_MakeAvailable(mimalloc)
 
-FetchContent_Declare(abseil GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git GIT_TAG 95619d5 SYSTEM)
+FetchContent_Declare(abseil GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git GIT_TAG b9536c9 SYSTEM)
 FetchContent_GetProperties(abseil)
 if (NOT abseil_POPULATED)
 	set(BUILD_TESTING OFF)

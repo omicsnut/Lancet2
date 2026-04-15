@@ -1,3 +1,11 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Git Version Detection
+#
+# Extracts tag, branch, and short SHA from the Git repository at configure time.
+# Falls back to hardcoded defaults when Git metadata is unavailable (e.g., in
+# source archives without .git/). Generates lancet_version.h for compile-time
+# version embedding.
+# ═══════════════════════════════════════════════════════════════════════════════
 find_package(Git REQUIRED)
 set(LANCET2_VERSION_TAG ${PROJECT_VERSION})
 
