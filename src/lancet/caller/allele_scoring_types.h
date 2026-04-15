@@ -24,8 +24,8 @@ namespace lancet::caller {
 // ============================================================================
 struct HapVariantBounds {
   // ── 4B Align ──────────────────────────────────────────────────────────
-  i32 mVarStart = 0;                     // variant start position on this haplotype
-  i32 mVarLen = 0;                       // variant allele length on this haplotype
+  i32 mVarStart = 0;  // variant start position on this haplotype
+  i32 mVarLen = 0;    // variant allele length on this haplotype
 
   // ── 1B Align ──────────────────────────────────────────────────────────
   AlleleIndex mAllele = REF_ALLELE_IDX;  // which allele this haplotype maps to

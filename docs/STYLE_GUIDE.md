@@ -751,9 +751,12 @@ python3 scripts/run_clang_format.py --fix src/lancet/caller/genotyper.cpp
 ### Static Analysis
 ```bash
 pixi run lint-check                   # check-only (auto-builds Debug first for compile_commands.json)
-pixi run lint-fix                     # apply auto-fixes (review changes carefully)
+pixi run lint-fix                     # ⚠️ DO NOT USE — see warning below
 pixi run lint-all                     # run both fmt-check and lint-check
 ```
+
+!!! danger "Do NOT use `pixi run lint-fix`"
+    Clang-tidy auto-fixes have historically broken compilation and produced unreadable code. Always resolve clang-tidy warnings manually by reading the diagnostic, understanding the root cause, and writing the fix yourself. Manual resolution produces better code and avoids cascading breakage.
 
 For custom build directories, invoke the script directly:
 ```bash
