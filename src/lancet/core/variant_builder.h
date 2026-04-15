@@ -34,7 +34,7 @@ class VariantBuilder {
     /// See --genome-gc-bias CLI parameter.
     f64 mGcFraction = 0.41;
 
-    cbdg::Graph::Params mGraphParams;
+    cbdg::GraphParams mGraphParams;
     ReadCollector::Params mRdCollParams;
   };
 

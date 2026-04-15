@@ -234,12 +234,12 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
       ->add_option("-k,--min-kmer", vb_prms.mGraphParams.mMinKmerLen,
                    "Min. kmer length to try for graph nodes")
       ->group("Parameters")
-      ->check(CLI::Range(cbdg::Graph::DEFAULT_MIN_KMER_LEN, cbdg::Graph::MAX_ALLOWED_KMER_LEN - 2));
+      ->check(CLI::Range(cbdg::DEFAULT_MIN_KMER_LEN, cbdg::MAX_ALLOWED_KMER_LEN - 2));
   subcmd
       ->add_option("-K,--max-kmer", vb_prms.mGraphParams.mMaxKmerLen,
                    "Max. kmer length to try for graph nodes")
       ->group("Parameters")
-      ->check(CLI::Range(cbdg::Graph::DEFAULT_MIN_KMER_LEN + 2, cbdg::Graph::MAX_ALLOWED_KMER_LEN));
+      ->check(CLI::Range(cbdg::DEFAULT_MIN_KMER_LEN + 2, cbdg::MAX_ALLOWED_KMER_LEN));
   subcmd
       ->add_option("--kmer-step", vb_prms.mGraphParams.mKmerStepLen,
                    "Kmer step length to try for graph nodes")

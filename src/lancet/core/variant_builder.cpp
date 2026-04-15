@@ -104,8 +104,7 @@ constexpr u32 PREALLOC_WINDOW_LENGTH_MULTIPLIER = 3;
 //   mNumTotalHaps — total SPOA paths in this component (for HSE normalization)
 //   mMaxPathCv    — max path depth CV across ALT paths (for PDCV FORMAT field)
 // ============================================================================
-void AnnotatePathMetrics(caller::RawVariant const& var,
-                         absl::Span<cbdg::Graph::Path const> comp_paths) {
+void AnnotatePathMetrics(caller::RawVariant const& var, absl::Span<cbdg::Path const> comp_paths) {
   var.mNumTotalHaps = comp_paths.size();
 
   // Max path depth CV across ALT paths — O(nhaps) single pass.
@@ -120,7 +119,7 @@ void AnnotatePathMetrics(caller::RawVariant const& var,
 // ============================================================================
 // CollectPathSequences: extract haplotype sequences from graph paths.
 // ============================================================================
-auto CollectPathSequences(absl::Span<cbdg::Graph::Path const> paths) -> std::vector<std::string> {
+auto CollectPathSequences(absl::Span<cbdg::Path const> paths) -> std::vector<std::string> {
   std::vector<std::string> seqs;
   seqs.reserve(paths.size());
   std::ranges::transform(paths, std::back_inserter(seqs), [](auto const& path) -> std::string {
@@ -144,7 +143,7 @@ auto BuildPerSampleCov(absl::Span<SampleInfo const> samples, usize win_len)
 // ============================================================================
 // CountAssembledHaplotypes: total non-REF haplotypes across all graph components.
 // ============================================================================
-auto CountAssembledHaplotypes(absl::Span<std::vector<cbdg::Graph::Path> const> components) -> u64 {
+auto CountAssembledHaplotypes(absl::Span<std::vector<cbdg::Path> const> components) -> u64 {
   return std::accumulate(components.begin(), components.end(), u64{0},
                          [](u64 sum, auto const& comp) -> u64 { return sum + comp.size() - 1; });
 }
@@ -235,7 +234,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
   for (usize idx = 0; idx < component_haplotypes.size(); ++idx) {
     auto const nhaps = component_haplotypes[idx].size();
     auto const anchor_start = window->StartPos1() + dbg_rslt.mAnchorStartIdxs[idx];
-    std::vector<cbdg::Graph::Path> const& comp_paths = component_haplotypes[idx];
+    std::vector<cbdg::Path> const& comp_paths = component_haplotypes[idx];
 
     auto const comp_haps = CollectPathSequences(comp_paths);
 

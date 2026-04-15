@@ -6,7 +6,10 @@
 #include "lancet/cbdg/kmer.h"
 #include "lancet/cbdg/node.h"
 
+#include "absl/container/flat_hash_map.h"
+
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace lancet::cbdg {
@@ -131,6 +134,13 @@ class TraversalIndex {
     return (state_idx % 2 == 0) ? Kmer::Sign::PLUS : Kmer::Sign::MINUS;
   }
 };
+
+/// Build a flat adjacency list from a frozen (fully-pruned) node table for a single
+/// component. Maps NodeID → contiguous u32, enabling O(1) array-based traversal
+/// state tracking. Built once, consumed by HasCycle and MaxFlow.
+[[nodiscard]] auto BuildTraversalIndex(
+    absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& nodes,
+    NodeIDPair const& source_and_sink_ids, usize component_id) -> TraversalIndex;
 
 }  // namespace lancet::cbdg
 

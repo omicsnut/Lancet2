@@ -1,14 +1,11 @@
 #include "lancet/cbdg/graph.h"
 
 #include "lancet/base/assert.h"
-#include "lancet/base/compute_stats.h"
 #include "lancet/base/logging.h"
-#include "lancet/base/repeat.h"
-#include "lancet/base/sliding.h"
 #include "lancet/base/timer.h"
 #include "lancet/base/types.h"
+#include "lancet/cbdg/cycle_finder.h"
 #include "lancet/cbdg/edge.h"
-#include "lancet/cbdg/graph_complexity.h"
 #include "lancet/cbdg/kmer.h"
 #include "lancet/cbdg/max_flow.h"
 #include "lancet/cbdg/node.h"
@@ -23,12 +20,9 @@
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
-#include "spdlog/fmt/bundled/ostream.h"
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
-#include <ios>
 #include <iterator>
 #include <memory>
 #include <numeric>
@@ -42,37 +36,30 @@
 
 namespace lancet::cbdg {
 
-void Graph::Path::AppendSequence(std::string_view seq) {
-  absl::StrAppend(&mSequence, seq);
-}
+namespace {
 
-void Graph::Path::AddNodeCoverage(u32 cov) {
-  mNodeCoverages.push_back(cov);
-}
+// Filter out low-quality kmers by expected error count (floor of summed Phred error
+// probabilities). Kmers with ≥1 expected error get no read support, ensuring they
+// are removed during the subsequent low-coverage pruning pass.
+// See https://www.drive5.com/usearch/manual/exp_errs.html
+// See https://doi.org/10.1093/bioinformatics/btv401 for proof on expected errors
+auto const ERROR_SUMMER = [](f64 const sum, u8 const bql) -> f64 {
+  return sum + hts::PhredToErrorProb(bql);
+};
 
-void Graph::Path::Finalize() {
-  if (mNodeCoverages.empty()) return;
+auto const IS_LOW_QUAL_KMER = [](absl::Span<u8 const> quals) -> bool {
+  f64 const expected_errors =
+      std::floor(std::accumulate(quals.cbegin(), quals.cend(), 0.0, ERROR_SUMMER));
+  return static_cast<i64>(expected_errors) > 0;
+};
 
-  lancet::base::OnlineStats stats;
-  for (auto const cov : mNodeCoverages) {
-    stats.Add(cov);
-  }
+// Count ALT haplotypes per component (excluding the leading reference path at index 0).
+auto const SUMMER = [](u64 const sum, auto const& comp_haps) -> u64 {
+  return sum + comp_haps.size() - 1;
+};
 
-  mMeanCov = stats.Mean();
-  mStdDevCov = stats.StdDev();
-  mTotalCov = mMeanCov * static_cast<f64>(stats.Count());
-  if (mMeanCov > 0.0) mCvCov = mStdDevCov / mMeanCov;
+}  // namespace
 
-  mMedianCov = static_cast<f64>(lancet::base::Median(absl::MakeConstSpan(mNodeCoverages)));
-
-  if (mNodeCoverages.size() >= 4) {
-    std::ranges::sort(mNodeCoverages);
-    auto const quart1 = static_cast<f64>(mNodeCoverages[mNodeCoverages.size() / 4]);
-    auto const quart3 = static_cast<f64>(mNodeCoverages[(mNodeCoverages.size() * 3) / 4]);
-    // Quartile CV = (Q3 - Q1) / (Q3 + Q1)
-    if (quart3 + quart1 > 0.0) mQCvCov = (quart3 - quart1) / (quart3 + quart1);
-  }
-}
 /// Pipeline architecture for haplotype assembly from a colored de Bruijn graph:
 ///
 ///  ┌─────────────┐
@@ -144,7 +131,7 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
 
     RemoveLowCovNodes(0);
     mNodes.rehash(0);
-    WriteDotDevelop(FIRST_LOW_COV_REMOVAL, 0);
+    WriteDotDevelop(GraphState::FIRST_LOW_COV_REMOVAL, 0);
 
     auto const components = MarkConnectedComponents();
     per_comp_haps.reserve(components.size());
@@ -178,14 +165,14 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
 
       mSourceAndSinkIds = NodeIDPair{source.mAnchorId, sink.mAnchorId};
       ref_anchor_seq = mRegion->SeqView().substr(source.mRefOffset, current_anchor_length);
-      WriteDotDevelop(FOUND_REF_ANCHORS, comp_id);
+      WriteDotDevelop(GraphState::FOUND_REF_ANCHORS, comp_id);
 
       PruneComponent(comp_id);
 
       // Build the flat traversal index on the frozen (fully-pruned) graph.
       // This maps NodeID -> contiguous u32 and constructs the CSR adjacency list.
       // Both HasCycle and MaxFlow operate on this flat structure for O(1) state tracking.
-      auto const trav_idx = BuildTraversalIndex(comp_id);
+      auto const trav_idx = BuildTraversalIndex(mNodes, mSourceAndSinkIds, comp_id);
 
       // O(V+E) cycle detection using three-color DFS on the flat adjacency list.
       // See HasCycle() implementation for bidirected sign-continuity handling.
@@ -207,7 +194,7 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
         break;
       }
 
-      WriteDot(State::FULLY_PRUNED_GRAPH, comp_id);
+      WriteDot(GraphState::FULLY_PRUNED_GRAPH, comp_id);
 
       auto haplotypes = EnumerateAndSortHaplotypes(comp_id, trav_idx, ref_anchor_seq);
       if (!haplotypes.empty()) {
@@ -226,10 +213,6 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
     }
   }
 
-  static auto const SUMMER = [](u64 const sum, auto const& comp_haps) -> u64 {
-    return sum + comp_haps.size() - 1;
-  };
-
   // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
   auto const num_haps =
       std::accumulate(per_comp_haps.cbegin(), per_comp_haps.cend(), u64{0}, SUMMER);
@@ -244,6 +227,230 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
           .mComponentMetrics = std::move(component_metrics)};
 }
 
+// ============================================================================
+// Phase 1: Graph Construction
+// ============================================================================
+
+void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
+  mRefNodeIds.clear();
+  auto const ref_nodes = AddNodes(mRegion->SeqView(), Label(Label::REFERENCE));
+  mRefNodeIds.reserve(ref_nodes.size());
+  std::ranges::transform(ref_nodes, std::back_inserter(mRefNodeIds),
+                         [](Node const* node) -> NodeID { return node->Identifier(); });
+
+  mate_mers.clear();
+  for (auto const& read : mReads) {
+    if (!read.PassesAlnFilters()) continue;
+
+    usize offset = 0;
+    auto added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
+
+    for (auto* node : added_nodes) {
+      MateMer mm_pair{
+          .mQname = read.QnameView(), .mKmerHash = node->Identifier(), .mTagKind = read.TagKind()};
+
+      auto const curr_qual = read.QualView().subspan(offset, mCurrK);
+      offset++;
+
+      if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) continue;
+      node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
+      mate_mers.emplace(mm_pair);
+    }
+  }
+}
+
+auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vector<Node*> {
+  std::vector<Node*> result;
+  auto const kplus_ones = lancet::base::SlidingView(sequence, mCurrK + 1);
+  result.reserve(kplus_ones.size() + 1);
+
+  for (usize mer_idx = 0; mer_idx < kplus_ones.size(); ++mer_idx) {
+    auto const seq1 = absl::ClippedSubstr(kplus_ones[mer_idx], 0, mCurrK);
+    auto const seq2 = absl::ClippedSubstr(kplus_ones[mer_idx], 1, mCurrK);
+
+    auto left_mer = Kmer(seq1);
+    auto right_mer = Kmer(seq2);
+    auto const left_id = left_mer.Identifier();
+    auto const right_id = right_mer.Identifier();
+
+    mNodes.try_emplace(left_id, std::make_unique<Node>(std::move(left_mer), label));
+    mNodes.try_emplace(right_id, std::make_unique<Node>(std::move(right_mer), label));
+
+    auto& first = mNodes.at(left_id);
+    auto& second = mNodes.at(right_id);
+
+    if (mer_idx == 0) result.emplace_back(first.get());
+
+    static constexpr auto DEFAULT_ORDER = Kmer::Ordering::DEFAULT;
+    auto const fwd_edge =
+        MakeFwdEdgeKind({first->SignFor(DEFAULT_ORDER), second->SignFor(DEFAULT_ORDER)});
+    first->EmplaceEdge(NodeIDPair{left_id, right_id}, fwd_edge);
+    second->EmplaceEdge(NodeIDPair{right_id, left_id}, RevEdgeKind(fwd_edge));
+
+    result.emplace_back(second.get());
+  }
+
+  return result;
+}
+
+// ============================================================================
+// Phase 2: Node Removal + Connected Components
+// ============================================================================
+
+void Graph::RemoveNode(NodeTable::iterator itr) {
+  if (itr == mNodes.end()) return;
+
+  // remove all incoming edges to the node first
+  for (Edge const& conn : *itr->second) {
+    if (conn.IsSelfLoop()) continue;
+
+    auto nbour_itr = mNodes.find(conn.DstId());
+    if (nbour_itr != mNodes.end()) nbour_itr->second->EraseEdge(conn.MirrorEdge());
+  }
+
+  mNodes.erase(itr);
+}
+
+void Graph::RemoveLowCovNodes(usize const component_id) {
+  std::vector<NodeID> remove_nids;
+  remove_nids.reserve(mNodes.size());
+
+  auto const [source_id, sink_id] = mSourceAndSinkIds;
+  for (auto const& [nid, node_ptr] : mNodes) {
+    if (node_ptr->GetComponentId() != component_id) continue;
+    if (nid == source_id || nid == sink_id) continue;
+
+    // Remove nodes where every sample has at most 1 read (unreliable k-mers)
+    // or total coverage is below the user-configured minimum.
+    auto const all_singletons = node_ptr->IsAllSingletons();
+    auto const total_sample_cov = node_ptr->TotalReadSupport();
+
+    if (all_singletons || total_sample_cov < mParams.mMinNodeCov) {
+      remove_nids.emplace_back(nid);
+    }
+  }
+
+  if (!remove_nids.empty()) {
+    // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
+    auto const region_str = mRegion->ToSamtoolsRegion();
+    LOG_TRACE("Removing {:.4f}% (or) {} low cov nodes for {} in comp{} with k={}",
+              100.0 * (static_cast<f64>(remove_nids.size()) / static_cast<f64>(mNodes.size())),
+              remove_nids.size(), region_str, component_id, mCurrK)
+
+    RemoveNodes(absl::MakeConstSpan(remove_nids));
+  }
+}
+
+auto Graph::MarkConnectedComponents() -> std::vector<ComponentInfo> {
+  usize current_component = 0;
+  std::vector<ComponentInfo> results_info;
+
+#ifdef LANCET_DEVELOP_MODE
+  static auto const IS_UNASSIGNED = [](NodeTable::const_reference item) {
+    return item.second->GetComponentId() == 0;
+  };
+#endif
+
+  // Check that all nodes are component zero before we start
+  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, IS_UNASSIGNED)) == mNodes.size())
+
+  for (NodeTable::reference item : mNodes) {
+    if (item.second->GetComponentId() != 0) continue;
+
+    current_component++;
+    results_info.emplace_back(ComponentInfo{.mCompId = current_component, .mNumNodes = 0});
+
+    absl::chunked_queue<Node*, 128, 1024> connected_nodes;
+    connected_nodes.push_back(item.second.get());
+
+    while (!connected_nodes.empty()) {
+      auto* current_node = connected_nodes.front();
+      LANCET_ASSERT(current_node != nullptr)
+
+      if (current_node->GetComponentId() != 0) {
+        connected_nodes.pop_front();
+        continue;
+      }
+
+      current_node->SetComponentId(current_component);
+      results_info[current_component - 1].mNumNodes += 1;
+      for (Edge const& edge : *current_node) {
+        auto const neighbour_itr = mNodes.find(edge.DstId());
+        LANCET_ASSERT(neighbour_itr != mNodes.end())
+        LANCET_ASSERT(neighbour_itr->second != nullptr)
+        connected_nodes.push_back(neighbour_itr->second.get());
+      }
+
+      connected_nodes.pop_front();
+    }
+  }
+
+  auto const total_num_nodes = static_cast<f64>(mNodes.size());
+  for (auto& cinfo : results_info) {
+    cinfo.mPctNodes = 100.0 * (static_cast<f64>(cinfo.mNumNodes) / total_num_nodes);
+  }
+
+  std::ranges::sort(results_info, [](ComponentInfo const& lhs, ComponentInfo const& rhs) -> bool {
+    return lhs.mNumNodes > rhs.mNumNodes;
+  });
+
+  // Check that none of the nodes are component zero after we are done
+  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, IS_UNASSIGNED)) == 0)
+  return results_info;
+}
+
+// ============================================================================
+// Phase 3: Anchor Discovery
+// ============================================================================
+
+auto Graph::FindSource(usize const component_id) const -> RefAnchor {
+  RefAnchor result{.mAnchorId = 0, .mRefOffset = 0, .mFoundAnchor = false};
+
+  for (usize ref_idx = 0; ref_idx < mRefNodeIds.size(); ++ref_idx) {
+    auto const itr = mNodes.find(mRefNodeIds[ref_idx]);
+    if (itr == mNodes.end()) continue;
+
+    LANCET_ASSERT(itr->second != nullptr)
+    if (itr->second->GetComponentId() != component_id ||
+        itr->second->TotalReadSupport() < mParams.mMinAnchorCov) {
+      continue;
+    }
+
+    result.mAnchorId = itr->first;
+    result.mRefOffset = ref_idx;
+    result.mFoundAnchor = true;
+    break;
+  }
+
+  return result;
+}
+
+auto Graph::FindSink(usize const component_id) const -> RefAnchor {
+  RefAnchor result{.mAnchorId = 0, .mRefOffset = 0, .mFoundAnchor = false};
+
+  for (i64 ref_idx = static_cast<i64>(mRefNodeIds.size() - 1); ref_idx >= 0; --ref_idx) {
+    auto const itr = mNodes.find(mRefNodeIds[ref_idx]);
+    if (itr == mNodes.end()) continue;
+
+    LANCET_ASSERT(itr->second != nullptr)
+    if (itr->second->GetComponentId() != component_id ||
+        itr->second->TotalReadSupport() < mParams.mMinAnchorCov) {
+      continue;
+    }
+
+    result.mAnchorId = itr->first;
+    result.mRefOffset = static_cast<usize>(ref_idx);
+    result.mFoundAnchor = true;
+    break;
+  }
+
+  return result;
+}
+
+// ============================================================================
+// Phase 4: Pruning + Compression
+// ============================================================================
+
 void Graph::PruneComponent(usize const component_id) {
   // Pruning pipeline: compress linear chains, remove low-coverage nodes, remove tips.
   // NOTE: The pre-compression HasCycle call (old line 103) has been removed. Graph
@@ -252,54 +459,13 @@ void Graph::PruneComponent(usize const component_id) {
   // the cycle detection after compression. We now check only once, on the smaller
   // (compressed) graph, which is faster.
   CompressGraph(component_id);
-  WriteDotDevelop(FIRST_COMPRESSION, component_id);
+  WriteDotDevelop(GraphState::FIRST_COMPRESSION, component_id);
   RemoveLowCovNodes(component_id);
-  WriteDotDevelop(SECOND_LOW_COV_REMOVAL, component_id);
+  WriteDotDevelop(GraphState::SECOND_LOW_COV_REMOVAL, component_id);
   CompressGraph(component_id);
-  WriteDotDevelop(SECOND_COMPRESSION, component_id);
+  WriteDotDevelop(GraphState::SECOND_COMPRESSION, component_id);
   RemoveTips(component_id);
-  WriteDotDevelop(SHORT_TIP_REMOVAL, component_id);
-}
-
-auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
-                                       std::string_view ref_anchor_seq) const -> std::vector<Path> {
-  std::vector<Graph::Path> haplotypes;
-  auto const reg_str = mRegion->ToSamtoolsRegion();
-
-  LOG_TRACE("Starting walk enumeration for {} with k={}, num_nodes={}", reg_str, mCurrK,
-            mNodes.size())
-
-  MaxFlow max_flow(&mNodes, mSourceAndSinkIds, mCurrK, &trav_idx);
-  auto path_seq = max_flow.NextPath();
-
-  while (path_seq) {
-    LOG_DEBUG("Assembled {}bp path sequence for {} comp={} with k={}",
-              path_seq->Sequence().length(), reg_str, comp_id, mCurrK)
-    haplotypes.emplace_back(std::move(*path_seq));
-    path_seq = max_flow.NextPath();
-  }
-
-  if (!haplotypes.empty()) {
-    // Sort non-reference ALT haplotypes strictly by descending mean coverage.
-    // This ensures downstream Greedy Insertion Bias in SPOA prioritizes dominant somatic signals.
-    std::ranges::sort(haplotypes, [](Graph::Path const& lhs, Graph::Path const& rhs) -> bool {
-      return lhs.MeanCoverage() > rhs.MeanCoverage();
-    });
-
-    // Deduplicate Sequence matches in O(N). Because the array is already sorted
-    // by coverage, this retains the highest-coverage path for any duplicate sequence.
-    absl::flat_hash_set<std::string_view> seen_seqs;
-    std::erase_if(haplotypes, [&seen_seqs](Graph::Path const& path) -> bool {
-      auto [_unused, inserted] = seen_seqs.insert(path.Sequence());
-      return !inserted;
-    });
-
-    Graph::Path ref_path;
-    ref_path.AppendSequence(ref_anchor_seq);
-    haplotypes.emplace(haplotypes.begin(), std::move(ref_path));
-  }
-
-  return haplotypes;
+  WriteDotDevelop(GraphState::SHORT_TIP_REMOVAL, component_id);
 }
 
 void Graph::CompressGraph(usize const component_id) {
@@ -508,486 +674,56 @@ void Graph::RemoveTips(usize const component_id) {
   }
 }
 
-auto Graph::FindSource(usize const component_id) const -> RefAnchor {
-  RefAnchor result{.mAnchorId = 0, .mRefOffset = 0, .mFoundAnchor = false};
+// ============================================================================
+// Phase 5: Haplotype Enumeration
+// ============================================================================
 
-  for (usize ref_idx = 0; ref_idx < mRefNodeIds.size(); ++ref_idx) {
-    auto const itr = mNodes.find(mRefNodeIds[ref_idx]);
-    if (itr == mNodes.end()) continue;
+auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
+                                       std::string_view ref_anchor_seq) const -> std::vector<Path> {
+  std::vector<Path> haplotypes;
+  auto const reg_str = mRegion->ToSamtoolsRegion();
 
-    LANCET_ASSERT(itr->second != nullptr)
-    if (itr->second->GetComponentId() != component_id ||
-        itr->second->TotalReadSupport() < mParams.mMinAnchorCov) {
-      continue;
-    }
+  LOG_TRACE("Starting walk enumeration for {} with k={}, num_nodes={}", reg_str, mCurrK,
+            mNodes.size())
 
-    result.mAnchorId = itr->first;
-    result.mRefOffset = ref_idx;
-    result.mFoundAnchor = true;
-    break;
+  MaxFlow max_flow(&mNodes, mSourceAndSinkIds, mCurrK, &trav_idx);
+  auto path_seq = max_flow.NextPath();
+
+  while (path_seq) {
+    LOG_DEBUG("Assembled {}bp path sequence for {} comp={} with k={}",
+              path_seq->Sequence().length(), reg_str, comp_id, mCurrK)
+    haplotypes.emplace_back(std::move(*path_seq));
+    path_seq = max_flow.NextPath();
   }
 
-  return result;
-}
+  if (!haplotypes.empty()) {
+    // Sort non-reference ALT haplotypes strictly by descending mean coverage.
+    // This ensures downstream Greedy Insertion Bias in SPOA prioritizes dominant somatic signals.
+    std::ranges::sort(haplotypes, [](Path const& lhs, Path const& rhs) -> bool {
+      return lhs.MeanCoverage() > rhs.MeanCoverage();
+    });
 
-auto Graph::FindSink(usize const component_id) const -> RefAnchor {
-  RefAnchor result{.mAnchorId = 0, .mRefOffset = 0, .mFoundAnchor = false};
+    // Deduplicate Sequence matches in O(N). Because the array is already sorted
+    // by coverage, this retains the highest-coverage path for any duplicate sequence.
+    absl::flat_hash_set<std::string_view> seen_seqs;
+    std::erase_if(haplotypes, [&seen_seqs](Path const& path) -> bool {
+      auto [_unused, inserted] = seen_seqs.insert(path.Sequence());
+      return !inserted;
+    });
 
-  for (i64 ref_idx = static_cast<i64>(mRefNodeIds.size() - 1); ref_idx >= 0; --ref_idx) {
-    auto const itr = mNodes.find(mRefNodeIds[ref_idx]);
-    if (itr == mNodes.end()) continue;
-
-    LANCET_ASSERT(itr->second != nullptr)
-    if (itr->second->GetComponentId() != component_id ||
-        itr->second->TotalReadSupport() < mParams.mMinAnchorCov) {
-      continue;
-    }
-
-    result.mAnchorId = itr->first;
-    result.mRefOffset = static_cast<usize>(ref_idx);
-    result.mFoundAnchor = true;
-    break;
+    Path ref_path;
+    ref_path.AppendSequence(ref_anchor_seq);
+    haplotypes.emplace(haplotypes.begin(), std::move(ref_path));
   }
 
-  return result;
+  return haplotypes;
 }
 
 // ============================================================================
-//  HasCycle — O(V+E) Three-Color DFS on the Flat Adjacency List
+// Debug DOT Visualization
 // ============================================================================
-//
-// ALGORITHM
-// ---------
-// Standard directed-graph cycle detection using three colors:
-//   WHITE (0) = unvisited
-//    GRAY (1) = on the current DFS stack (ancestor in the current path)
-//   BLACK (2) = fully explored (all descendants visited)
-//
-// A cycle exists iff DFS encounters a "back edge" — an edge leading to a
-// GRAY state. GRAY states are ancestors on the current DFS path, so a back
-// edge forms a cycle.
-//
-// WHY THIS REPLACES THE OLD APPROACH
-// ------------------------------------
-// The old HasCycle used backtracking (erase from visited set on return),
-// which explored ALL paths from source — exponential in high-branching
-// graphs. Three-color DFS visits each state exactly once: O(V+E).
-// Profile data showed ~51.6s in the old HasCycle; this should be <1ms.
-//
-// BIDIRECTED SIGN CONTINUITY
-// ----------------------------
-// In the BCALM2 bidirected model, walks must satisfy sign continuity:
-//   edge.DstSign must match the next edge.SrcSign
-//
-// We track state as (node_flat_idx, sign), so a node visited via '+' and
-// via '-' are different DFS states. The TraversalIndex adjacency list is
-// already partitioned by (node, sign), so edge iteration naturally respects
-// sign continuity.
-//
-//   Example: DFS from source(+)
-//   ┌──────────────────────────────────────────────────────┐
-//   │  Visit state (A,+) → GRAY                            │
-//   │    Edge to (B,+) → WHITE → push (B,+)                │
-//   │      Edge to (C,-) → WHITE → push (C,-)              │
-//   │        Edge to (A,+) → GRAY! → CYCLE FOUND           │
-//   │      Edge to (A,-) → WHITE → push (A,-)              │ ← same node, different sign
-//   │        ...no back edge → BLACK                       │
-//   └──────────────────────────────────────────────────────┘
-//
-// FUTURE: Tarjan's SCC could provide cycle sizes and weakest edges for
-// smarter retry-vs-skip decisions. For now, just detect presence/absence.
-//
-auto Graph::HasCycle(TraversalIndex const& idx) -> bool {
-  enum class Color : u8 { WHITE = 0, GRAY = 1, BLACK = 2 };
 
-  // Flat color array indexed by state_idx = node_flat_idx * 2 + sign_offset.
-  // O(1) access per state — no hash lookups, cache-line-friendly.
-  std::vector<Color> color(idx.NumStates(), Color::WHITE);
-
-  // Iterative DFS stack frame: current state + position in its outgoing edge list.
-  // Using an explicit stack avoids recursion depth limits on large graphs.
-  struct DfsFrame {
-    u32 mStateIdx;
-    u32 mEdgePos;  // next edge to explore within this state's adjacency range
-  };
-
-  std::vector<DfsFrame> stack;
-  stack.reserve(idx.NumNodes());
-
-  color[idx.mSrcState] = Color::GRAY;
-  stack.push_back({.mStateIdx = idx.mSrcState, .mEdgePos = 0});
-
-  while (!stack.empty()) {
-    auto& frame = stack.back();
-    auto const& range = idx.mAdjRanges[frame.mStateIdx];
-
-    // All children of this state explored → mark BLACK and backtrack
-    if (frame.mEdgePos >= range.mCount) {
-      color[frame.mStateIdx] = Color::BLACK;
-      stack.pop_back();
-      continue;
-    }
-
-    // Examine the next outgoing edge from this state
-    auto const& out = idx.mAdjList[range.mStart + frame.mEdgePos];
-    frame.mEdgePos++;
-
-    if (color[out.mDstState] == Color::GRAY) return true;  // Back edge → cycle!
-
-    if (color[out.mDstState] != Color::WHITE) continue;  // BLACK → already finished, skip
-
-    // WHITE → unvisited. Push child onto DFS stack.
-    color[out.mDstState] = Color::GRAY;
-    stack.push_back({.mStateIdx = out.mDstState, .mEdgePos = 0});
-  }
-
-  return false;
-}
-
-// ============================================================================
-//  BuildTraversalIndex — Construct Flat CSR Adjacency List
-// ============================================================================
-//
-// Converts the hash-map-based NodeTable into a contiguous, integer-indexed
-// adjacency list for a single connected component. This is built ONCE after
-// all graph mutations (pruning, compression, tip removal) are complete.
-//
-// CONSTRUCTION PHASES
-// --------------------
-//  Phase 1: Assign contiguous u32 indices to nodes in this component.
-//  Phase 2: Count outgoing edges per state (for CSR range sizing).
-//  Phase 3: Compute prefix-sum offsets for each state's edge range.
-//  Phase 4: Fill the adjacency list and assign edge ordinals.
-//  Phase 5: Set source and sink state indices.
-//
-// COST: O(V + E) time and memory. The nid_to_flat hash map is only used
-// during construction; all subsequent operations are flat-array-only.
-//
-auto Graph::BuildTraversalIndex(usize const component_id) const -> TraversalIndex {
-  TraversalIndex traversal_index;
-
-  // Phase 1: Assign contiguous u32 indices to nodes in this component
-  absl::flat_hash_map<NodeID, u32> nid_to_flat;
-  nid_to_flat.reserve(mNodes.size());
-
-  for (auto const& [node_id, node_ptr] : mNodes) {
-    if (node_ptr->GetComponentId() != component_id) continue;
-
-    auto const flat = static_cast<u32>(traversal_index.mNodes.size());
-    traversal_index.mNodes.push_back(node_ptr.get());
-    traversal_index.mNodeIds.push_back(node_id);
-    nid_to_flat.emplace(node_id, flat);
-  }
-
-  u32 const num_nodes = traversal_index.NumNodes();
-  u32 const num_states = num_nodes * 2;
-  traversal_index.mAdjRanges.resize(num_states, {.mStart = 0, .mCount = 0});
-
-  // Phase 2: Count outgoing edges per state (for range sizing)
-  for (u32 node_idx = 0; node_idx < num_nodes; node_idx++) {
-    Node const* node = traversal_index.mNodes[node_idx];
-    for (Edge const& edge : *node) {
-      // Only count edges whose destination is in this component
-      if (!nid_to_flat.contains(edge.DstId())) continue;
-
-      u32 const state = TraversalIndex::MakeState(node_idx, edge.SrcSign());
-      traversal_index.mAdjRanges[state].mCount++;
-    }
-  }
-
-  // Phase 3: Compute starting offsets via prefix sum
-  u32 offset = 0;
-  for (u32 state_idx = 0; state_idx < num_states; state_idx++) {
-    traversal_index.mAdjRanges[state_idx].mStart = offset;
-    offset += traversal_index.mAdjRanges[state_idx].mCount;
-    traversal_index.mAdjRanges[state_idx].mCount = 0;  // reset count; re-filled in phase 4
-  }
-  traversal_index.mAdjList.resize(offset);
-
-  // Phase 4: Fill adjacency list entries and assign edge ordinals
-  absl::flat_hash_map<Edge, u32> edge_to_ordinal;
-  edge_to_ordinal.reserve(offset);
-
-  for (u32 node_idx = 0; node_idx < num_nodes; node_idx++) {
-    Node const* node = traversal_index.mNodes[node_idx];
-    for (Edge const& edge : *node) {
-      auto const dst_it = nid_to_flat.find(edge.DstId());
-      if (dst_it == nid_to_flat.end()) continue;
-
-      u32 const src_state = TraversalIndex::MakeState(node_idx, edge.SrcSign());
-      u32 const dst_state = TraversalIndex::MakeState(dst_it->second, edge.DstSign());
-
-      // Assign or reuse edge ordinal (edges appear at both endpoints as forward + mirror)
-      u32 ordinal = 0;
-      auto [iter, inserted] =
-          edge_to_ordinal.emplace(edge, static_cast<u32>(traversal_index.mOrigEdges.size()));
-
-      if (inserted) {
-        ordinal = iter->second;
-        traversal_index.mOrigEdges.push_back(edge);
-      } else {
-        ordinal = iter->second;
-      }
-
-      auto& range = traversal_index.mAdjRanges[src_state];
-      traversal_index.mAdjList[range.mStart + range.mCount] = {.mDstState = dst_state,
-                                                               .mEdgeOrdinal = ordinal};
-
-      range.mCount++;
-    }
-  }
-
-  // Phase 5: Set source and sink states
-  auto const [source_id, sink_id] = mSourceAndSinkIds;
-  auto const src_flat = nid_to_flat.at(source_id);
-  auto const snk_flat = nid_to_flat.at(sink_id);
-  auto const src_sign = traversal_index.mNodes[src_flat]->SignFor(Kmer::Ordering::DEFAULT);
-  traversal_index.mSrcState = TraversalIndex::MakeState(src_flat, src_sign);
-  traversal_index.mSnkNodeIdx = snk_flat;
-
-  return traversal_index;
-}
-
-// ============================================================================
-//  ComputeGraphComplexity — O(V+E) Metrics for Debug Logging
-// ============================================================================
-//
-// Computes lightweight graph topology metrics that correlate with runtime:
-//
-//  Cyclomatic complexity (M = E - V + 1): number of independent cycles.
-//    M=0 → linear chain, M=1 → single variant bubble, M>>1 → STR hairball.
-//
-//  Edge-to-node density (E/V): a clean graph has E/V ≈ 1.0. Values >1.5
-//    indicate branching that causes path enumeration explosion.
-//
-//  Max single-direction degree: maximum outgoing edges in any one sign
-//    direction. Hub nodes with high degree are direct BFS blowup predictors.
-//
-//  Branch points: nodes with ≥2 outgoing edges in some direction. These
-//    are the "decision points" that cause combinatorial path blowup.
-//
-auto Graph::ComputeComponentComplexity(usize const component_id) const -> GraphComplexity {
-  return cbdg::ComputeGraphComplexity(*this, component_id);
-}
-
-auto Graph::MarkConnectedComponents() -> std::vector<ComponentInfo> {
-  usize current_component = 0;
-  std::vector<ComponentInfo> results_info;
-
-#ifdef LANCET_DEVELOP_MODE
-  static auto const IS_UNASSIGNED = [](NodeTable::const_reference item) {
-    return item.second->GetComponentId() == 0;
-  };
-#endif
-
-  // Check that all nodes are component zero before we start
-  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, IS_UNASSIGNED)) == mNodes.size())
-
-  for (NodeTable::reference item : mNodes) {
-    if (item.second->GetComponentId() != 0) continue;
-
-    current_component++;
-    results_info.emplace_back(ComponentInfo{.mCompId = current_component, .mNumNodes = 0});
-
-    absl::chunked_queue<Node*, 128, 1024> connected_nodes;
-    connected_nodes.push_back(item.second.get());
-
-    while (!connected_nodes.empty()) {
-      auto* current_node = connected_nodes.front();
-      LANCET_ASSERT(current_node != nullptr)
-
-      if (current_node->GetComponentId() != 0) {
-        connected_nodes.pop_front();
-        continue;
-      }
-
-      current_node->SetComponentId(current_component);
-      results_info[current_component - 1].mNumNodes += 1;
-      for (Edge const& edge : *current_node) {
-        auto const neighbour_itr = mNodes.find(edge.DstId());
-        LANCET_ASSERT(neighbour_itr != mNodes.end())
-        LANCET_ASSERT(neighbour_itr->second != nullptr)
-        connected_nodes.push_back(neighbour_itr->second.get());
-      }
-
-      connected_nodes.pop_front();
-    }
-  }
-
-  auto const total_num_nodes = static_cast<f64>(mNodes.size());
-  for (auto& cinfo : results_info) {
-    cinfo.mPctNodes = 100.0 * (static_cast<f64>(cinfo.mNumNodes) / total_num_nodes);
-  }
-
-  std::ranges::sort(results_info, [](ComponentInfo const& lhs, ComponentInfo const& rhs) -> bool {
-    return lhs.mNumNodes > rhs.mNumNodes;
-  });
-
-  // Check that none of the nodes are component zero after we are done
-  LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, IS_UNASSIGNED)) == 0)
-  return results_info;
-}
-
-void Graph::RemoveLowCovNodes(usize const component_id) {
-  std::vector<NodeID> remove_nids;
-  remove_nids.reserve(mNodes.size());
-
-  auto const [source_id, sink_id] = mSourceAndSinkIds;
-  for (auto const& [nid, node_ptr] : mNodes) {
-    if (node_ptr->GetComponentId() != component_id) continue;
-    if (nid == source_id || nid == sink_id) continue;
-
-    // Remove nodes where every sample has at most 1 read (unreliable k-mers)
-    // or total coverage is below the user-configured minimum.
-    auto const all_singletons = node_ptr->IsAllSingletons();
-    auto const total_sample_cov = node_ptr->TotalReadSupport();
-
-    if (all_singletons || total_sample_cov < mParams.mMinNodeCov) {
-      remove_nids.emplace_back(nid);
-    }
-  }
-
-  if (!remove_nids.empty()) {
-    // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
-    auto const region_str = mRegion->ToSamtoolsRegion();
-    LOG_TRACE("Removing {:.4f}% (or) {} low cov nodes for {} in comp{} with k={}",
-              100.0 * (static_cast<f64>(remove_nids.size()) / static_cast<f64>(mNodes.size())),
-              remove_nids.size(), region_str, component_id, mCurrK)
-
-    RemoveNodes(absl::MakeConstSpan(remove_nids));
-  }
-}
-
-void Graph::RemoveNode(NodeTable::iterator itr) {
-  if (itr == mNodes.end()) return;
-
-  // remove all incoming edges to the node first
-  for (Edge const& conn : *itr->second) {
-    if (conn.IsSelfLoop()) continue;
-
-    auto nbour_itr = mNodes.find(conn.DstId());
-    if (nbour_itr != mNodes.end()) nbour_itr->second->EraseEdge(conn.MirrorEdge());
-  }
-
-  mNodes.erase(itr);
-}
-
-void Graph::RemoveNodes(absl::Span<NodeID const> node_ids) {
-  for (auto const nid : node_ids) {
-    RemoveNode(mNodes.find(nid));
-  }
-}
-
-void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
-  mRefNodeIds.clear();
-  auto const ref_nodes = AddNodes(mRegion->SeqView(), Label(Label::REFERENCE));
-  mRefNodeIds.reserve(ref_nodes.size());
-  std::ranges::transform(ref_nodes, std::back_inserter(mRefNodeIds),
-                         [](Node const* node) -> NodeID { return node->Identifier(); });
-
-  // Expected errors = floor(err_sum) https://www.drive5.com/usearch/manual/exp_errs.html
-  // See https://doi.org/10.1093/bioinformatics/btv401 for proof on expected errors
-  // Add support for only high quality kmers. If the expected error is > MAX_AGG_ERR,
-  // then skip adding any read support for those kmers, so they can be removed later
-  static auto const ERROR_SUMMER = [](f64 const sum, u8 const bql) -> f64 {
-    return sum + hts::PhredToErrorProb(bql);
-  };
-  static auto const IS_LOW_QUAL_KMER = [](absl::Span<u8 const> quals) -> bool {
-    f64 const expected_errors =
-        std::floor(std::accumulate(quals.cbegin(), quals.cend(), 0.0, ERROR_SUMMER));
-    return static_cast<i64>(expected_errors) > 0;
-  };
-
-  mate_mers.clear();
-  for (auto const& read : mReads) {
-    if (!read.PassesAlnFilters()) continue;
-
-    usize offset = 0;
-    auto added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
-
-    for (auto* node : added_nodes) {
-      MateMer mm_pair{
-          .mQname = read.QnameView(), .mTagKind = read.TagKind(), .mKmerHash = node->Identifier()};
-      auto const curr_qual = read.QualView().subspan(offset, mCurrK);
-      offset++;
-
-      if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) continue;
-      node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
-      mate_mers.emplace(mm_pair);
-    }
-  }
-}
-
-auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vector<Node*> {
-  std::vector<Node*> result;
-  auto const kplus_ones = lancet::base::SlidingView(sequence, mCurrK + 1);
-  result.reserve(kplus_ones.size() + 1);
-
-  for (usize mer_idx = 0; mer_idx < kplus_ones.size(); ++mer_idx) {
-    auto const seq1 = absl::ClippedSubstr(kplus_ones[mer_idx], 0, mCurrK);
-    auto const seq2 = absl::ClippedSubstr(kplus_ones[mer_idx], 1, mCurrK);
-
-    auto left_mer = Kmer(seq1);
-    auto right_mer = Kmer(seq2);
-    auto const left_id = left_mer.Identifier();
-    auto const right_id = right_mer.Identifier();
-
-    mNodes.try_emplace(left_id, std::make_unique<Node>(std::move(left_mer), label));
-    mNodes.try_emplace(right_id, std::make_unique<Node>(std::move(right_mer), label));
-
-    auto& first = mNodes.at(left_id);
-    auto& second = mNodes.at(right_id);
-
-    if (mer_idx == 0) result.emplace_back(first.get());
-
-    static constexpr auto DEFAULT_ORDER = Kmer::Ordering::DEFAULT;
-    auto const fwd_edge =
-        MakeFwdEdgeKind({first->SignFor(DEFAULT_ORDER), second->SignFor(DEFAULT_ORDER)});
-    first->EmplaceEdge(NodeIDPair{left_id, right_id}, fwd_edge);
-    second->EmplaceEdge(NodeIDPair{right_id, left_id}, RevEdgeKind(fwd_edge));
-
-    result.emplace_back(second.get());
-  }
-
-  return result;
-}
-
-auto Graph::HasExactOrApproxRepeat(std::string_view seq, usize window) -> bool {
-  auto const klen_seqs = lancet::base::SlidingView(seq, window);
-  static constexpr usize NUM_ALLOWED_MISMATCHES = 3;
-
-  return lancet::base::HasExactRepeat(absl::MakeConstSpan(klen_seqs)) ||
-         lancet::base::HasApproximateRepeat(absl::MakeConstSpan(klen_seqs), NUM_ALLOWED_MISMATCHES);
-}
-
-auto Graph::RefAnchorLength(RefAnchor const& source, RefAnchor const& sink, usize currk) -> usize {
-  return sink.mRefOffset - source.mRefOffset + currk;
-}
-
-#ifdef LANCET_DEVELOP_MODE
-auto Graph::ToString(State const state) -> std::string {
-  switch (state) {
-    case FIRST_LOW_COV_REMOVAL:
-      return "low_cov_removal1";
-    case FOUND_REF_ANCHORS:
-      return "found_ref_anchors";
-    case FIRST_COMPRESSION:
-      return "compression1";
-    case SECOND_LOW_COV_REMOVAL:
-      return "low_cov_removal2";
-    case SECOND_COMPRESSION:
-      return "compression2";
-    case SHORT_TIP_REMOVAL:
-      return "short_tip_removal";
-    default:
-      break;
-  }
-
-  return "fully_pruned";
-}
-#endif
-
-void Graph::WriteDot([[maybe_unused]] State state, usize comp_id) {
+void Graph::WriteDot([[maybe_unused]] GraphState state, usize comp_id) {
   if (mParams.mOutGraphsDir.empty()) return;
 
 #ifdef LANCET_DEVELOP_MODE
@@ -1005,63 +741,6 @@ void Graph::WriteDot([[maybe_unused]] State state, usize comp_id) {
   auto const out_path = mParams.mOutGraphsDir / "dbg_graph" / fname;
   std::filesystem::create_directories(mParams.mOutGraphsDir / "dbg_graph");
   SerializeToDot(mNodes, out_path, comp_id, {mSourceAndSinkIds.cbegin(), mSourceAndSinkIds.cend()});
-}
-
-// NOLINTNEXTLINE(readability-function-cognitive-complexity,readability-function-size)  // TODO(lancet): refactor to reduce function size
-void Graph::SerializeToDot(NodeTable const& graph, std::filesystem::path const& out_path,
-                           usize const comp_id, NodeIdSet const& nodes_highlight,
-                           EdgeSet const& edges_highlight, NodeIdSet const& nodes_background,
-                           EdgeSet const& edges_background) {
-  std::ofstream out_handle(out_path, std::ios::trunc);
-  using namespace std::string_view_literals;
-
-  out_handle << R"raw(strict digraph G {
-graph [layout=neato,bgcolor=black,size="120,180",ratio=compress,rankdir=LR,overlap=vpsc,overlap_shrink=true,start=self];
-node [style=filled,fontsize=2,width=2,height=2,fixedsize=false];
-edge [color=gray,fontsize=8,fontcolor=floralwhite,len=3,fixedsize=false,headclip=true,tailclip=true];
-)raw"sv;
-
-  fmt::print(out_handle, "subgraph {} {{\n", out_path.stem().string());
-
-  for (NodeTable::const_reference item : graph) {
-    if (item.second->GetComponentId() != comp_id) continue;
-
-    auto const dflt_seq = item.second->SequenceFor(Kmer::Ordering::DEFAULT);
-    auto const oppo_seq = item.second->SequenceFor(Kmer::Ordering::OPPOSITE);
-    auto const rev_oppo_seq = std::string(oppo_seq.crbegin(), oppo_seq.crend());
-    auto const sign_dflt =
-        item.second->SignFor(Kmer::Ordering::DEFAULT) == Kmer::Sign::PLUS ? '+' : '-';
-    auto const is_background_node = nodes_background.contains(item.first);
-    // NOLINTBEGIN(readability-avoid-nested-conditional-operator)
-    auto const fill_color = is_background_node                     ? "darkgray"sv
-                            : nodes_highlight.contains(item.first) ? "orchid"sv
-                            : item.second->IsShared()              ? "steelblue"sv
-                            : item.second->IsCaseOnly()            ? "indianred"sv
-                            : item.second->IsCtrlOnly()            ? "mediumseagreen"sv
-                                                                   : "lightblue"sv;
-    // NOLINTEND(readability-avoid-nested-conditional-operator)
-
-    fmt::print(out_handle,
-               R"raw({} [shape=circle fillcolor={} label="{}\n{}\n {}:{}\nlength={}\ncoverage={}"]
-)raw",
-               item.first, fill_color, dflt_seq, rev_oppo_seq, item.first, sign_dflt,
-               item.second->Length(), item.second->TotalReadSupport());
-
-    for (Edge const& conn : *item.second) {
-      auto const src_sign = conn.SrcSign() == Kmer::Sign::PLUS ? '+' : '-';
-      auto const dst_sign = conn.DstSign() == Kmer::Sign::PLUS ? '+' : '-';
-      auto const is_background_edge = edges_background.contains(conn);
-      auto const is_highlight_edge = edges_highlight.contains(conn);
-      fmt::print(out_handle, R"raw({} -> {} [taillabel="{}" headlabel="{}" style="{}"{}]
-)raw",
-                 conn.SrcId(), conn.DstId(), src_sign, dst_sign,
-                 is_background_edge ? "dotted"sv : "solid"sv,
-                 is_highlight_edge ? R"raw( color="goldenrod")raw"sv : ""sv);
-    }
-  }
-
-  out_handle << "}\n}\n"sv;
-  out_handle.close();
 }
 
 }  // namespace lancet::cbdg

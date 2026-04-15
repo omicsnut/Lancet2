@@ -3,6 +3,7 @@
 
 #include "lancet/base/types.h"
 #include "lancet/cbdg/graph.h"
+#include "lancet/cbdg/path.h"
 
 #include "absl/container/chunked_queue.h"
 #include "absl/container/flat_hash_set.h"
@@ -62,10 +63,13 @@ namespace lancet::cbdg {
 // ============================================================================
 class MaxFlow {
  public:
+  // 2^20 — caps BFS walk-tree expansion
+  static constexpr u32 DEFAULT_GRAPH_TRAVERSAL_LIMIT = 1'048'576;
+
   explicit MaxFlow(Graph::NodeTable const* graph, NodeIDPair const& src_and_snk, usize currk,
                    TraversalIndex const* trav_idx);
 
-  using Result = std::optional<Graph::Path>;
+  using Result = std::optional<Path>;
 
   /// Find the next walk from source to sink that contains at least one
   /// edge not yet traversed by any previous walk. Returns nullopt when

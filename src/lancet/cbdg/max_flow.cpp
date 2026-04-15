@@ -62,7 +62,7 @@ auto MaxFlow::ReconstructWalk(std::vector<WalkTreeNode> const& arena, u32 const 
 auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
   LANCET_ASSERT(!walk.empty())
 
-  Graph::Path path;
+  Path path;
   usize total_seq_len = 0;
   std::vector<std::string> uniq_seqs;
   uniq_seqs.reserve(walk.size() + 1);
@@ -168,7 +168,7 @@ auto MaxFlow::NextPath() -> Result {
 
   while (!frontier.empty()) {
     nvisits++;
-    if (nvisits > Graph::DEFAULT_GRAPH_TRAVERSAL_LIMIT) break;
+    if (nvisits > MaxFlow::DEFAULT_GRAPH_TRAVERSAL_LIMIT) break;
 
     u32 const arena_idx = frontier.front();
     frontier.pop_front();

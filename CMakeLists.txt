@@ -124,11 +124,15 @@ if (LANCET_ENABLE_CLOUD_IO)
 	target_link_libraries(lancet_hts INTERFACE CURL::libcurl OpenSSL::Crypto)
 endif ()
 
-add_library(lancet_cbdg STATIC src/lancet/cbdg/label.h
+add_library(lancet_cbdg STATIC src/lancet/cbdg/label.h src/lancet/cbdg/graph_params.h
 		src/lancet/cbdg/sample_mask.cpp src/lancet/cbdg/sample_mask.h
 		src/lancet/cbdg/kmer.cpp src/lancet/cbdg/kmer.h
 		src/lancet/cbdg/edge.h src/lancet/cbdg/read.h
 		src/lancet/cbdg/node.cpp src/lancet/cbdg/node.h
+		src/lancet/cbdg/path.cpp src/lancet/cbdg/path.h
+		src/lancet/cbdg/cycle_finder.cpp src/lancet/cbdg/cycle_finder.h
+		src/lancet/cbdg/traversal_index.cpp src/lancet/cbdg/traversal_index.h
+		src/lancet/cbdg/serialize_dot.cpp src/lancet/cbdg/serialize_dot.h
 		src/lancet/cbdg/max_flow.cpp src/lancet/cbdg/max_flow.h
 		src/lancet/cbdg/graph_complexity.cpp src/lancet/cbdg/graph_complexity.h
 		src/lancet/cbdg/graph.cpp src/lancet/cbdg/graph.h)
