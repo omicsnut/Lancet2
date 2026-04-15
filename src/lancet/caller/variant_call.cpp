@@ -5,6 +5,7 @@
 #include "lancet/base/types.h"
 #include "lancet/caller/raw_variant.h"
 #include "lancet/caller/variant_support.h"
+#include "lancet/caller/vcf_formatter.h"
 #include "lancet/cbdg/label.h"
 
 #include "absl/hash/hash.h"
@@ -34,23 +35,6 @@ namespace {
   return static_cast<u64>(absl::HashOf(var->mChromIndex, var->mGenomeChromPos1, var->mRefAllele));
 }
 
-// Convert std::optional<f64> from VariantSupport to std::optional<f32> for SampleGenotypeData.
-// Preserves nullopt (untestable → "." in VCF) and narrows f64 → f32 for storage.
-[[nodiscard]] inline auto ToOptF32(std::optional<f64> const& val) -> std::optional<f32> {
-  return val.has_value() ? std::optional(static_cast<f32>(val.value())) : std::nullopt;
-}
-
-// Format a std::optional<f32> for VCF output, emitting "." for missing values.
-// VCF 4.5 spec: "." = missing value. This is the single point where the
-// optional → dot conversion happens for all FORMAT fields.
-// NOTE: Cannot use IEEE NaN here because -ffast-math (cmake/defaults.cmake)
-// implies -ffinite-math-only, which optimizes away std::isnan().
-[[nodiscard]] inline auto FormatOptional(std::optional<f32> const& val, char const* fmt_spec)
-    -> std::string {
-  if (!val.has_value()) return ".";
-  return fmt::format(fmt::runtime(fmt_spec), val.value());
-}
-
 }  // namespace
 
 namespace lancet::caller {
@@ -72,7 +56,7 @@ VariantCall::VariantCall(RawVariant const* var, SupportsByVariant const& all_sup
       mRefAllele(var->mRefAllele),
       mGraphCx(var->mGraphMetrics),
       mSeqCx(var->mSeqCx),
-      mIsMultiallelic(mAltAlleles.size() > 1) {
+      mIsMultiallelic(var->mAlts.size() > 1) {
   auto const num_alts = var->mAlts.size();
   mAltAlleles.reserve(num_alts);
   mCategories.reserve(num_alts);
@@ -157,34 +141,36 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
   for (auto const& sinfo : samps) {
     auto const* support = evidence.Find(sinfo.SampleName());
     if (support == nullptr) {
-      mSampleGenotypes.emplace_back(SampleGenotypeData{.mIsMissingSupport = true});
+      SampleFormatData missing;
+      missing.SetMissingSupport(true);
+      mSampleGenotypes.push_back(std::move(missing));
       continue;
     }
 
     mTotalSampleCov += support->TotalSampleCov();
     auto const pls = support->ComputePLs();
-    SampleGenotypeData sample;
-    sample.mIsMissingSupport = false;
+    SampleFormatData sample;
+    sample.SetMissingSupport(false);
 
     AssignGenotype(sample, pls, num_alleles);
     AssignPerAlleleMetrics(sample, support, num_alleles);
 
-    sample.mTotalDepth = support->TotalSampleCov();
-    sample.mGenotypeQuality = VariantSupport::ComputeGQ(pls);
+    sample.SetTotalDepth(support->TotalSampleCov());
+    sample.SetGenotypeQuality(VariantSupport::ComputeGQ(pls));
 
     UpdateSiteQuality(sinfo, support, evidence, samps, case_ctrl_mode, pls);
     mHasAltSupport = mHasAltSupport || (support->TotalAltCov() > 0);
 
     // Strand bias log odds ratio (Number=1, per-sample)
-    sample.mStrandBias = static_cast<f32>(support->StrandBiasLogOR());
+    sample.SetStrandBias(static_cast<f32>(support->StrandBiasLogOR()));
 
     // Alignment-derived per-sample annotations (coverage-normalized effect sizes).
-    // ToOptF32 bridges std::optional<f64> (VariantSupport) → std::optional<f32> (VCF storage).
-    sample.mSoftClipAsym = static_cast<f32>(support->SoftClipAsymmetry());
-    sample.mFragLenDelta = ToOptF32(support->FragLengthDelta());
-    sample.mReadPosCohenD = ToOptF32(support->ReadPosCohenD());
-    sample.mBaseQualCohenD = ToOptF32(support->BaseQualCohenD());
-    sample.mMapQualCohenD = ToOptF32(support->MappingQualCohenD());
+    // SetField bridges std::optional<f64> (VariantSupport) → compact f32 storage directly.
+    sample.SetSoftClipAsym(static_cast<f32>(support->SoftClipAsymmetry()));
+    sample.SetField(SampleFormatData::FRAG_LEN_DELTA, support->FragLengthDelta());
+    sample.SetField(SampleFormatData::READ_POS_COHEN_D, support->ReadPosCohenD());
+    sample.SetField(SampleFormatData::BASE_QUAL_COHEN_D, support->BaseQualCohenD());
+    sample.SetField(SampleFormatData::MAP_QUAL_COHEN_D, support->MappingQualCohenD());
 
     // ASMD: subtract max variant length so the variant's own edit distance
     // against REF doesn't inflate the mismatch delta (e.g., 50bp del = +50 NM).
@@ -192,37 +178,36 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
         mVariantLengths.cbegin(), mVariantLengths.cend(), usize{0},
         [](usize acc, usize cur) { return std::max(acc, cur); },
         [](i64 len) { return static_cast<usize>(std::abs(len)); });
-    sample.mAlleleMismatchDelta = ToOptF32(support->AlleleMismatchDelta(max_var_len));
+    sample.SetField(SampleFormatData::ALLELE_MISMATCH_DELTA,
+                    support->AlleleMismatchDelta(max_var_len));
 
-    sample.mSiteDepthFoldChange =
-        static_cast<f32>(SiteDepthFoldChange(sinfo.SampleName(), support->TotalSampleCov()));
+    sample.SetSiteDepthFoldChange(
+        static_cast<f32>(SiteDepthFoldChange(sinfo.SampleName(), support->TotalSampleCov())));
 
     // Polar coordinate features for ML variant classification
     // PRAD/PANG separate allele identity from depth (see polar_coords.h)
     auto const ad_ref = static_cast<f64>(support->TotalRefCov());
     auto const ad_alt = static_cast<f64>(support->TotalAltCov());
-    sample.mPolarRadius = static_cast<f32>(base::PolarRadius(ad_ref, ad_alt));
-    sample.mPolarAngle = static_cast<f32>(base::PolarAngle(ad_alt, ad_ref));
+    sample.SetPolarRadius(static_cast<f32>(base::PolarRadius(ad_ref, ad_alt)));
+    sample.SetPolarAngle(static_cast<f32>(base::PolarAngle(ad_alt, ad_ref)));
 
     // Continuous Mixture LOD scores (CMLOD FORMAT field)
     auto const cmlod_scores = support->ComputeContinuousMixtureLods();
-    sample.mContinuousMixtureLods.reserve(cmlod_scores.size());
-    sample.mContinuousMixtureLods.insert(sample.mContinuousMixtureLods.end(), cmlod_scores.cbegin(),
-                                         cmlod_scores.cend());
+    absl::InlinedVector<f64, 4> cmlod_vec(cmlod_scores.cbegin(), cmlod_scores.cend());
+    sample.SetContinuousMixtureLods(std::move(cmlod_vec));
 
     // ── Artifact detection metrics ─────────────────────────────────────
-    sample.mFragStartEntropy = ToOptF32(support->ComputeFSSE());
-    sample.mAltHapDiscordDelta = ToOptF32(support->ComputeAHDD());
+    sample.SetField(SampleFormatData::FRAG_START_ENTROPY, support->ComputeFSSE());
+    sample.SetField(SampleFormatData::ALT_HAP_DISCORD_DELTA, support->ComputeAHDD());
 
     if (mRawVariant != nullptr) {
-      sample.mHaplotypeSegEntropy = ToOptF32(support->ComputeHSE(mRawVariant->mNumTotalHaps));
-      sample.mPathDepthCv = ToOptF32(mRawVariant->mMaxPathCv);
-    } else {
-      sample.mHaplotypeSegEntropy = std::nullopt;
-      sample.mPathDepthCv = std::nullopt;
+      sample.SetField(SampleFormatData::HAPLOTYPE_SEG_ENTROPY,
+                      support->ComputeHSE(mRawVariant->mNumTotalHaps));
+      // Bridge optional<f64> → SetField for PDCV
+      sample.SetField(SampleFormatData::PATH_DEPTH_CV, mRawVariant->mMaxPathCv);
     }
 
-    sample.mPhredLikelihoods = pls;
+    sample.SetPhredLikelihoods(pls);
     mSampleGenotypes.push_back(std::move(sample));
   }
 }
@@ -255,10 +240,10 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
 //   dkmer=1, klen=0 → klen<4, dkmer=2, klen=2 → klen<4, dkmer=3, klen=5 → klen≥4, stop
 //   jdx = dkmer-1 = 2,  i = 4 - 5 + 2 = 1  → "1/2" ✓
 // ============================================================================
-void VariantCall::AssignGenotype(SampleGenotypeData& sample, absl::Span<int const> pls,
+void VariantCall::AssignGenotype(SampleFormatData& sample, absl::Span<u32 const> pls,
                                  [[maybe_unused]] usize num_alleles) {
   if (pls.empty()) {
-    sample.mGenotypeIndices = {-1, -1};
+    sample.SetGenotypeIndices(-1, -1);
     return;
   }
 
@@ -280,7 +265,7 @@ void VariantCall::AssignGenotype(SampleGenotypeData& sample, absl::Span<int cons
   // will always satisfy i <= j < num_alleles. If it does fire, ComputePLs or
   // its caller has a bug — don't silently return "0/0" and mask it.
   LANCET_ASSERT(aidx < num_alleles && jdx < num_alleles);
-  sample.mGenotypeIndices = {static_cast<i16>(aidx), static_cast<i16>(jdx)};
+  sample.SetGenotypeIndices(static_cast<i16>(aidx), static_cast<i16>(jdx));
 }
 
 // ============================================================================
@@ -300,7 +285,7 @@ void VariantCall::AssignGenotype(SampleGenotypeData& sample, absl::Span<int cons
 void VariantCall::UpdateSiteQuality(core::SampleInfo const& sinfo,
                                     [[maybe_unused]] VariantSupport const* support,
                                     SupportArray const& evidence, Samples samps,
-                                    bool case_ctrl_mode, absl::Span<int const> pls) {
+                                    bool case_ctrl_mode, absl::Span<u32 const> pls) {
   if (case_ctrl_mode) {
     auto const somatic_lor = SomaticLogOddsRatio(sinfo, evidence, samps);
     mSiteQuality = std::max(mSiteQuality, somatic_lor);
@@ -355,28 +340,40 @@ auto VariantCall::SomaticLogOddsRatio(core::SampleInfo const& curr, SupportArray
   return std::log((case_alt * ctrl_ref) / (case_ref * ctrl_alt));
 }
 
-void VariantCall::AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupport const* support,
+void VariantCall::AssignPerAlleleMetrics(SampleFormatData& sample, VariantSupport const* support,
                                          usize num_alleles) {
-  sample.mAlleleDepths.reserve(num_alleles);
-  sample.mFwdAlleleDepths.reserve(num_alleles);
-  sample.mRevAlleleDepths.reserve(num_alleles);
-  sample.mRmsMappingQualities.reserve(num_alleles);
-  sample.mNormPosteriorBQs.reserve(num_alleles);
+  absl::InlinedVector<u16, 4> allele_depths;
+  absl::InlinedVector<u16, 4> fwd_depths;
+  absl::InlinedVector<u16, 4> rev_depths;
+  absl::InlinedVector<f32, 4> rms_mapq;
+  absl::InlinedVector<f32, 4> norm_pbq;
+
+  allele_depths.reserve(num_alleles);
+  fwd_depths.reserve(num_alleles);
+  rev_depths.reserve(num_alleles);
+  rms_mapq.reserve(num_alleles);
+  norm_pbq.reserve(num_alleles);
 
   for (usize allele = 0; allele < num_alleles; ++allele) {
     auto const idx = static_cast<AlleleIndex>(allele);
-    sample.mAlleleDepths.push_back(support->TotalAlleleCov(idx));
-    sample.mFwdAlleleDepths.push_back(support->FwdCount(idx));
-    sample.mRevAlleleDepths.push_back(support->RevCount(idx));
-    sample.mRmsMappingQualities.push_back(static_cast<f32>(support->RmsMappingQual(idx)));
+    allele_depths.push_back(support->TotalAlleleCov(idx));
+    fwd_depths.push_back(support->FwdCount(idx));
+    rev_depths.push_back(support->RevCount(idx));
+    rms_mapq.push_back(static_cast<f32>(support->RmsMappingQual(idx)));
 
     // NPBQ: raw posterior base quality divided by allele depth
     // Recovers the effective per-read quality (~30 for Q30 reads at any depth)
     auto const raw_pbq = support->RawPosteriorBaseQual(idx);
     auto const allele_cov = support->TotalAlleleCov(idx);
     auto const npbq = allele_cov > 0 ? raw_pbq / static_cast<f64>(allele_cov) : 0.0;
-    sample.mNormPosteriorBQs.push_back(static_cast<f32>(npbq));
+    norm_pbq.push_back(static_cast<f32>(npbq));
   }
+
+  sample.SetAlleleDepths(std::move(allele_depths));
+  sample.SetFwdAlleleDepths(std::move(fwd_depths));
+  sample.SetRevAlleleDepths(std::move(rev_depths));
+  sample.SetRmsMappingQualities(std::move(rms_mapq));
+  sample.SetNormPosteriorBQs(std::move(norm_pbq));
 }
 
 // ============================================================================
@@ -388,7 +385,7 @@ void VariantCall::AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupp
 void VariantCall::ComputeState(SupportArray const& evidence, Samples samps,
                                bool const case_ctrl_mode) {
   if (!case_ctrl_mode) {
-    mState = RawVariant::State::UNKNOWN;
+    mState = AlleleState::UNKNOWN;
     return;
   }
 
@@ -403,11 +400,11 @@ void VariantCall::ComputeState(SupportArray const& evidence, Samples samps,
   bool const in_case = std::ranges::any_of(
       samps, [&](auto const& sinfo) { return has_alt(sinfo, cbdg::Label::CASE); });
 
-  static constexpr std::array<RawVariant::State, 4> STATE_MAP = {{
-      RawVariant::State::NONE,   // 00: Neither control nor case
-      RawVariant::State::CTRL,   // 01: Control only
-      RawVariant::State::CASE,   // 10: Case only
-      RawVariant::State::SHARED  // 11: Both control and case
+  static constexpr std::array<AlleleState, 4> STATE_MAP = {{
+      AlleleState::NONE,   // 00: Neither control nor case
+      AlleleState::CTRL,   // 01: Control only
+      AlleleState::CASE,   // 10: Case only
+      AlleleState::SHARED  // 11: Both control and case
   }};
 
   // 2-bit mapping index from boolean parameters:
@@ -437,11 +434,9 @@ void VariantCall::BuildInfoField(bool const case_ctrl_mode) {
   static constexpr std::array<std::string_view, 6> TYPE_MAP = {
       {"REF"sv, "SNV"sv, "INS"sv, "DEL"sv, "MNP"sv, "CPX"sv}};
 
-  std::vector<std::string_view> vcategories;
-  vcategories.reserve(mCategories.size());
-  for (auto const cat : mCategories) {
-    vcategories.push_back(TYPE_MAP[static_cast<i8>(cat) + 1]);
-  }
+  std::vector<std::string_view> vcategories(mCategories.size());
+  std::ranges::transform(mCategories, vcategories.begin(),
+                         [](auto categ) { return TYPE_MAP[static_cast<i8>(categ) + 1]; });
 
   std::string info;
   info.reserve(1024);
@@ -473,9 +468,7 @@ auto VariantCall::AsVcfRecord() const -> std::string {
   auto const alt_field = absl::StrJoin(mAltAlleles, ",");
   std::vector<std::string> format_strings;
   format_strings.reserve(mSampleGenotypes.size() + 1);
-  // clang-format off
-  format_strings.emplace_back("GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ");
-  // clang-format on
+  format_strings.emplace_back(FORMAT_HEADER);
 
   for (auto const& sample : mSampleGenotypes) {
     format_strings.push_back(sample.RenderVcfString());
@@ -489,68 +482,4 @@ auto VariantCall::AsVcfRecord() const -> std::string {
                      fmt::arg("FORMAT", absl::StrJoin(format_strings, "\t")));
   // clang-format on
 }
-
-auto VariantCall::SampleGenotypeData::RenderVcfString() const -> std::string {
-  if (mIsMissingSupport) {
-    return "./.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.:.";
-  }
-
-  auto const gt_str = (mGenotypeIndices.first == -1 && mGenotypeIndices.second == -1)
-                          ? std::string("./.")
-                          : fmt::format("{}/{}", mGenotypeIndices.first, mGenotypeIndices.second);
-
-  auto const pl_str = mPhredLikelihoods.empty() ? "." : absl::StrJoin(mPhredLikelihoods, ",");
-
-  auto const format_f32 = [](std::string* out, f32 const val) {
-    absl::StrAppendFormat(out, "%.1F", val);
-  };
-
-  auto const format_f64 = [](std::string* out, f64 const val) {
-    absl::StrAppendFormat(out, "%.4F", val);
-  };
-
-  auto const ad_str = absl::StrJoin(mAlleleDepths, ",");
-  auto const adf_str = absl::StrJoin(mFwdAlleleDepths, ",");
-  auto const adr_str = absl::StrJoin(mRevAlleleDepths, ",");
-  auto const rmq_str = absl::StrJoin(mRmsMappingQualities, ",", format_f32);
-  auto const npbq_str = absl::StrJoin(mNormPosteriorBQs, ",", format_f32);
-
-  // CMLOD: Number=A — strip index 0 (REF LOD = 0.0 by definition), emit only ALT LODs
-  auto const cmlod_str = mContinuousMixtureLods.empty()
-                             ? std::string(".")
-                             : absl::StrJoin(mContinuousMixtureLods.begin() + 1,
-                                             mContinuousMixtureLods.end(), ",", format_f64);
-
-  // Optional-safe formatting: 9 metrics can be std::nullopt (untestable) → "." in VCF.
-  // All other fields are always populated (not optional-capable).
-  auto const fld_str = FormatOptional(mFragLenDelta, "{:.1f}");
-  auto const rpcd_str = FormatOptional(mReadPosCohenD, "{:.4f}");
-  auto const bqcd_str = FormatOptional(mBaseQualCohenD, "{:.4f}");
-  auto const mqcd_str = FormatOptional(mMapQualCohenD, "{:.4f}");
-  auto const asmd_str = FormatOptional(mAlleleMismatchDelta, "{:.3f}");
-  auto const fsse_str = FormatOptional(mFragStartEntropy, "{:.4f}");
-  auto const ahdd_str = FormatOptional(mAltHapDiscordDelta, "{:.3f}");
-  auto const hse_str = FormatOptional(mHaplotypeSegEntropy, "{:.4f}");
-  auto const pdcv_str = FormatOptional(mPathDepthCv, "{:.4f}");
-
-  // clang-format off
-  return fmt::format(
-      "{GT}:{AD}:{ADF}:{ADR}:{DP}:{RMQ}:{NPBQ}:{SB:.3f}:{SCA:.4f}:{FLD}:{RPCD}:"
-      "{BQCD}:{MQCD}:{ASMD}:{SDFC:.2f}:{PRAD:.4f}:{PANG:.4f}:{CMLOD}:"
-      "{FSSE}:{AHDD}:{HSE}:{PDCV}:{PL}:{GQ}",
-      fmt::arg("GT",    gt_str),           fmt::arg("AD",    ad_str),
-      fmt::arg("ADF",   adf_str),          fmt::arg("ADR",   adr_str),
-      fmt::arg("DP",    mTotalDepth),      fmt::arg("RMQ",   rmq_str),
-      fmt::arg("NPBQ",  npbq_str),         fmt::arg("SB",    mStrandBias),
-      fmt::arg("SCA",   mSoftClipAsym),    fmt::arg("FLD",   fld_str),
-      fmt::arg("RPCD",  rpcd_str),         fmt::arg("BQCD",  bqcd_str),
-      fmt::arg("MQCD",  mqcd_str),         fmt::arg("ASMD",  asmd_str),
-      fmt::arg("SDFC",  mSiteDepthFoldChange), fmt::arg("PRAD",  mPolarRadius),
-      fmt::arg("PANG",  mPolarAngle),      fmt::arg("CMLOD", cmlod_str),
-      fmt::arg("FSSE",  fsse_str),         fmt::arg("AHDD",  ahdd_str),
-      fmt::arg("HSE",   hse_str),          fmt::arg("PDCV",  pdcv_str),
-      fmt::arg("PL",    pl_str),           fmt::arg("GQ",    mGenotypeQuality));
-  // clang-format on
-}
-
 }  // namespace lancet::caller

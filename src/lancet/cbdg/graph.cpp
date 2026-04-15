@@ -740,7 +740,10 @@ void Graph::WriteDot([[maybe_unused]] GraphState state, usize comp_id) {
 
   auto const out_path = mParams.mOutGraphsDir / "dbg_graph" / fname;
   std::filesystem::create_directories(mParams.mOutGraphsDir / "dbg_graph");
-  SerializeToDot(mNodes, out_path, comp_id, {mSourceAndSinkIds.cbegin(), mSourceAndSinkIds.cend()});
+  DotOverlaySets const highlight{
+      .mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]},
+  };
+  SerializeToDot(mNodes, out_path, comp_id, highlight);
 }
 
 }  // namespace lancet::cbdg

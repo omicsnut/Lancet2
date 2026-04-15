@@ -14,13 +14,18 @@
 
 namespace lancet::cbdg {
 
+// ── Overlay sets for debug highlighting ─────────────────────────────────
+// Bundles node and edge sets used to color-code DOT graph nodes/edges.
+// Highlight sets are shown in accent colors; background sets are dimmed.
+struct DotOverlaySets {
+  absl::flat_hash_set<NodeID> mNodes;
+  absl::flat_hash_set<Edge> mEdges;
+};
+
 /// Serialize a graph component to a Graphviz DOT file for debug visualization.
 void SerializeToDot(absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
                     std::filesystem::path const& out_path, usize comp_id = 0,
-                    absl::flat_hash_set<NodeID> const& nodes_highlight = {},
-                    absl::flat_hash_set<Edge> const& edges_highlight = {},
-                    absl::flat_hash_set<NodeID> const& nodes_background = {},
-                    absl::flat_hash_set<Edge> const& edges_background = {});
+                    DotOverlaySets const& highlight = {}, DotOverlaySets const& background = {});
 
 /// Pipeline stage tag for DOT graph debug snapshots.
 enum class GraphState : u8 {

@@ -226,15 +226,18 @@ auto Alignment::IsEmpty() const noexcept -> bool {
 // ---------------------------------------------------------------------------
 // ToString (debug/diagnostic output)
 // ---------------------------------------------------------------------------
-
 auto Alignment::ToString(Reference const& ref) const -> std::string {
   auto const chrom = ref.FindChromByIndex(mChromIdx);
   auto const mate_chrom = ref.FindChromByIndex(mMateChromIdx);
 
   auto const both_chroms_same =
       chrom.ok() && mate_chrom.ok() && chrom->Name() == mate_chrom->Name();
-  // NOLINTNEXTLINE(readability-avoid-nested-conditional-operator)
-  auto const rnext = both_chroms_same ? "=" : mate_chrom.ok() ? mate_chrom->Name() : "*";
+
+  auto const rnext = [&]() -> std::string {
+    if (both_chroms_same) return "=";
+    if (mate_chrom.ok()) return std::string(mate_chrom->Name());
+    return "*";
+  }();
 
   auto const seq = BuildSequence();
   auto const quals = BuildQualities();

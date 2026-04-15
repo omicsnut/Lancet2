@@ -145,6 +145,34 @@ auto SequenceComplexityScorer::IsPrimitiveMotif(std::string_view motif) -> bool 
   return true;
 }
 
+// ── Tandem repeat unit comparison helpers ──────────────────────────────
+// Used by FindExactRepeats and FindApproxRepeats to compare a single
+// unit of sequence against a motif, reducing nesting from 5 to 4.
+namespace {
+
+/// Returns true if seq[offset .. offset+motif.size()) exactly matches motif.
+[[nodiscard]] auto MotifMatchesAt(std::string_view seq, std::string_view motif, i32 offset)
+    -> bool {
+  auto const period = static_cast<i32>(motif.size());
+  for (i32 j = 0; j < period; ++j) {
+    if (seq[offset + j] != motif[j]) return false;
+  }
+  return true;
+}
+
+/// Returns number of mismatches between seq[offset .. offset+motif.size()) and motif.
+[[nodiscard]] auto CountMotifMismatches(std::string_view seq, std::string_view motif, i32 offset)
+    -> i32 {
+  auto const period = static_cast<i32>(motif.size());
+  i32 errors = 0;
+  for (i32 j = 0; j < period; ++j) {
+    if (seq[offset + j] != motif[j]) ++errors;
+  }
+  return errors;
+}
+
+}  // namespace
+
 // ============================================================================
 // FindExactRepeats — scan for exact tandem repeats
 //
@@ -154,7 +182,6 @@ auto SequenceComplexityScorer::IsPrimitiveMotif(std::string_view motif) -> bool 
 // Filters non-primitive motifs (e.g., ATAT when AT is found).
 // ============================================================================
 
-// NOLINTNEXTLINE(readability-function-size)  // TODO(lancet): refactor to reduce function size
 auto SequenceComplexityScorer::FindExactRepeats(std::string_view seq, i32 const max_period,
                                                 f32 const min_copies)
     -> std::vector<TandemRepeatResult> {
@@ -173,16 +200,7 @@ auto SequenceComplexityScorer::FindExactRepeats(std::string_view seq, i32 const 
       // Count consecutive exact matches
       i32 match_len = period;  // first copy
       while (start + match_len + period <= seq_len) {
-        bool matches = true;
-        for (i32 j = 0; j < period; ++j) {
-          if (seq[start + match_len + j] != motif[j]) {
-            matches = false;
-            break;
-          }
-        }
-        if (!matches) {
-          break;
-        }
+        if (!MotifMatchesAt(seq, motif, start + match_len)) break;
         match_len += period;
       }
 
@@ -220,7 +238,6 @@ auto SequenceComplexityScorer::FindExactRepeats(std::string_view seq, i32 const 
 // Only reports results with purity ≥ 0.75.
 // ============================================================================
 
-// NOLINTNEXTLINE(readability-function-size)  // TODO(lancet): refactor to reduce function size
 auto SequenceComplexityScorer::FindApproxRepeats(std::string_view seq, i32 const max_period,
                                                  f32 const min_copies, i32 const max_edits_per_unit)
     -> std::vector<TandemRepeatResult> {
@@ -240,15 +257,8 @@ auto SequenceComplexityScorer::FindApproxRepeats(std::string_view seq, i32 const
 
       // Extend by comparing successive units to the motif
       while (start + total_span + period <= seq_len) {
-        i32 unit_errors = 0;
-        for (i32 j = 0; j < period; ++j) {
-          if (seq[start + total_span + j] != motif[j]) {
-            unit_errors++;
-          }
-        }
-        if (unit_errors > max_edits_per_unit) {
-          break;
-        }
+        i32 const unit_errors = CountMotifMismatches(seq, motif, start + total_span);
+        if (unit_errors > max_edits_per_unit) break;
         total_errors += unit_errors;
         total_span += period;
         num_units++;
@@ -356,14 +366,12 @@ void SequenceComplexityScorer::AccumulateTRFeatures(VariantTRFeatures& features,
 // Score — main entry point. Delegates to ScoreContext, ScoreDeltas, ScoreTrMotif.
 // ============================================================================
 
-auto SequenceComplexityScorer::Score(std::string_view ref_haplotype, usize const ref_pos,
-                                     usize const ref_len, std::string_view alt_haplotype,
-                                     usize const alt_pos, usize const alt_len) const
+auto SequenceComplexityScorer::Score(HapRegion const& ref, HapRegion const& alt) const
     -> SequenceComplexity {
   SequenceComplexity cplx;
-  ScoreContext(cplx, ref_haplotype, ref_pos, ref_len);
-  ScoreDeltas(cplx, ref_haplotype, ref_pos, ref_len, alt_haplotype, alt_pos, alt_len);
-  ScoreTrMotif(cplx, alt_haplotype, alt_pos, alt_len);
+  ScoreContext(cplx, ref);
+  ScoreDeltas(cplx, ref, alt);
+  ScoreTrMotif(cplx, alt);
   return cplx;
 }
 
@@ -373,19 +381,18 @@ auto SequenceComplexityScorer::Score(std::string_view ref_haplotype, usize const
 // Populates: mContextHRun, mContextEntropy, mContextFlankLQ, mContextHaplotypeLQ
 // ============================================================================
 
-void SequenceComplexityScorer::ScoreContext(SequenceComplexity& cplx, std::string_view ref_hap,
-                                            usize const ref_pos, usize const ref_len) const {
+void SequenceComplexityScorer::ScoreContext(SequenceComplexity& cplx, HapRegion const& ref) const {
   // HRun + Entropy at ±20bp
-  auto const ctx_window = ExtractFlank(ref_hap, ref_pos, ref_len, CONTEXT_FLANK);
+  auto const ctx_window = ExtractFlank(ref.mHaplotype, ref.mPos, ref.mLen, CONTEXT_FLANK);
   cplx.mContextHRun = MaxHomopolymerRun(ctx_window);
   cplx.mContextEntropy = LocalShannonEntropy(ctx_window);
 
   // LongdustQ (k=4) at ±50bp — log1p-squashed to compress heavy tails
-  auto const lq_window = ExtractFlank(ref_hap, ref_pos, ref_len, LQ_FLANK);
+  auto const lq_window = ExtractFlank(ref.mHaplotype, ref.mPos, ref.mLen, LQ_FLANK);
   cplx.mContextFlankLQ = std::log1p(std::max(0.0, mFlankScorer.Score(lq_window)));
 
   // LongdustQ (k=7) on full haplotype — log1p-squashed
-  cplx.mContextHaplotypeLQ = std::log1p(std::max(0.0, mHaplotypeScorer.Score(ref_hap)));
+  cplx.mContextHaplotypeLQ = std::log1p(std::max(0.0, mHaplotypeScorer.Score(ref.mHaplotype)));
 }
 
 // ============================================================================
@@ -398,24 +405,20 @@ void SequenceComplexityScorer::ScoreContext(SequenceComplexity& cplx, std::strin
 // worse/better". An EBM can learn rescue logic: even if context is dangerous,
 // a negative delta (variant broke the homopolymer) rescues the call.
 // ============================================================================
-
-// NOLINTNEXTLINE(readability-function-size)  // TODO(lancet): refactor to reduce function size
-void SequenceComplexityScorer::ScoreDeltas(SequenceComplexity& cplx, std::string_view ref_hap,
-                                           usize const ref_pos, usize const ref_len,
-                                           std::string_view alt_hap, usize const alt_pos,
-                                           usize const alt_len) const {
+void SequenceComplexityScorer::ScoreDeltas(SequenceComplexity& cplx, HapRegion const& ref,
+                                           HapRegion const& alt) const {
   // HRun delta at ±5bp
-  auto const ref_hrun_window = ExtractFlank(ref_hap, ref_pos, ref_len, DELTA_HRUN_FLANK);
-  auto const alt_hrun_window = ExtractFlank(alt_hap, alt_pos, alt_len, DELTA_HRUN_FLANK);
+  auto const ref_hrun_window = ExtractFlank(ref.mHaplotype, ref.mPos, ref.mLen, DELTA_HRUN_FLANK);
+  auto const alt_hrun_window = ExtractFlank(alt.mHaplotype, alt.mPos, alt.mLen, DELTA_HRUN_FLANK);
   cplx.mDeltaHRun = MaxHomopolymerRun(alt_hrun_window) - MaxHomopolymerRun(ref_hrun_window);
 
   // Entropy delta at ±10bp
-  auto const ref_ent_window = ExtractFlank(ref_hap, ref_pos, ref_len, DELTA_ENTROPY_FLANK);
-  auto const alt_ent_window = ExtractFlank(alt_hap, alt_pos, alt_len, DELTA_ENTROPY_FLANK);
+  auto const ref_ent_window = ExtractFlank(ref.mHaplotype, ref.mPos, ref.mLen, DELTA_ENTROPY_FLANK);
+  auto const alt_ent_window = ExtractFlank(alt.mHaplotype, alt.mPos, alt.mLen, DELTA_ENTROPY_FLANK);
   cplx.mDeltaEntropy = LocalShannonEntropy(alt_ent_window) - LocalShannonEntropy(ref_ent_window);
 
   // LongdustQ delta at ±50bp (log-space)
-  auto const alt_lq_window = ExtractFlank(alt_hap, alt_pos, alt_len, LQ_FLANK);
+  auto const alt_lq_window = ExtractFlank(alt.mHaplotype, alt.mPos, alt.mLen, LQ_FLANK);
   auto const alt_lq = std::log1p(std::max(0.0, mFlankScorer.Score(alt_lq_window)));
   cplx.mDeltaFlankLQ = alt_lq - cplx.mContextFlankLQ;
 }
@@ -430,14 +433,13 @@ void SequenceComplexityScorer::ScoreDeltas(SequenceComplexity& cplx, std::string
 // sentinel, which would break EBM numerical binning.
 // ============================================================================
 
-void SequenceComplexityScorer::ScoreTrMotif(SequenceComplexity& cplx, std::string_view alt_hap,
-                                            usize const alt_pos, usize const alt_len) {
-  auto const window = ExtractFlank(alt_hap, alt_pos, alt_len, TR_MOTIF_FLANK);
-  auto const start = std::max(static_cast<i64>(0), static_cast<i64>(alt_pos) - TR_MOTIF_FLANK);
-  auto const var_pos_in_window = static_cast<i32>(static_cast<i64>(alt_pos) - start);
+void SequenceComplexityScorer::ScoreTrMotif(SequenceComplexity& cplx, HapRegion const& alt) {
+  auto const window = ExtractFlank(alt.mHaplotype, alt.mPos, alt.mLen, TR_MOTIF_FLANK);
+  auto const start = std::max(static_cast<i64>(0), static_cast<i64>(alt.mPos) - TR_MOTIF_FLANK);
+  auto const var_pos_in_window = static_cast<i32>(static_cast<i64>(alt.mPos) - start);
 
   VariantTRFeatures trep;
-  AccumulateTRFeatures(trep, window, var_pos_in_window, static_cast<i32>(alt_len),
+  AccumulateTRFeatures(trep, window, var_pos_in_window, static_cast<i32>(alt.mLen),
                        static_cast<i32>(window.size()));
 
   // Sentinel-safe transforms: dist < 0 means no TR found → all zeros

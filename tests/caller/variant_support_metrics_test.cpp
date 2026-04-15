@@ -1,3 +1,4 @@
+#include "lancet/caller/sample_format_data.h"
 #include "lancet/caller/variant_call.h"
 #include "lancet/caller/variant_support.h"
 
@@ -235,22 +236,23 @@ TEST_CASE("HSE ignores REF reads — only ALT haplotype IDs contribute",
 // ============================================================================
 // PDCV — integration testing happens via variant_call_test.cpp since PDCV
 // is computed from Graph::Path metadata, not from VariantSupport directly.
-// These tests verify the SampleGenotypeData rendering path.
+// These tests verify the SampleFormatData rendering path.
 // ============================================================================
 
-TEST_CASE("PDCV renders as dot when nullopt in SampleGenotypeData",
+TEST_CASE("PDCV returns nullopt when absent in SampleFormatData",
           "[lancet][caller][VariantCall][PDCV]") {
-  VariantCall::SampleGenotypeData const sample;
-  // mPathDepthCv defaults to std::nullopt
-  REQUIRE_FALSE(sample.mPathDepthCv.has_value());
+  SampleFormatData const sample;
+  // PDCV defaults to absent (no SetField call)
+  REQUIRE_FALSE(sample.GetField(SampleFormatData::PATH_DEPTH_CV).has_value());
 }
 
 TEST_CASE("PDCV stores f32 value when present", "[lancet][caller][VariantCall][PDCV]") {
-  VariantCall::SampleGenotypeData sample;
-  sample.mPathDepthCv = 0.45F;
-  REQUIRE(sample.mPathDepthCv.has_value());
+  SampleFormatData sample;
+  sample.SetField(SampleFormatData::PATH_DEPTH_CV, 0.45);
+  auto const pdcv = sample.GetField(SampleFormatData::PATH_DEPTH_CV);
+  REQUIRE(pdcv.has_value());
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-  REQUIRE_THAT(sample.mPathDepthCv.value(), Catch::Matchers::WithinAbs(0.45F, 1e-4F));
+  REQUIRE_THAT(pdcv.value(), Catch::Matchers::WithinAbs(0.45F, 1e-4F));
 }
 
 }  // namespace lancet::caller::tests

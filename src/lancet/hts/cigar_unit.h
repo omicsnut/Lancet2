@@ -89,7 +89,9 @@ inline constexpr auto CONSUMES_QRY = MakeConsumesQryLut();
 
 class CigarUnit {
  public:
-  explicit CigarUnit(u32 sam_cigop)
+  // Implicit conversion from BAM u32 cigar encoding enables span-based assign().
+  // NOLINTNEXTLINE(google-explicit-constructor)
+  CigarUnit(u32 sam_cigop)
       : mCigOp(static_cast<CigarOp>(bam_cigar_opchr(sam_cigop))),
         mLength(bam_cigar_oplen(sam_cigop)) {}
 

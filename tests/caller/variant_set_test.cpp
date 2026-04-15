@@ -7,7 +7,7 @@
 #include "spoa/spoa.hpp"
 
 // =========================================================================================
-// VariantSet::ExtractVariantsFromGraph — algorithm test suite
+// VariantSet constructor — algorithm test suite
 // -----------------------------------------------------------------------------------------
 // Validates SNV, INS, DEL, MNP, complex, and multiallelic extraction from SPOA
 // graph topologies. Each SECTION builds a controlled graph from string pairs and
@@ -31,8 +31,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     std::vector<std::string> const seqs = {"ATCG", "AGCG"};
     for (auto const& seq : seqs) graph.AddAlignment(alignment_engine->Align(seq, graph), seq);
 
-    VariantSet caller_set;
-    caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
+    VariantSet caller_set(graph, core::Window{}, 100);
 
     // Left-trimming strips the shared 'A' prefix, leaving the minimal REF='T', ALT='G'
     // representation. Position shifts +1 from the window start (100 → 101).
@@ -53,8 +52,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     std::vector<std::string> const seqs = {"ATCG", "AG"};
     for (auto const& seq : seqs) graph.AddAlignment(alignment_engine->Align(seq, graph), seq);
 
-    VariantSet caller_set;
-    caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
+    VariantSet caller_set(graph, core::Window{}, 100);
 
     // Deletions must retain the left anchor base — empty REF/ALT is invalid VCF.
     // REF='ATC', ALT='A' preserves the mandatory anchor.
@@ -81,8 +79,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     std::vector<std::string> const seqs = {"ATGTGC", "ACGTGC", "AGC", "ATGTAC"};
     for (auto const& seq : seqs) graph.AddAlignment(alignment_engine->Align(seq, graph), seq);
 
-    VariantSet caller_set;
-    caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
+    VariantSet caller_set(graph, core::Window{}, 100);
 
     // The TGT deletion spans up to the G→A SNV position, so all three ALTs fuse into
     // one multiallelic record.
@@ -125,8 +122,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     std::vector<std::string> const seqs = {"ATCG", "ATAACG"};
     for (auto const& seq : seqs) graph.AddAlignment(alignment_engine->Align(seq, graph), seq);
 
-    VariantSet caller_set;
-    caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
+    VariantSet caller_set(graph, core::Window{}, 100);
 
     REQUIRE(caller_set.Count() == 1);
     auto var = *caller_set.begin();
@@ -151,8 +147,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     std::vector<std::string> const seqs = {"ATCG", "AAAG"};
     for (auto const& seq : seqs) graph.AddAlignment(alignment_engine->Align(seq, graph), seq);
 
-    VariantSet caller_set;
-    caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
+    VariantSet caller_set(graph, core::Window{}, 100);
 
     REQUIRE(caller_set.Count() == 1);
     auto var = *caller_set.begin();
@@ -176,8 +171,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     std::vector<std::string> const seqs = {"ATCG", "AAAAG"};
     for (auto const& seq : seqs) graph.AddAlignment(alignment_engine->Align(seq, graph), seq);
 
-    VariantSet caller_set;
-    caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
+    VariantSet caller_set(graph, core::Window{}, 100);
 
     // SPOA optimizes this topological structure: instead of a monolithic
     // mismatch, the aligner decoupled them into two isolated events:
@@ -216,8 +210,7 @@ TEST_CASE("Topological VariantExtractor securely populates Multiallelic Payload 
     std::vector<std::string> const seqs = {"ATCG", "AGCG", "AACG", "ACG"};
     for (auto const& seq : seqs) graph.AddAlignment(alignment_engine->Align(seq, graph), seq);
 
-    VariantSet caller_set;
-    caller_set.ExtractVariantsFromGraph(graph, core::Window{}, 100);
+    VariantSet caller_set(graph, core::Window{}, 100);
 
     // All three ALTs (G, A, and deletion) merge into a single triallelic VCF record
     // with REF='AT' (anchor + deleted base).

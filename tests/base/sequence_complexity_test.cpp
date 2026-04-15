@@ -151,7 +151,8 @@ TEST_CASE("Score: poly-A variant produces expected context/delta/TR features",
   alt_hap += std::string(25, 'A');
   alt_hap += std::string(85, 'G');
 
-  auto const cplx = scorer.Score(ref_hap, 90, 20, alt_hap, 90, 25);
+  auto const cplx = scorer.Score({.mHaplotype = ref_hap, .mPos = 90, .mLen = 20},
+                                 {.mHaplotype = alt_hap, .mPos = 90, .mLen = 25});
 
   // Context: REF ±20bp around poly-A → high HRun, low entropy
   CHECK(cplx.ContextHRun() >= 20);  // 20bp of A's visible in ±20bp window
@@ -174,7 +175,8 @@ TEST_CASE("Score: non-repetitive REF produces low context scores",
   for (int iter = 0; iter < 50; ++iter) haplo += "ACGT";  // 200bp
 
   // REF = ALT (no change) at position 100, length 1
-  auto const cplx = scorer.Score(haplo, 100, 1, haplo, 100, 1);
+  auto const cplx = scorer.Score({.mHaplotype = haplo, .mPos = 100, .mLen = 1},
+                                 {.mHaplotype = haplo, .mPos = 100, .mLen = 1});
 
   CHECK(cplx.ContextHRun() == 1);                                    // no homopolymer
   CHECK(cplx.ContextEntropy() == Catch::Approx(2.0F).margin(0.1F));  // near-max entropy
@@ -189,7 +191,8 @@ TEST_CASE("Score: sentinel handling — no TR found → zeros", "[lancet][base][
   std::string const haplo = "ACGTACGTACGTACGTACGTACGTACGTACGT"
                             "TGCATGCATGCATGCATGCATGCATGCATGCA";
 
-  auto const cplx = scorer.Score(haplo, 16, 1, haplo, 16, 1);
+  auto const cplx = scorer.Score({.mHaplotype = haplo, .mPos = 16, .mLen = 1},
+                                 {.mHaplotype = haplo, .mPos = 16, .mLen = 1});
 
   // TrAffinity should be 0 or close to 0 if no TR found nearby
   CHECK(cplx.TrAffinity() >= 0.0F);
@@ -206,7 +209,8 @@ TEST_CASE("Score: ScoreMacro matches LongdustQScorer output",
 
   // Score a repetitive haplotype
   auto const haplotype = std::string(200, 'A');
-  auto const cplx = scorer.Score(haplotype, 100, 1, haplotype, 100, 1);
+  auto const cplx = scorer.Score({.mHaplotype = haplotype, .mPos = 100, .mLen = 1},
+                                 {.mHaplotype = haplotype, .mPos = 100, .mLen = 1});
 
   // ContextHaplotypeLQ = log1p(direct LQ score)
   CHECK(cplx.ContextHaplotypeLQ() ==
@@ -316,8 +320,10 @@ TEST_CASE("SequenceComplexity::MergeMax: element-wise max", "[lancet][base][sequ
   alt2 += std::string(30, 'A');
   alt2 += std::string(80, 'G');
 
-  auto cplx1 = scorer.Score(ref_hap, 90, 20, alt1, 90, 25);
-  auto const cplx2 = scorer.Score(ref_hap, 90, 20, alt2, 90, 30);
+  auto cplx1 = scorer.Score({.mHaplotype = ref_hap, .mPos = 90, .mLen = 20},
+                            {.mHaplotype = alt1, .mPos = 90, .mLen = 25});
+  auto const cplx2 = scorer.Score({.mHaplotype = ref_hap, .mPos = 90, .mLen = 20},
+                                  {.mHaplotype = alt2, .mPos = 90, .mLen = 30});
 
   // MergeMax should take element-wise max
   cplx1.MergeMax(cplx2);

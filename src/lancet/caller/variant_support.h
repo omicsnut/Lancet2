@@ -1,17 +1,20 @@
 #ifndef SRC_LANCET_CALLER_VARIANT_SUPPORT_H_
 #define SRC_LANCET_CALLER_VARIANT_SUPPORT_H_
 
+#include "lancet/base/mann_whitney.h"
 #include "lancet/base/types.h"
+#include "lancet/caller/per_allele_data.h"
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/types/span.h"
 
-#include <algorithm>
-#include <array>
-#include <memory>
+#include <functional>
+#include <numeric>
 #include <optional>
-#include <string_view>
 #include <vector>
+
+#include <cmath>
 
 namespace lancet::caller {
 
@@ -28,8 +31,6 @@ namespace lancet::caller {
 // ============================================================================
 using AlleleIndex = u8;
 static constexpr AlleleIndex REF_ALLELE_IDX = 0;
-
-enum class Strand : bool { FWD, REV };
 
 // ============================================================================
 // VariantSupport: per-sample allele evidence aggregator
@@ -271,7 +272,7 @@ class VariantSupport {
   // Returns: vector of K*(K+1)/2 Phred-scaled likelihoods (best genotype PL=0).
   //
   // See docs/guides/variant_discovery_genotyping.md for the full DM derivation.
-  [[nodiscard]] auto ComputePLs() const -> std::vector<int>;
+  [[nodiscard]] auto ComputePLs() const -> absl::InlinedVector<u32, 6>;
 
   // Genotype Quality (GQ): confidence in the called genotype.
   // Second-smallest PL value, capped at 99. Standard GATK convention.
@@ -279,7 +280,7 @@ class VariantSupport {
   //
   // Value now derives from DM-based PLs, which plateau at high depth.
   // See: https://gatk.broadinstitute.org/hc/en-us/articles/360035531692
-  [[nodiscard]] static auto ComputeGQ(std::vector<int> const& pls) -> int;
+  [[nodiscard]] static auto ComputeGQ(absl::Span<u32 const> phred_likelihoods) -> u32;
 
   // ── Continuous Mixture Log-Odds (CMLOD FORMAT field) ──
 
@@ -322,78 +323,87 @@ class VariantSupport {
   void MergeAlleleFrom(VariantSupport const& src, AlleleIndex src_allele, AlleleIndex dst_allele);
 
  private:
-  struct PerAlleleData {
-    // Deduplicate reads: a read can support an allele only once per strand.
-    // Key = read name hash, value = strand seen.
-    absl::flat_hash_map<u32, Strand> mNameHashes;
-
-    // Per-read representative base quality at the variant position, split by
-    // strand. For indels, this is the MINIMUM PBQ across the variant region
-    // (one entry per read, NOT per base position -- see AddEvidence comment).
-    std::vector<u8> mFwdBaseQuals;
-    std::vector<u8> mRevBaseQuals;
-
-    // Per-read mapping quality (for RMS RMQ computation).
-    std::vector<u8> mMapQuals;
-
-    // Per-read normalized alignment score (for filtering / annotation).
-    std::vector<f64> mAlnScores;
-
-    // Count of soft-clipped reads supporting this allele (for SCA FORMAT tag).
-    usize mSoftClipCount = 0;
-
-    // Insert sizes from properly-paired reads (for FLD FORMAT tag).
-    // Only non-zero insert sizes from proper pairs are tracked.
-    std::vector<f64> mProperPairIsizes;
-
-    // Folded read positions: min(p, 1-p) for RPCD effect size test.
-    std::vector<f64> mFoldedReadPositions;
-
-    // Edit distances (NM) against REF haplotype for ASMD delta.
-    // Stored as f64 for mean computation.
-    std::vector<f64> mRefNmValues;
-
-    // Fragment alignment start positions for FSSE (Fragment Start Shannon Entropy).
-    // Genomic coordinates — high repeat count at the same position signals PCR duplicates.
-    std::vector<i64> mAlignmentStarts;
-
-    // Edit distances (NM) against each read's assigned haplotype for AHDD.
-    // Stored as f64 for mean computation. Populated for ALL reads — REF reads
-    // are scored against haplotype 0 (the REF), ALT reads against their
-    // winning ALT haplotype.
-    std::vector<f64> mOwnHapNmValues;
-
-    // SPOA path IDs for HSE (Haplotype Segregation Entropy).
-    // Tracks which assembled haplotype each ALT read was assigned to.
-    std::vector<u32> mHaplotypeIds;
-  };
-
   // Dense vector indexed by AlleleIndex: mAlleleData[0]=REF, [1]=ALT1, ...
   std::vector<PerAlleleData> mAlleleData;
 
   // Grow the vector to accommodate a new allele index.
   void EnsureAlleleSlot(AlleleIndex idx);
-};
 
-class SupportArray {
- public:
-  struct NamedSupport {
-    std::string_view mSampleName;
-    std::unique_ptr<VariantSupport> mData;
-  };
+  // ── Template Helpers (defined in header for instantiation) ─────────────
 
-  [[nodiscard]] auto Find(std::string_view sample_name) const -> VariantSupport const*;
-  [[nodiscard]] auto FindOrCreate(std::string_view sample_name) -> VariantSupport&;
-  [[nodiscard]] auto Extract(std::string_view sample_name) -> std::unique_ptr<VariantSupport>;
-  void Insert(std::string_view sample_name, std::unique_ptr<VariantSupport> data) {
-    mItems.emplace_back(sample_name, std::move(data));
+  /// Pool values from all non-REF alleles into a single vector.
+  template <typename ValueType, typename FieldAccessor>
+  [[nodiscard]] auto PoolAltValues(FieldAccessor const& field_getter) const
+      -> std::vector<ValueType> {
+    std::vector<ValueType> pooled;
+    for (usize aidx = 1; aidx < mAlleleData.size(); ++aidx) {
+      auto const& field = field_getter(mAlleleData[aidx]);
+      pooled.insert(pooled.end(), field.begin(), field.end());
+    }
+    return pooled;
   }
 
-  [[nodiscard]] auto begin() const { return mItems.begin(); }
-  [[nodiscard]] auto end() const { return mItems.end(); }
+  /// Compute REF-vs-pooled-ALT effect size using a field accessor.
+  /// Pattern A: wraps MannWhitneyEffectSize for Cohen's D metrics.
+  template <typename ValueType, typename FieldAccessor>
+  [[nodiscard]] auto RefVsAltEffectSize(FieldAccessor&& field_getter) const -> std::optional<f64> {
+    if (REF_ALLELE_IDX >= mAlleleData.size()) return std::nullopt;
+    auto const ref_vals = absl::MakeConstSpan(field_getter(mAlleleData[REF_ALLELE_IDX]));
+    auto const alt_vals = PoolAltValues<ValueType>(std::forward<FieldAccessor>(field_getter));
+    return base::MannWhitneyEffectSize<ValueType>(ref_vals, absl::MakeConstSpan(alt_vals));
+  }
 
- private:
-  absl::InlinedVector<NamedSupport, 8> mItems;
+  /// Compute mean(pooled ALT values) − mean(REF values) with an optional offset.
+  /// Pattern B: uses std::transform_reduce with explicit f64 promotion.
+  template <typename ValueType, typename FieldAccessor>
+  [[nodiscard]] auto MeanAltMinusRef(FieldAccessor&& field_getter, f64 offset = 0.0) const
+      -> std::optional<f64> {
+    if (REF_ALLELE_IDX >= mAlleleData.size()) return std::nullopt;
+    auto const& ref_vals = field_getter(mAlleleData[REF_ALLELE_IDX]);
+    if (ref_vals.empty()) return std::nullopt;
+
+    // std::transform_reduce with explicit f64 cast avoids narrowing from u32→f64 implicit
+    // promotion in std::accumulate. Both produce identical results for u32 inputs (f64 has
+    // 52-bit mantissa, sufficient for exact integer sums up to 2^53), but transform_reduce
+    // makes the widening intent explicit at the call site.
+    auto const ref_sum =
+        std::transform_reduce(ref_vals.begin(), ref_vals.end(), 0.0, std::plus<>{},
+                              [](ValueType value) { return static_cast<f64>(value); });
+    auto const ref_mean = ref_sum / static_cast<f64>(ref_vals.size());
+
+    auto const alt_vals = PoolAltValues<ValueType>(std::forward<FieldAccessor>(field_getter));
+    if (alt_vals.empty()) return std::nullopt;
+
+    auto const alt_sum =
+        std::transform_reduce(alt_vals.begin(), alt_vals.end(), 0.0, std::plus<>{},
+                              [](ValueType value) { return static_cast<f64>(value); });
+    auto const alt_mean = alt_sum / static_cast<f64>(alt_vals.size());
+    return (alt_mean - offset) - ref_mean;
+  }
+
+  /// Compute normalized Shannon entropy of pooled ALT values.
+  /// Pattern C: bins values via bin_func, normalizes by log2(max_bins).
+  template <typename ValueType, typename BinKeyType, typename FieldAccessor, typename BinFunc>
+  [[nodiscard]] auto AltPooledEntropy(FieldAccessor const& field_getter, BinFunc const& bin_func,
+                                      f64 max_bins) const -> std::optional<f64> {
+    auto const pooled = PoolAltValues<ValueType>(field_getter);
+    if (pooled.size() < 3) return std::nullopt;
+
+    absl::flat_hash_map<BinKeyType, usize> bin_counts;
+    for (auto const& value : pooled) {
+      bin_counts[bin_func(value)]++;
+    }
+
+    auto const total = static_cast<f64>(pooled.size());
+    f64 entropy = 0.0;
+    for (auto const& [_key, count] : bin_counts) {
+      auto const prob = static_cast<f64>(count) / total;
+      entropy -= prob * std::log2(prob);
+    }
+
+    auto const max_entropy = std::log2(std::min(total, max_bins));
+    return max_entropy > 0.0 ? (entropy / max_entropy) : 0.0;
+  }
 };
 
 }  // namespace lancet::caller

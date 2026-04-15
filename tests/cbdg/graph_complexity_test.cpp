@@ -51,7 +51,7 @@ TEST_CASE("GEI: default-constructed → GEI = 0", "[lancet][cbdg][graph_complexi
 
 TEST_CASE("GraphMetrics::FormatVcfValue: 3 comma-separated values",
           "[lancet][cbdg][graph_complexity][format]") {
-  lancet::caller::RawVariant::GraphMetrics gmtx;
+  lancet::caller::GraphMetrics gmtx;
   gmtx.mGraphEntanglementIndex = 2.345;
   gmtx.mTipToPathCovRatio = 0.15;
   gmtx.mMaxSingleDirDegree = 4;

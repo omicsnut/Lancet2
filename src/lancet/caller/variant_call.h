@@ -3,15 +3,15 @@
 
 #include "lancet/base/types.h"
 #include "lancet/caller/raw_variant.h"
+#include "lancet/caller/sample_format_data.h"
+#include "lancet/caller/support_array.h"
 #include "lancet/caller/variant_support.h"
 #include "lancet/core/sample_info.h"
 
 #include "absl/container/flat_hash_map.h"
-#include "absl/container/inlined_vector.h"
 #include "absl/types/span.h"
 
 #include <numeric>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,10 +30,8 @@ using VariantID = u64;
 //     Input:  {chr1:100 A→T, A→G}  (One Multiallelic RawVariant)
 //     Output: VCF record: chr1 100 . A T,G ... (comma-separated ALTs)
 //
-// clang-format off
-// FORMAT fields (per-sample):
-//   GT:AD:ADF:ADR:DP:RMQ:NPBQ:SB:SCA:FLD:RPCD:BQCD:MQCD:ASMD:SDFC:PRAD:PANG:CMLOD:FSSE:AHDD:HSE:PDCV:PL:GQ
-// clang-format on
+// FORMAT fields (per-sample): see vcf_formatter.h::FORMAT_HEADER for the
+// authoritative single-source-of-truth list and field ordering rationale.
 //
 //   GT   - Genotype (e.g., 0/1, 1/2 for multi-allelic)
 //   AD   - Number=R: read depth per allele (REF, ALT1, ALT2, ...)
@@ -64,48 +62,9 @@ class VariantCall {
  public:
   using Samples = absl::Span<core::SampleInfo const>;
 
-  struct SampleGenotypeData {
-    // 8B Align: Vectors/Pointers
-    std::vector<int> mPhredLikelihoods;
-    absl::InlinedVector<u16, 4> mAlleleDepths;
-    absl::InlinedVector<u16, 4> mFwdAlleleDepths;
-    absl::InlinedVector<u16, 4> mRevAlleleDepths;
-    absl::InlinedVector<f32, 4> mRmsMappingQualities;
-    absl::InlinedVector<f32, 4> mNormPosteriorBQs;
-    absl::InlinedVector<f64, 4> mContinuousMixtureLods;
-
-    // 4B Align: Scalars
-    f32 mStrandBias{0.0F};
-    f32 mSoftClipAsym{0.0F};
-
-    // std::optional-initialized: std::nullopt from VariantSupport stays nullopt here.
-    // Cannot use IEEE NaN because -ffast-math (set in cmake/defaults.cmake) implies
-    // -ffinite-math-only, which lets the compiler assume NaN never exists — so
-    // std::isnan() is optimized to false and quiet_NaN() may be eliminated.
-    std::optional<f32> mFragLenDelta;
-    std::optional<f32> mReadPosCohenD;
-    std::optional<f32> mBaseQualCohenD;
-    std::optional<f32> mMapQualCohenD;
-    std::optional<f32> mAlleleMismatchDelta;
-    std::optional<f32> mFragStartEntropy;
-    std::optional<f32> mAltHapDiscordDelta;
-    std::optional<f32> mHaplotypeSegEntropy;
-    std::optional<f32> mPathDepthCv;
-
-    f32 mSiteDepthFoldChange{0.0F};
-    f32 mPolarRadius{0.0F};
-    f32 mPolarAngle{0.0F};
-    u32 mTotalDepth{0};
-    u32 mGenotypeQuality{0};
-
-    // 2B Align: Pairs
-    std::pair<i16, i16> mGenotypeIndices = {-1, -1};
-
-    // 1B Align: Bools
-    bool mIsMissingSupport = false;
-
-    [[nodiscard]] auto RenderVcfString() const -> std::string;
-  };
+  // SampleFormatData: per-sample FORMAT field payload.
+  // See sample_format_data.h for the full class definition.
+  using SampleFormatData = caller::SampleFormatData;
 
   // Native multi-allelic constructor
   using SupportsByVariant = absl::flat_hash_map<RawVariant const*, SupportArray>;
@@ -121,10 +80,8 @@ class VariantCall {
   [[nodiscard]] auto NumAltAlleles() const -> usize { return mAltAlleles.size(); }
   [[nodiscard]] auto VariantLengths() const -> absl::Span<i64 const> { return mVariantLengths; }
   [[nodiscard]] auto Quality() const -> f64 { return mSiteQuality; }
-  [[nodiscard]] auto State() const -> RawVariant::State { return mState; }
-  [[nodiscard]] auto Categories() const -> absl::Span<RawVariant::Type const> {
-    return mCategories;
-  }
+  [[nodiscard]] auto State() const -> AlleleState { return mState; }
+  [[nodiscard]] auto Categories() const -> absl::Span<AlleleType const> { return mCategories; }
   [[nodiscard]] auto IsMultiallelic() const -> bool { return mIsMultiallelic; }
 
   [[nodiscard]] auto NumSamples() const -> usize { return mSampleGenotypes.size(); }
@@ -140,7 +97,7 @@ class VariantCall {
   // ── VARIANT STORE EXTENSIONS (* ALLELE OVERLAPS) ──────────────────────
   [[nodiscard]] auto IsDeletion() const -> bool {
     return std::ranges::any_of(mCategories,
-                               [](RawVariant::Type type) { return type == RawVariant::Type::DEL; });
+                               [](AlleleType type) { return type == AlleleType::DEL; });
   }
 
   [[nodiscard]] auto GetMaxDeletionLength() const -> i64 {
@@ -148,8 +105,8 @@ class VariantCall {
       return std::max(max_so_far, curr_len);
     };
 
-    static constexpr auto FILTER_DEL = [](RawVariant::Type var_type, i64 len_val) {
-      return var_type == RawVariant::Type::DEL ? len_val : 0;
+    static constexpr auto FILTER_DEL = [](AlleleType var_type, i64 len_val) {
+      return var_type == AlleleType::DEL ? len_val : 0;
     };
 
     return std::transform_reduce(mCategories.cbegin(), mCategories.cend(), mVariantLengths.cbegin(),
@@ -222,16 +179,16 @@ class VariantCall {
 
   std::vector<i64> mVariantLengths;
   std::vector<std::string> mAltAlleles;
-  std::vector<RawVariant::Type> mCategories;
-  std::vector<SampleGenotypeData> mSampleGenotypes;
+  std::vector<AlleleType> mCategories;
+  std::vector<SampleFormatData> mSampleGenotypes;
 
   // ── Sequence complexity (11 coverage-invariant features, from RawVariant) ─
   // ── Graph complexity metrics (from RawVariant, transcribed) ────────────
   base::SequenceComplexity mSeqCx;
-  RawVariant::GraphMetrics mGraphCx;
+  GraphMetrics mGraphCx;
 
   // ── 4B/2B Alignment ─────────────────────────────────────────────────────
-  RawVariant::State mState = RawVariant::State::NONE;
+  AlleleState mState = AlleleState::NONE;
 
   // ── 1B Alignment ────────────────────────────────────────────────────────
   bool mIsMultiallelic = false;
@@ -264,7 +221,7 @@ class VariantCall {
   void BuildFormatFields(SupportArray const& evidence, Samples samps, bool case_ctrl_mode);
 
   // Sets mGenotypeIndices from PL values.
-  static void AssignGenotype(SampleGenotypeData& sample, absl::Span<int const> pls,
+  static void AssignGenotype(SampleFormatData& sample, absl::Span<u32 const> pls,
                              usize num_alleles);
 
   /// Convert a GL index back to genotype string (e.g., GL=4 with k=3 → "1/2")
@@ -272,14 +229,14 @@ class VariantCall {
 
   void UpdateSiteQuality(core::SampleInfo const& sinfo, VariantSupport const* support,
                          SupportArray const& evidence, Samples samps, bool case_ctrl_mode,
-                         absl::Span<int const> pls);
+                         absl::Span<u32 const> pls);
 
   /// Somatic log odds ratio: case ALT enrichment vs control.
   [[nodiscard]] static auto SomaticLogOddsRatio(core::SampleInfo const& curr,
                                                 SupportArray const& supports, Samples samps) -> f64;
 
   /// Extract per-allele metrics from VariantSupport.
-  static void AssignPerAlleleMetrics(SampleGenotypeData& sample, VariantSupport const* support,
+  static void AssignPerAlleleMetrics(SampleFormatData& sample, VariantSupport const* support,
                                      usize num_alleles);
 
   /// Compute SHARED/CTRL/CASE/UNKNOWN state from evidence.

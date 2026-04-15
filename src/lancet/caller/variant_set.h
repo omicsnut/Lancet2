@@ -2,17 +2,16 @@
 #define SRC_LANCET_CALLER_VARIANT_SET_H_
 
 #include "lancet/base/types.h"
-#include "lancet/caller/msa_builder.h"
 #include "lancet/caller/raw_variant.h"
 #include "lancet/core/window.h"
 
-#include "absl/container/btree_map.h"
 #include "absl/container/btree_set.h"
-#include "absl/types/span.h"
 
-#include <array>
 #include <string_view>
-#include <vector>
+
+namespace spoa {
+class Graph;
+}  // namespace spoa
 
 namespace lancet::caller {
 
@@ -25,9 +24,7 @@ namespace lancet::caller {
 // ============================================================================
 class VariantSet {
  public:
-  VariantSet() = default;
-  void ExtractVariantsFromGraph(spoa::Graph const& graph, core::Window const& win,
-                                usize ref_anchor_start);
+  VariantSet(spoa::Graph const& graph, core::Window const& win, usize ref_anchor_start);
 
   using BTree = absl::btree_set<RawVariant>;
 

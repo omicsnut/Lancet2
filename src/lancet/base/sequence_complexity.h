@@ -14,6 +14,15 @@
 
 namespace lancet::base {
 
+/// Haplotype region: a (haplotype, position, length) triple used by
+/// SequenceComplexityScorer to identify variant coordinates within
+/// assembled haplotype strings.
+struct HapRegion {
+  std::string_view mHaplotype;  // 16B — full assembled haplotype sequence
+  usize mPos = 0;               //  8B — 0-based variant start position
+  usize mLen = 0;               //  8B — variant allele length
+};
+
 // ============================================================================
 // Tandem Repeat Detection — Result and Intermediate Types
 // ============================================================================
@@ -175,15 +184,9 @@ class SequenceComplexityScorer {
   /// Produces the 11-feature SequenceComplexity by delegating to
   /// ScoreContext, ScoreDeltas, and ScoreTrMotif.
   ///
-  /// @param ref_haplotype  Full assembled reference haplotype sequence
-  /// @param ref_pos        0-based variant start position in REF haplotype
-  /// @param ref_len        REF allele length
-  /// @param alt_haplotype  Full assembled ALT haplotype sequence
-  /// @param alt_pos        0-based variant start position in ALT haplotype
-  /// @param alt_len        Max of REF/ALT allele lengths
-  [[nodiscard]] auto Score(std::string_view ref_haplotype, usize ref_pos, usize ref_len,
-                           std::string_view alt_haplotype, usize alt_pos, usize alt_len) const
-      -> SequenceComplexity;
+  /// @param ref  REF haplotype region (haplotype string, variant pos, allele length)
+  /// @param alt  ALT haplotype region (haplotype string, variant pos, allele length)
+  [[nodiscard]] auto Score(HapRegion const& ref, HapRegion const& alt) const -> SequenceComplexity;
 
   // ── Component methods (public for unit testing) ───────────────────────
 
@@ -246,16 +249,13 @@ class SequenceComplexityScorer {
   // ── Private scoring helpers (one per feature group) ───────────────────
 
   /// Populate context features from REF haplotype.
-  void ScoreContext(SequenceComplexity& cplx, std::string_view ref_hap, usize ref_pos,
-                    usize ref_len) const;
+  void ScoreContext(SequenceComplexity& cplx, HapRegion const& ref) const;
 
   /// Populate delta features from ALT−REF differences.
-  void ScoreDeltas(SequenceComplexity& cplx, std::string_view ref_hap, usize ref_pos, usize ref_len,
-                   std::string_view alt_hap, usize alt_pos, usize alt_len) const;
+  void ScoreDeltas(SequenceComplexity& cplx, HapRegion const& ref, HapRegion const& alt) const;
 
   /// Populate TR motif features from ALT haplotype.
-  static void ScoreTrMotif(SequenceComplexity& cplx, std::string_view alt_hap, usize alt_pos,
-                           usize alt_len);
+  static void ScoreTrMotif(SequenceComplexity& cplx, HapRegion const& alt);
 
   // ── Internal helpers ──────────────────────────────────────────────────
 

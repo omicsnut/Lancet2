@@ -2,6 +2,7 @@
 
 #include "lancet/base/logging.h"
 #include "lancet/base/types.h"
+#include "lancet/caller/alt_allele.h"
 #include "lancet/caller/raw_variant.h"
 #include "lancet/core/window.h"
 
@@ -58,7 +59,7 @@ void VariantStore::FlushVariantsBeforeWindow(Window const& win, std::ostream& ou
       if (is_before_window) keys_to_extract.emplace_back(item.first);
     }
 
-    using caller::RawVariant::Type::REF;
+    using caller::AlleleType::REF;
     static auto const HAS_NO_SUPPORT = [](Value const& item) -> bool {
       return !item->HasAltSupport() ||
              std::ranges::all_of(item->Categories(), [](auto call) -> bool { return call == REF; });
@@ -80,7 +81,7 @@ void VariantStore::FlushAllVariantsInStore(std::ostream& out) {
   for (auto& bucket : mBuckets) {
     absl::MutexLock const lock(bucket.mUtex);
 
-    using caller::RawVariant::Type::REF;
+    using caller::AlleleType::REF;
     static auto const HAS_NO_SUPPORT = [](Value const& item) -> bool {
       return !item->HasAltSupport() ||
              std::ranges::all_of(item->Categories(), [](auto call) -> bool { return call == REF; });

@@ -57,8 +57,9 @@ void VariantAnnotator::AnnotateSequenceComplexity(caller::VariantSet const& vset
       for (auto const& [hap_idx, hap_pos] : alt.mLocalHapStart0Idxs) {
         if (hap_idx >= haplotypes.size() || hap_idx == REF_HAP_IDX) continue;
 
-        auto cplx =
-            mSeqCxScorer.Score(ref_hap, ref_pos, ref_len, haplotypes[hap_idx], hap_pos, alt_len);
+        auto cplx = mSeqCxScorer.Score(
+            {.mHaplotype = ref_hap, .mPos = ref_pos, .mLen = ref_len},
+            {.mHaplotype = haplotypes[hap_idx], .mPos = hap_pos, .mLen = alt_len});
         var.mSeqCx.MergeMax(cplx);
         scored_any_alt = true;
       }
@@ -66,7 +67,8 @@ void VariantAnnotator::AnnotateSequenceComplexity(caller::VariantSet const& vset
 
     // If no ALT haplotypes found, score REF vs REF to populate context features
     if (!scored_any_alt) {
-      var.mSeqCx = mSeqCxScorer.Score(ref_hap, ref_pos, ref_len, ref_hap, ref_pos, ref_len);
+      var.mSeqCx = mSeqCxScorer.Score({.mHaplotype = ref_hap, .mPos = ref_pos, .mLen = ref_len},
+                                      {.mHaplotype = ref_hap, .mPos = ref_pos, .mLen = ref_len});
     }
   }
 }
@@ -84,7 +86,7 @@ void VariantAnnotator::AnnotateSequenceComplexity(caller::VariantSet const& vset
 // ============================================================================
 void VariantAnnotator::AnnotateGraphComplexity(caller::VariantSet const& vset,
                                                cbdg::GraphComplexity const& component_cx) {
-  auto const metrics = caller::RawVariant::GraphMetrics{
+  auto const metrics = caller::GraphMetrics{
       .mGraphEntanglementIndex = component_cx.GraphEntanglementIndex(),
       .mTipToPathCovRatio = component_cx.TipToPathCovRatio(),
       .mMaxSingleDirDegree = component_cx.MaxSingleDirDegree(),

@@ -19,7 +19,7 @@ namespace {
 
 /// Helper: build a CigarUnit from length + BAM_CIGAR op code (e.g. BAM_CMATCH).
 [[nodiscard]] auto MakeCigar(u32 len, u32 bam_op) -> CigarUnit {
-  return CigarUnit(bam_cigar_gen(len, bam_op));
+  return {bam_cigar_gen(len, bam_op)};
 }
 
 /// Helper: encode a DNA string into numeric 0-4 values matching the genotyper

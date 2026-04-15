@@ -29,7 +29,22 @@ namespace lancet::hts {
 //   N  — reference skip, advance reference only, excluded from NM
 //   H,P — no advancement, excluded from NM
 // ============================================================================
-// NOLINTNEXTLINE(readability-function-size)  // TODO(lancet): refactor to reduce function size
+// Count mismatches in an alignment match (M op) region by comparing
+// query and target bases position-by-position.
+[[nodiscard]] inline auto CountMismatches(absl::Span<u8 const> encoded_query,
+                                          absl::Span<u8 const> encoded_target, usize& qpos,
+                                          usize& tpos, u32 len) -> u32 {
+  u32 mismatches = 0;
+  for (u32 i = 0; i < len; ++i, ++qpos, ++tpos) {
+    if (qpos < encoded_query.size() &&
+        tpos < encoded_target.size() &&
+        encoded_query[qpos] != encoded_target[tpos]) {
+      ++mismatches;
+    }
+  }
+  return mismatches;
+}
+
 [[nodiscard]] inline auto ComputeEditDistance(std::vector<CigarUnit> const& cigar,
                                               absl::Span<u8 const> encoded_query,
                                               absl::Span<u8 const> encoded_target) -> u32 {
@@ -43,15 +58,7 @@ namespace lancet::hts {
 
     switch (cigar_op) {
       case CigarOp::ALIGNMENT_MATCH:
-        // M op: must compare sequences base-by-base for mismatches.
-        // Encoded bases are numeric (0-4), so comparison is case-insensitive.
-        for (u32 i = 0; i < len; ++i, ++qpos, ++tpos) {
-          if (qpos < encoded_query.size() &&
-              tpos < encoded_target.size() &&
-              encoded_query[qpos] != encoded_target[tpos]) {
-            ++edist;
-          }
-        }
+        edist += CountMismatches(encoded_query, encoded_target, qpos, tpos, len);
         break;
       case CigarOp::SEQUENCE_MATCH:
         // = op: all matches, no NM contribution

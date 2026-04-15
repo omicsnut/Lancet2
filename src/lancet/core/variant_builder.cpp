@@ -247,8 +247,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     // (i.e., --out-graphs-dir was not specified on the CLI).
     mSpoaState.SerializeGraph(MakeGfaPath(*window, idx));
 
-    caller::VariantSet vset;
-    vset.ExtractVariantsFromGraph(mSpoaState.mGraph, *window, anchor_start);
+    caller::VariantSet vset(mSpoaState.mGraph, *window, anchor_start);
 
     // Annotate complexity features on every variant
     mAnnotator.AnnotateSequenceComplexity(vset, absl::MakeConstSpan(comp_haps));
