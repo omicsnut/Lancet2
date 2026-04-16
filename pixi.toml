@@ -9,7 +9,7 @@ version = "2.9.0"
 
 # ── CMake Configure ──────────────────────────────────────────────────────────
 # Both presets accept extra CMake flags: pixi run <task> -- -DFLAG=VALUE
-configure = { cmd = [
+configure-release = { cmd = [
   "cmake", "-GNinja",
   "-B", "cmake-build-release",
   "-DCMAKE_BUILD_TYPE=Release",
@@ -30,8 +30,8 @@ configure-debug = { cmd = [
 ], description = "Configure Debug build (tests ON, compile_commands.json)" }
 
 # ── Build ────────────────────────────────────────────────────────────────────
-build = { cmd = "cmake --build cmake-build-release", depends-on = [
-  "configure",
+build-release = { cmd = "cmake --build cmake-build-release", depends-on = [
+  "configure-release",
 ], description = "Build Lancet2 in Release mode" }
 
 build-debug = { cmd = "cmake --build cmake-build-debug", depends-on = [
@@ -44,29 +44,29 @@ test = { cmd = "./cmake-build-debug/tests/TestLancet2", depends-on = [
 ], description = "Run Catch2 unit tests" }
 
 bench = { cmd = "./cmake-build-release/benchmarks/BenchmarkLancet2", depends-on = [
-  "build",
-], description = "Run benchmarks (first: pixi run configure -- -DLANCET_BENCHMARKS=ON)" }
+  "build-release",
+], description = "Run benchmarks (first: pixi run configure-release -- -DLANCET_BENCHMARKS=ON)" }
 
 # ── Fix (apply auto-fixes, then reformat) ────────────────────────────────────
 fmt-fix = { cmd = "python3 scripts/run_clang_format.py --fix", description = "Apply clang-format to all C++ sources" }
 
 lint-fix = { cmd = "python3 scripts/run_clang_tidy.py --fix", depends-on = [
-  "build",
+  "build-release",
 ], description = "Run clang-tidy with auto-fix (review changes carefully)" }
 
 iwyu-fix = { cmd = "python3 scripts/run_iwyu.py --fix && python3 scripts/run_clang_format.py --fix", depends-on = [
-  "build",
+  "build-release",
 ], description = "Fix includes via IWYU, then reformat (IWYU → fix_includes → clang-format)" }
 
 # ── Check (CI gate — no modifications, exit 1 on violations) ─────────────────
 fmt-check = { cmd = "python3 scripts/run_clang_format.py", description = "Check C++ formatting (dry-run, fails on diff)" }
 
 lint-check = { cmd = "python3 scripts/run_clang_tidy.py", depends-on = [
-  "build",
+  "build-release",
 ], description = "Run clang-tidy on all sources (no fixes, fails on warnings)" }
 
 iwyu-check = { cmd = "python3 scripts/run_iwyu.py", depends-on = [
-  "build",
+  "build-release",
 ], description = "Check include hygiene with IWYU (no fixes, fails on violations)" }
 
 lint-all = { depends-on = [
@@ -83,7 +83,16 @@ docs-build = { cmd = "mkdocs build --strict", description = "Build docs with str
 docs-export = { cmd = "python3 scripts/export_docs.py -o Lancet2_Docs.md", description = "Export all docs into a single Markdown file" }
 
 # ── Release & Deployment ─────────────────────────────────────────────────────
-update-changelog = { cmd = "bash scripts/update_changelog.sh", description = "Update CHANGELOG.md via git-chglog (requires Go toolchain)" }
+update-changelog = { cmd = "bash scripts/update_changelog.sh", depends-on = [
+  "ensure-git-chglog",
+], description = "Update CHANGELOG.md via git-chglog" }
+
+# ── Go Binary Management (all Go tools installed into $CONDA_PREFIX/bin) ──────
+ensure-git-chglog = { cmd = "GOBIN=$CONDA_PREFIX/bin go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest", description = "Install/update git-chglog into the workspace" }
+
+# NOTE: ensure-pprof and analyze-profile tasks live in the profiling environment.
+# Use: pixi run -e profiling analyze-profile <profile.bin>
+# See [feature.profiling.tasks] at the bottom of this file.
 
 [tasks.version-bump]
 cmd = "python3 scripts/bump_version.py {{ kind }} && bash scripts/update_changelog.sh"
@@ -98,9 +107,7 @@ description = "Build a local conda package via rattler-build"
 cmd = "bash scripts/build_push_image.sh"
 description = "Build and push Docker image to GCR (requires gcloud auth)"
 
-
 [dependencies]
-clang-tools = "==22.1.3"
 git = "==2.53.0"
 make = "==4.4.1"
 cmake = "==4.3.1"
@@ -112,17 +119,57 @@ liblzma-static = "==5.8.3"
 libcurl = "==8.19.0"
 openssl = "==3.6.2"
 gcc = "==15.2.0"
-clang = "==22.1.3"
 gxx = "==15.2.0"
-clangxx = "==22.1.3"
 libstdcxx = "==15.2.0"
+clang = "==22.1.3"
+clangxx = "==22.1.3"
 libcxx = "==22.1.3"
-mkdocs = "==1.6.1"
 gdb = "==17.1"
+clang-tools = "==22.1.3"
 include-what-you-use = "==0.26"
+go = "==1.26.2"
+graphviz = "==14.1.2"
 
 [pypi-dependencies]
-mkdocs-material = "==9.7.6"
+mkdocs = "==1.6.1"
 mike = "==2.2.0"
+mkdocs-material = "==9.7.6"
 mkdocs-minify-plugin = "==0.8.0"
 mkdocs-git-revision-date-localized-plugin = "==1.5.1"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Feature: profiling — isolated Python deps for CPU profile analysis
+#
+# All profiling tasks require the -e profiling flag:
+#   pixi run -e profiling analyze-profile path/to/profile.bin                         (all views)
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view overview
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view top --top 50
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view modules
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view components
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view lines
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view tree
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view tree --focus "lancet::caller"
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view hotpaths
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --html report.html   (static HTML)
+#   pixi run -e profiling analyze-profile new.bin -- --diff-base old.bin               (diff mode)
+#   pixi run -e profiling analyze-profile new.bin -- --diff-base old.bin --html d.html (diff HTML)
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --list "BuildGraph"  (source)
+#   pixi run -e profiling analyze-profile -- --history                                 (trends)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+[feature.profiling.pypi-dependencies]
+rich = "==14.0.0"
+jinja2 = "==3.1.6"
+
+[feature.profiling.tasks.ensure-pprof]
+cmd = "GOBIN=$CONDA_PREFIX/bin go install github.com/google/pprof@latest"
+description = "Install/update pprof into the profiling workspace"
+
+[feature.profiling.tasks.analyze-profile]
+cmd = "python3 scripts/analyze_profile.py {{ profile }}"
+args = [{ arg = "profile", default = "" }]
+depends-on = ["ensure-pprof"]
+description = "Analyze a gperftools CPU profile (use -- for additional flags)"
+
+[environments]
+profiling = { features = ["profiling"], solve-group = "default" }

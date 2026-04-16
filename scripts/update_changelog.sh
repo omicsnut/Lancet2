@@ -4,15 +4,10 @@
 set -e
 
 function ensure_deps() {
-  if ! command -v go &> /dev/null; then
-    echo "ERROR: Go toolchain not found."
-    echo "Install Go from https://go.dev/dl/ then re-run: pixi run version-bump"
-    exit 1
-  fi
-
   if ! command -v git-chglog &> /dev/null; then
-    echo "Installing git-chglog via go install..."
-    go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest
+    echo "ERROR: git-chglog not found on PATH."
+    echo "Run: pixi run ensure-git-chglog"
+    exit 1
   fi
 }
 
@@ -29,5 +24,4 @@ function main() {
   echo "Changelog updated and pushed successfully."
 }
 
-export PATH="$PATH:${GOBIN:-$HOME/go/bin}"
 ensure_deps && main "$@"

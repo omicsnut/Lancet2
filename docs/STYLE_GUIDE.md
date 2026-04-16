@@ -755,8 +755,8 @@ pixi run lint-fix                     # ⚠️ DO NOT USE — see warning below
 pixi run lint-all                     # run both fmt-check and lint-check
 ```
 
-!!! danger "Do NOT use `pixi run lint-fix`"
-    Clang-tidy auto-fixes have historically broken compilation and produced unreadable code. Always resolve clang-tidy warnings manually by reading the diagnostic, understanding the root cause, and writing the fix yourself. Manual resolution produces better code and avoids cascading breakage.
+> [!CAUTION]
+> **Do NOT use `pixi run lint-fix`.** Clang-tidy auto-fixes have historically broken compilation and produced unreadable code. Always resolve clang-tidy warnings manually by reading the diagnostic, understanding the root cause, and writing the fix yourself. Manual resolution produces better code and avoids cascading breakage.
 
 For custom build directories, invoke the script directly:
 ```bash
