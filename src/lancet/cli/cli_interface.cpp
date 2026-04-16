@@ -146,6 +146,9 @@ auto CliInterface::RunMain(int const argc, char const** argv) -> int {
     mParamsPtr->mFullCmdLine = MakeCmdLine(argc, argv);
     mCliApp.parse(argc, argv);
   } catch (CLI::ParseError const& err) {
+    // Delegate to the parsed subcommand so that its help is shown, not the root app's.
+    auto const& subs = mCliApp.get_subcommands();
+    if (!subs.empty()) return subs.front()->exit(err);
     return mCliApp.exit(err);
   }
 
@@ -161,6 +164,7 @@ auto CliInterface::RunMain(int const argc, char const** argv) -> int {
 void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& params) {
   auto* sub = app->add_subcommand("pipeline", "Run the Lancet variant calling pipeline");
   sub->option_defaults()->always_capture_default();
+  sub->failure_message(CLI::FailureMessage::help);
 
   // Print help and exit 0 when pipeline subcommand is invoked with no arguments.
   sub->preparse_callback([sub](std::size_t remaining) -> void {
