@@ -1,16 +1,13 @@
 #ifndef SRC_LANCET_CALLER_MSA_BUILDER_H_
 #define SRC_LANCET_CALLER_MSA_BUILDER_H_
 
-#include "lancet/base/types.h"
-
 #include "absl/types/span.h"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/graph.hpp"
 
 #include <filesystem>
+#include <memory>
 #include <string>
-#include <string_view>
-#include <vector>
 
 namespace lancet::caller {
 

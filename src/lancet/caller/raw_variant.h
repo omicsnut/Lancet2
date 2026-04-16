@@ -1,15 +1,19 @@
 #ifndef SRC_LANCET_CALLER_RAW_VARIANT_H_
 #define SRC_LANCET_CALLER_RAW_VARIANT_H_
 
+#include "lancet/base/longdust_scorer.h"
 #include "lancet/base/sequence_complexity.h"
 #include "lancet/base/types.h"
 #include "lancet/caller/alt_allele.h"
-#include "lancet/cbdg/graph_complexity.h"
 
 #include "absl/strings/str_cat.h"
 
+#include <compare>
 #include <optional>
+#include <stdint.h>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace lancet::caller {

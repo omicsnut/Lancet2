@@ -7,8 +7,9 @@
 #include "absl/cleanup/cleanup.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_split.h"
-#include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
+
+#include <absl/status/statusor.h>
 
 extern "C" {
 #include "htslib/hts.h"
@@ -16,6 +17,7 @@ extern "C" {
 }
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>

@@ -7,8 +7,6 @@
 
 #include "absl/container/btree_set.h"
 
-#include <string_view>
-
 namespace spoa {
 class Graph;
 }  // namespace spoa

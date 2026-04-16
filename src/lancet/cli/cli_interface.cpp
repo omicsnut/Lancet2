@@ -3,7 +3,7 @@
 #include "lancet/base/logging.h"
 #include "lancet/base/types.h"
 #include "lancet/base/version.h"
-#include "lancet/cbdg/graph.h"
+#include "lancet/cbdg/graph_params.h"
 #include "lancet/cli/cli_params.h"
 #include "lancet/cli/pipeline_runner.h"
 #include "lancet/core/window_builder.h"
@@ -12,7 +12,6 @@
 #include "CLI/CLI.hpp"
 #include "absl/strings/str_cat.h"
 #include "spdlog/common.h"
-#include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 #include "spdlog/fmt/bundled/ostream.h"
 
@@ -21,12 +20,15 @@ extern "C" {
 #include "unistd.h"
 }
 
+#include <algorithm>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include <cstdio>
 #include <cstdlib>

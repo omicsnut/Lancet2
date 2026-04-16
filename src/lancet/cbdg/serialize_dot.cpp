@@ -7,16 +7,14 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
-#include "spdlog/fmt/bundled/core.h"
-#include "spdlog/fmt/bundled/format.h"
 #include "spdlog/fmt/bundled/ostream.h"
 
 #include <filesystem>
 #include <fstream>
-#include <ios>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace lancet::cbdg {
 

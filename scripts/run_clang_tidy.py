@@ -15,9 +15,12 @@ Prerequisites:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -44,6 +47,138 @@ FILE_FILTER = r"(src/lancet|tests|benchmarks)/.*\.(cpp|h)$"
 HEADER_FILTER = r"src/lancet/.*"
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Output parser
+# ──────────────────────────────────────────────────────────────────────────────
+_RE_DIAG = re.compile(
+    r"^(?P<file>.+):(?P<line>\d+):(?P<col>\d+): "
+    r"(?P<level>warning|error): "
+    r"(?P<msg>.+?) "
+    r"\[(?P<check>[^\]]+)\]$"
+)
+
+
+@dataclass
+class Diagnostic:
+    """A single clang-tidy diagnostic."""
+
+    file: str
+    line: int
+    col: int
+    level: str
+    msg: str
+    check: str
+
+
+def parse_clang_tidy_output(
+    output: str, repo_root: Path
+) -> list[Diagnostic]:
+    """Parse clang-tidy output into structured diagnostics."""
+    diagnostics: list[Diagnostic] = []
+    repo_prefix = str(repo_root) + "/"
+
+    for line in output.splitlines():
+        match = _RE_DIAG.match(line)
+        if not match:
+            continue
+
+        filepath = match.group("file")
+        # Only include diagnostics from our source tree
+        if not filepath.startswith(repo_prefix):
+            continue
+
+        diagnostics.append(
+            Diagnostic(
+                file=filepath[len(repo_prefix) :],
+                line=int(match.group("line")),
+                col=int(match.group("col")),
+                level=match.group("level"),
+                msg=match.group("msg"),
+                check=match.group("check"),
+            )
+        )
+
+    return diagnostics
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Summary printing
+# ──────────────────────────────────────────────────────────────────────────────
+_YELLOW = "\033[33m"
+_RED = "\033[31m"
+_GREEN = "\033[32m"
+_CYAN = "\033[36m"
+_DIM = "\033[2m"
+_BOLD = "\033[1m"
+_RESET = "\033[0m"
+
+
+def _color(text: str, code: str) -> str:
+    if not sys.stdout.isatty():
+        return text
+    return f"{code}{text}{_RESET}"
+
+
+def print_summary(diagnostics: list[Diagnostic]) -> None:
+    """Print a concise, color-coded summary of clang-tidy findings."""
+    errors = [d for d in diagnostics if d.level == "error"]
+    warnings = [d for d in diagnostics if d.level == "warning"]
+
+    # Group by check name for the category breakdown
+    by_check: dict[str, int] = defaultdict(int)
+    for d in diagnostics:
+        by_check[d.check] += 1
+
+    # Group by file
+    by_file: dict[str, list[Diagnostic]] = defaultdict(list)
+    for d in diagnostics:
+        by_file[d.file].append(d)
+
+    print()
+    print(_color("─" * 80, _CYAN))
+    print(_color("  clang-tidy Summary", _BOLD))
+    print(_color("─" * 80, _CYAN))
+    print(f"  Total diagnostics: {len(diagnostics)}")
+    print(f"  Errors:            {_color(str(len(errors)), _RED)}")
+    print(f"  Warnings:          {_color(str(len(warnings)), _YELLOW)}")
+    print(f"  Files affected:    {len(by_file)}")
+    print(f"  Check categories:  {len(by_check)}")
+    print(_color("─" * 80, _CYAN))
+
+    if not diagnostics:
+        print(_color("\n  ✓ No clang-tidy warnings or errors.\n", _GREEN))
+        return
+
+    # Print check breakdown sorted by frequency
+    print(_color("\n  By check:", _BOLD))
+    for check, count in sorted(by_check.items(), key=lambda x: -x[1]):
+        print(f"    {count:3d}  {check}")
+
+    # Print per-file diagnostics
+    print(_color("\n  By file:", _BOLD))
+    for filepath in sorted(by_file):
+        file_diags = by_file[filepath]
+        print(f"\n  {_color(filepath, _BOLD)}")
+        for d in sorted(file_diags, key=lambda x: x.line):
+            level_color = _RED if d.level == "error" else _YELLOW
+            loc = _color(f":{d.line}:{d.col}", _DIM)
+            check = _color(f"[{d.check}]", _DIM)
+            print(f"    {_color(d.level, level_color)} {loc} {d.msg} {check}")
+
+    print()
+    print(
+        _color(
+            f"  ✗ {len(diagnostics)} diagnostic(s) in {len(by_file)} file(s). "
+            f"Fix the issues above to pass this check.",
+            _YELLOW,
+        )
+    )
+    print()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run clang-tidy on Lancet2 source files."
@@ -66,7 +201,7 @@ def main() -> int:
     if not compile_db.exists():
         print(
             f"ERROR: {compile_db.relative_to(REPO_ROOT)} not found.\n"
-            f"Run: pixi run cmake -B {args.build_dir} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+            f"Run: pixi run build",
             file=sys.stderr,
         )
         return 1
@@ -98,9 +233,24 @@ def main() -> int:
 
     cmd.append(FILE_FILTER)
 
-    result = subprocess.run(cmd, cwd=REPO_ROOT)
-    print("\n==> Done.")
-    return result.returncode
+    # Stream output live while capturing it for the summary
+    output_lines: list[str] = []
+    with subprocess.Popen(
+        cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    ) as proc:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            output_lines.append(line)
+        proc.wait()
+
+    output = "".join(output_lines)
+    diagnostics = parse_clang_tidy_output(output, REPO_ROOT)
+    print_summary(diagnostics)
+
+    if diagnostics:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

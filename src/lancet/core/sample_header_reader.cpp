@@ -1,6 +1,6 @@
 #include "lancet/core/sample_header_reader.h"
 
-#include "lancet/cbdg/label.h"
+#include "lancet/base/types.h"
 #include "lancet/core/input_spec_parser.h"
 #include "lancet/core/read_collector.h"
 #include "lancet/core/sample_info.h"
@@ -8,10 +8,13 @@
 #include "lancet/hts/extractor.h"
 #include "lancet/hts/reference.h"
 
+#include <absl/types/span.h>
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lancet::core {

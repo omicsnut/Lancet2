@@ -10,21 +10,22 @@
 
 #include "absl/hash/hash.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/base.h"
-#include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/inlined_vector.h>
 #include <algorithm>
 #include <array>
 #include <iterator>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include <cmath>
 
 namespace {
 

@@ -9,12 +9,14 @@
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/match.h"
 #include "absl/types/span.h"
-#include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 
+#include <absl/status/statusor.h>
 #include <algorithm>
 #include <filesystem>
 #include <memory>
+#include <optional>
+#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>

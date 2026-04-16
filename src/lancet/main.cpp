@@ -2,13 +2,12 @@
 #include "lancet/cli/cli_interface.h"
 
 #include "absl/cleanup/cleanup.h"
-
-#include <iostream>
-#ifndef __APPLE__
-#include "mimalloc-override.h"
-#endif
 #include "mimalloc.h"
 #include "spdlog/spdlog.h"
+
+#include <iostream>
+#include <memory>
+#include <spdlog/sinks/ansicolor_sink.h>
 
 auto main(int const argc, char const** argv) -> int {
   std::ios_base::sync_with_stdio(false);

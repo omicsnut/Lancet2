@@ -4,6 +4,8 @@
 
 #include "spoa/graph.hpp"
 
+#include <vector>
+
 namespace lancet::caller {
 
 // ============================================================================

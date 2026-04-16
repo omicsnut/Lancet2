@@ -1,7 +1,6 @@
 #ifndef SRC_LANCET_HTS_ITERATOR_H_
 #define SRC_LANCET_HTS_ITERATOR_H_
 
-#include "lancet/base/types.h"
 #include "lancet/hts/alignment.h"
 
 extern "C" {
@@ -11,6 +10,9 @@ extern "C" {
 }
 
 #include <iterator>
+#include <string>
+
+#include <cstddef>
 
 namespace lancet::hts {
 

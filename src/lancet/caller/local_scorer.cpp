@@ -1,6 +1,7 @@
 #include "lancet/caller/local_scorer.h"
 
 #include "lancet/base/types.h"
+#include "lancet/caller/scoring_constants.h"
 #include "lancet/hts/cigar_unit.h"
 #include "lancet/hts/phred_quality.h"
 

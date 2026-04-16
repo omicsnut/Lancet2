@@ -2,7 +2,6 @@
 #define SRC_LANCET_CALLER_LOCAL_SCORER_H_
 
 #include "lancet/base/types.h"
-#include "lancet/caller/scoring_constants.h"
 #include "lancet/hts/cigar_unit.h"
 
 #include "absl/types/span.h"

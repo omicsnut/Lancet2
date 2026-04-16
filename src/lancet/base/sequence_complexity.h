@@ -4,13 +4,9 @@
 #include "lancet/base/longdust_scorer.h"
 #include "lancet/base/types.h"
 
-#include "absl/strings/str_cat.h"
-
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <cmath>
 
 namespace lancet::base {
 

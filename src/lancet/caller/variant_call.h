@@ -1,7 +1,9 @@
 #ifndef SRC_LANCET_CALLER_VARIANT_CALL_H_
 #define SRC_LANCET_CALLER_VARIANT_CALL_H_
 
+#include "lancet/base/sequence_complexity.h"
 #include "lancet/base/types.h"
+#include "lancet/caller/alt_allele.h"
 #include "lancet/caller/raw_variant.h"
 #include "lancet/caller/sample_format_data.h"
 #include "lancet/caller/support_array.h"
@@ -11,6 +13,8 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 
+#include <algorithm>
+#include <compare>
 #include <numeric>
 #include <string>
 #include <string_view>

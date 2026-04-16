@@ -6,7 +6,7 @@
 
 #include "lancet/base/logging.h"
 #include "lancet/base/timer.h"
-#include "lancet/base/types.h"
+#include "lancet/cbdg/graph_params.h"
 #include "lancet/cbdg/label.h"
 #include "lancet/cli/cli_params.h"
 #include "lancet/cli/vcf_header_builder.h"
@@ -18,14 +18,17 @@
 #include "lancet/hts/bgzf_ostream.h"
 #include "lancet/hts/uri_utils.h"
 
-#include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "spdlog/fmt/bundled/format.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
+#include <ostream>
+#include <ranges>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <cstdlib>
 

@@ -8,8 +8,8 @@
 
 #include <algorithm>
 #include <fstream>
-#include <ios>
 #include <memory>
+#include <spoa/graph.hpp>
 #include <string>
 #include <vector>
 

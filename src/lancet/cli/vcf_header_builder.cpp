@@ -9,11 +9,13 @@
 #include "absl/strings/str_join.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
-#include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 
+#include <filesystem>
+#include <spdlog/fmt/bundled/base.h>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 

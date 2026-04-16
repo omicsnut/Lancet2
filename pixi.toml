@@ -45,27 +45,35 @@ test = { cmd = "./cmake-build-debug/tests/TestLancet2", depends-on = [
 
 bench = { cmd = "./cmake-build-release/benchmarks/BenchmarkLancet2", depends-on = [
   "build",
-], description = "Run benchmarks in Release mode (first: pixi run configure -- -DLANCET_BENCHMARKS=ON)" }
+], description = "Run benchmarks (first: pixi run configure -- -DLANCET_BENCHMARKS=ON)" }
 
-# ── Formatting (clang-format) ────────────────────────────────────────────────
-fmt-check = { cmd = "python3 scripts/run_clang_format.py", description = "Check C++ formatting (dry-run)" }
-
+# ── Fix (apply auto-fixes, then reformat) ────────────────────────────────────
 fmt-fix = { cmd = "python3 scripts/run_clang_format.py --fix", description = "Apply clang-format to all C++ sources" }
-
-# ── Static Analysis (clang-tidy) ─────────────────────────────────────────────
-lint-check = { cmd = "python3 scripts/run_clang_tidy.py", depends-on = [
-  "build",
-], description = "Run clang-tidy check on all sources (no fixes)" }
 
 lint-fix = { cmd = "python3 scripts/run_clang_tidy.py --fix", depends-on = [
   "build",
 ], description = "Run clang-tidy with auto-fix (review changes carefully)" }
 
-# ── Aggregate Lint ───────────────────────────────────────────────────────────
+iwyu-fix = { cmd = "python3 scripts/run_iwyu.py --fix && python3 scripts/run_clang_format.py --fix", depends-on = [
+  "build",
+], description = "Fix includes via IWYU, then reformat (IWYU → fix_includes → clang-format)" }
+
+# ── Check (CI gate — no modifications, exit 1 on violations) ─────────────────
+fmt-check = { cmd = "python3 scripts/run_clang_format.py", description = "Check C++ formatting (dry-run, fails on diff)" }
+
+lint-check = { cmd = "python3 scripts/run_clang_tidy.py", depends-on = [
+  "build",
+], description = "Run clang-tidy on all sources (no fixes, fails on warnings)" }
+
+iwyu-check = { cmd = "python3 scripts/run_iwyu.py", depends-on = [
+  "build",
+], description = "Check include hygiene with IWYU (no fixes, fails on violations)" }
+
 lint-all = { depends-on = [
   "fmt-check",
   "lint-check",
-], description = "Run all linting checks (formatting + static analysis)" }
+  "iwyu-check",
+], description = "Run all checks (clang-format + clang-tidy + IWYU)" }
 
 # ── Documentation ────────────────────────────────────────────────────────────
 docs-serve = { cmd = "mkdocs serve", description = "Serve docs locally at http://127.0.0.1:8000" }
@@ -111,6 +119,7 @@ libstdcxx = "==15.2.0"
 libcxx = "==22.1.3"
 mkdocs = "==1.6.1"
 gdb = "==17.1"
+include-what-you-use = "==0.26"
 
 [pypi-dependencies]
 mkdocs-material = "==9.7.6"

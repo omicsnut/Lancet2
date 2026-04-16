@@ -2,8 +2,11 @@
 #define SRC_LANCET_CBDG_MAX_FLOW_H_
 
 #include "lancet/base/types.h"
+#include "lancet/cbdg/edge.h"
 #include "lancet/cbdg/graph.h"
+#include "lancet/cbdg/node.h"
 #include "lancet/cbdg/path.h"
+#include "lancet/cbdg/traversal_index.h"
 
 #include "absl/container/chunked_queue.h"
 #include "absl/container/flat_hash_set.h"

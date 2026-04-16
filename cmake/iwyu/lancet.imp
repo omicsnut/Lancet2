@@ -1,0 +1,10 @@
+[
+    { "include": ["@\"absl/.*\"",                     "public", "\"absl/base/config.h\"",    "public"] },
+
+    { "include": ["@\"spdlog/fmt/bundled/.*\"",       "public", "\"spdlog/spdlog.h\"",       "public"] },
+    { "include": ["@<spdlog/fmt/bundled/.*>",         "public", "\"spdlog/spdlog.h\"",       "public"] },
+    { "include": ["@\"spdlog/details/.*\"",           "private", "\"spdlog/spdlog.h\"",      "public"] },
+    { "include": ["@\"fmt/.*\"",                      "private", "\"spdlog/spdlog.h\"",      "public"] },
+
+    { "include": ["\"mimalloc-override.h\"",          "public", "\"mimalloc.h\"",             "public"] }
+]

@@ -4,6 +4,7 @@
 #include "lancet/caller/allele_scoring_types.h"
 #include "lancet/caller/genotyper.h"
 #include "lancet/caller/local_scorer.h"
+#include "lancet/caller/scoring_constants.h"
 #include "lancet/hts/cigar_utils.h"
 
 #include "absl/types/span.h"

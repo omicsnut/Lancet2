@@ -8,6 +8,8 @@
 #include "lancet/cbdg/node.h"
 
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 namespace lancet::cbdg {
 

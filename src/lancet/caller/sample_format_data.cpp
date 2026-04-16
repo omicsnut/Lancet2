@@ -2,12 +2,13 @@
 
 #include "lancet/base/types.h"
 
-#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
-#include "spdlog/fmt/bundled/core.h"
 
+#include <absl/types/span.h>
 #include <optional>
+#include <spdlog/fmt/bundled/base.h>
+#include <spdlog/fmt/bundled/format.h>
 #include <string>
 
 namespace {

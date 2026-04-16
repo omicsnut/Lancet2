@@ -3,15 +3,20 @@
 #include "lancet/base/types.h"
 #include "lancet/core/read_collector.h"
 #include "lancet/core/sample_header_reader.h"
+#include "lancet/core/sample_info.h"
 #include "lancet/hts/alignment.h"
 #include "lancet/hts/cigar_unit.h"
 #include "lancet/hts/extractor.h"
+#include "lancet/hts/iterator.h"
 #include "lancet/hts/reference.h"
+#include "lancet/hts/sam_flag.h"
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 
+#include <absl/hash/hash.h>
+#include <absl/status/statusor.h>
 #include <algorithm>
 #include <filesystem>
 #include <string>

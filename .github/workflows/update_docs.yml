@@ -8,7 +8,6 @@ on:
     tags:
       - 'v*.*.*'
 
-
 concurrency:
   group: docs-deploy
   cancel-in-progress: true
@@ -30,10 +29,8 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: 3.x
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.9.5
 
       - name: Compute cache key
         run: echo "cache_id=$(date --utc '+%F')" >> $GITHUB_ENV
@@ -46,20 +43,17 @@ jobs:
           restore-keys: |
             mkdocs-material-
 
-      - name: Install MkDocs dependencies
-        run: pip install mkdocs-material mike mkdocs-minify-plugin mkdocs-git-revision-date-localized-plugin
-
       - name: Deploy latest docs (main branch)
         if: github.ref == 'refs/heads/main'
-        run: mike deploy --push latest
+        run: pixi run mike deploy --push latest
 
       - name: Deploy versioned docs (release tag)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          mike deploy --push "$VERSION"
+          pixi run mike deploy --push "$VERSION"
 
       # TODO: Change default to "latest" after downstream ML scoring
       # support is integrated for newer versions (post v2.8.7).
       - name: Ensure default points to v2.8.7
-        run: mike set-default --push 2.8.7
+        run: pixi run mike set-default --push 2.8.7

@@ -4,7 +4,6 @@ on:
   push:
   pull_request:
 
-
 concurrency:
   group: lint-${{ github.ref }}
   cancel-in-progress: true
@@ -22,10 +21,7 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.9.5
 
       - name: Check formatting
-        run: |
-          FILES=$(find src/lancet tests benchmarks -type f \( -name '*.cpp' -o -name '*.h' \) | sort)
-          echo "Checking $(echo "$FILES" | wc -l) files..."
-          echo "$FILES" | xargs pixi run clang-format --dry-run --Werror
+        run: pixi run fmt-check
 
   clang-tidy:
     name: clang-tidy
@@ -38,24 +34,19 @@ jobs:
       - name: Setup Pixi
         uses: prefix-dev/setup-pixi@v0.9.5
 
-      - name: Configure CMake
-        run: |
-          pixi run cmake -GNinja -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DLANCET_TESTS=ON \
-            -DLANCET_BENCHMARKS=ON \
-            -DLANCET_BUILD_STATIC=ON \
-            -DLANCET_ENABLE_CLOUD_IO=OFF
+      - name: Build and run clang-tidy
+        run: pixi run lint-check
 
-      - name: Build (fetch deps and populate include paths)
-        run: pixi run cmake --build build
+  iwyu:
+    name: include-what-you-use
+    runs-on: ubuntu-latest
 
-      - name: Run clang-tidy
-        run: |
-          pixi run run-clang-tidy \
-            -p build \
-            -quiet \
-            -use-color \
-            -header-filter='src/lancet/.*' \
-            '(src/lancet|tests|benchmarks)/.*\.(cpp|h)$'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.9.5
+
+      - name: Build and check include hygiene
+        run: pixi run iwyu-check

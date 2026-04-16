@@ -12,7 +12,6 @@ extern "C" {
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "spdlog/fmt/bundled/base.h"
-#include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 
 #include <algorithm>

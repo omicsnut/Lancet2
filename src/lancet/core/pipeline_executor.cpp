@@ -1,5 +1,7 @@
 #include "lancet/core/pipeline_executor.h"
 
+#include <blockingconcurrentqueue.h>
+
 #ifdef LANCET_PROFILE_MODE
 #include "gperftools/profiler.h"
 #endif
@@ -14,20 +16,18 @@
 #include "lancet/core/window.h"
 #include "lancet/core/window_builder.h"
 
-#include "absl/container/btree_map.h"
 #include "absl/container/fixed_array.h"
 #include "absl/hash/hash.h"
-#include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "concurrentqueue.h"
-#include "spdlog/fmt/bundled/format.h"
 
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <numeric>
-#include <ostream>
 #include <stop_token>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>

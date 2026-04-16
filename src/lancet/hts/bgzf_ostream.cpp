@@ -9,8 +9,8 @@ extern "C" {
 
 #include <filesystem>
 #include <ios>
+#include <string>
 
-#include <cstdio>
 #include <cstdlib>
 
 namespace lancet::hts {

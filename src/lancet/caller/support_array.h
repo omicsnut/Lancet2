@@ -1,17 +1,15 @@
 #ifndef SRC_LANCET_CALLER_SUPPORT_ARRAY_H_
 #define SRC_LANCET_CALLER_SUPPORT_ARRAY_H_
 
-#include "lancet/base/types.h"
+#include "lancet/caller/variant_support.h"
 
 #include "absl/container/inlined_vector.h"
 
 #include <memory>
 #include <string_view>
+#include <utility>
 
 namespace lancet::caller {
-
-// Forward declaration — VariantSupport is defined in variant_support.h.
-class VariantSupport;
 
 // ============================================================================
 // SupportArray: per-sample variant evidence container.

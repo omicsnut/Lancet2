@@ -7,11 +7,14 @@
 
 #include "concurrentqueue.h"
 
+#include <absl/hash/hash.h>
+#include <blockingconcurrentqueue.h>
 #include <chrono>
 #include <memory>
 #include <stop_token>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace lancet::core {
 

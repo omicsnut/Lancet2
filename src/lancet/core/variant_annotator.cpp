@@ -1,15 +1,19 @@
 #include "lancet/core/variant_annotator.h"
 
 #include "lancet/base/types.h"
+#include "lancet/caller/alt_allele.h"
 #include "lancet/caller/raw_variant.h"
 #include "lancet/caller/variant_set.h"
 #include "lancet/cbdg/graph_complexity.h"
 
 #include "absl/types/span.h"
 
+#include <absl/container/flat_hash_map.h>
 #include <algorithm>
 #include <limits>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace lancet::core {
 

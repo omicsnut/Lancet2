@@ -4,6 +4,7 @@
 #include "lancet/base/rev_comp.h"
 #include "lancet/base/types.h"
 
+#include <compare>
 #include <string>
 #include <string_view>
 #include <utility>

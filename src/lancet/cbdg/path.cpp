@@ -6,6 +6,7 @@
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 
+#include <absl/container/inlined_vector.h>
 #include <algorithm>
 #include <string_view>
 

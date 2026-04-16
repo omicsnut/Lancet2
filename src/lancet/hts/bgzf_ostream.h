@@ -10,7 +10,7 @@ extern "C" {
 #include <filesystem>
 #include <ios>
 #include <ostream>
-#include <streambuf>
+#include <stdio.h>
 
 namespace lancet::hts {
 

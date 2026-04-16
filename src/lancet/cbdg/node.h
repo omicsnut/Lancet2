@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
