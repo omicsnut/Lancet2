@@ -37,7 +37,7 @@ namespace lancet::cli {
 PipelineRunner::PipelineRunner(std::shared_ptr<CliParams> params) : mParamsPtr(std::move(params)) {
 #ifdef LANCET_PROFILE_MODE
   setenv("CPUPROFILE_PER_THREAD_TIMERS", "1", 1);
-  setenv("CPUPROFILE_FREQUENCY", "10000", 1);
+  setenv("CPUPROFILE_FREQUENCY", "250", 1);
   auto const timestamp = absl::FormatTime("%Y%m%d%ET%H%M%S", absl::Now(), absl::LocalTimeZone());
   auto const fname = fmt::format("Lancet.cpu_profile.{}.bin", timestamp);
   ProfilerStart(fname.c_str());
