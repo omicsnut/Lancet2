@@ -55,11 +55,14 @@ auto SampleFormatData::RenderVcfString() const -> std::string {
   auto const rmq_str = absl::StrJoin(RmsMappingQualities(), ",", format_f32);
   auto const npbq_str = absl::StrJoin(NormPosteriorBQs(), ",", format_f32);
 
-  // CMLOD: Number=A — strip index 0 (REF LOD = 0.0 by definition), emit only ALT LODs
+  // CMLOD: Number=A — strip index 0 (REF LOD = 0.0 by definition), emit only ALT LODs.
+  // Guard: size() < 2 catches both empty and REF-only vectors (defensive, upstream
+  // should always produce num_alleles entries after the allele count fix).
   auto const cmlods = ContinuousMixtureLods();
-  auto const cmlod_str = cmlods.empty()
-                             ? std::string(".")
-                             : absl::StrJoin(cmlods.begin() + 1, cmlods.end(), ",", format_f64);
+  auto const cmlod_str = [&cmlods, &format_f64]() -> std::string {
+    if (cmlods.size() < 2) return ".";
+    return absl::StrJoin(cmlods.begin() + 1, cmlods.end(), ",", format_f64);
+  }();
 
   // Optional-safe formatting via GetField: 9 metrics can be absent → "." in VCF.
   auto const fld_str = FormatOptional(GetField(FRAG_LEN_DELTA), "{:.1f}");

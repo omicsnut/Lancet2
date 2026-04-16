@@ -405,13 +405,15 @@ auto VariantSupport::ComputeHSE(usize const total_haplotypes) const -> std::opti
 // └─────────────────────────────────────────────┘
 // ============================================================================
 
-auto VariantSupport::ComputePLs() const -> absl::InlinedVector<u32, 6> {
-  auto const num_alleles = static_cast<int>(mAlleleData.size());
-  if (num_alleles == 0) return {};
+auto VariantSupport::ComputePLs(usize const num_alleles) const -> absl::InlinedVector<u32, 6> {
+  auto const num_al = static_cast<int>(num_alleles);
+  if (num_al == 0) return {};
 
-  // Build allele count vector: count[i] = total reads assigned to allele i
-  std::vector<int> allele_counts(num_alleles, 0);
-  for (int allele_idx = 0; allele_idx < num_alleles; ++allele_idx) {
+  // Build allele count vector: count[i] = total reads assigned to allele i.
+  // TotalAlleleCov(idx) returns 0 for alleles beyond mAlleleData.size(),
+  // so alleles the sample has no reads for correctly get count=0.
+  std::vector<int> allele_counts(num_al, 0);
+  for (int allele_idx = 0; allele_idx < num_al; ++allele_idx) {
     auto const aidx = static_cast<AlleleIndex>(allele_idx);
     allele_counts[allele_idx] = static_cast<int>(TotalAlleleCov(aidx));
   }
@@ -423,19 +425,25 @@ auto VariantSupport::ComputeGQ(absl::Span<u32 const> phred_likelihoods) -> u32 {
   return ComputeGenotypeQuality(phred_likelihoods);
 }
 
-auto VariantSupport::ComputeContinuousMixtureLods() const -> std::vector<f64> {
-  auto const num_alleles = static_cast<int>(mAlleleData.size());
-  if (num_alleles < 2) return std::vector<f64>(num_alleles, 0.0);
+auto VariantSupport::ComputeContinuousMixtureLods(usize const num_alleles) const
+    -> std::vector<f64> {
+  auto const num_al = static_cast<int>(num_alleles);
+  if (num_al < 2) return std::vector<f64>(num_al, 0.0);
 
-  // Build AlleleBaseQuals views into private PerAlleleData
-  std::vector<AlleleBaseQuals> allele_quals(num_alleles);
-  std::vector<usize> allele_coverages(num_alleles);
-  for (int index = 0; index < num_alleles; ++index) {
-    auto const& per_allele = mAlleleData[index];
-    allele_quals[index] = AlleleBaseQuals{
-        .mFwdBaseQuals = absl::MakeConstSpan(per_allele.mFwdBaseQuals),
-        .mRevBaseQuals = absl::MakeConstSpan(per_allele.mRevBaseQuals),
-    };
+  // Build AlleleBaseQuals views into private PerAlleleData.
+  // For alleles beyond mAlleleData.size(): empty qual spans + 0 coverage.
+  // This produces CMLOD=0.0 for unobserved alleles (no evidence either way).
+  std::vector<AlleleBaseQuals> allele_quals(num_al);
+  std::vector<usize> allele_coverages(num_al);
+  for (int index = 0; index < num_al; ++index) {
+    auto const aidx = static_cast<usize>(index);
+    if (aidx < mAlleleData.size()) {
+      auto const& per_allele = mAlleleData[aidx];
+      allele_quals[index] = AlleleBaseQuals{
+          .mFwdBaseQuals = absl::MakeConstSpan(per_allele.mFwdBaseQuals),
+          .mRevBaseQuals = absl::MakeConstSpan(per_allele.mRevBaseQuals),
+      };
+    }
     allele_coverages[index] = TotalAlleleCov(static_cast<AlleleIndex>(index));
   }
 

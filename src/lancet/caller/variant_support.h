@@ -272,7 +272,7 @@ class VariantSupport {
   // Returns: vector of K*(K+1)/2 Phred-scaled likelihoods (best genotype PL=0).
   //
   // See docs/guides/variant_discovery_genotyping.md for the full DM derivation.
-  [[nodiscard]] auto ComputePLs() const -> absl::InlinedVector<u32, 6>;
+  [[nodiscard]] auto ComputePLs(usize num_alleles) const -> absl::InlinedVector<u32, 6>;
 
   // Genotype Quality (GQ): confidence in the called genotype.
   // Second-smallest PL value, capped at 99. Standard GATK convention.
@@ -314,7 +314,7 @@ class VariantSupport {
   //          Index i>0 is the CMLOD for ALT allele i.
   //
   // See docs/guides/variant_discovery_genotyping.md for the full derivation.
-  [[nodiscard]] auto ComputeContinuousMixtureLods() const -> std::vector<f64>;
+  [[nodiscard]] auto ComputeContinuousMixtureLods(usize num_alleles) const -> std::vector<f64>;
 
   // Copy allele data from `src` allele `src_allele` into `dst_allele` slot
   // in this object. Used for multi-allelic merging: each bi-allelic variant

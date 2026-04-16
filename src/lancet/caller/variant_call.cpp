@@ -149,7 +149,7 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     }
 
     mTotalSampleCov += support->TotalSampleCov();
-    auto const pls = support->ComputePLs();
+    auto const pls = support->ComputePLs(num_alleles);
     SampleFormatData sample;
     sample.SetMissingSupport(false);
 
@@ -193,7 +193,7 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     sample.SetPolarAngle(static_cast<f32>(base::PolarAngle(ad_alt, ad_ref)));
 
     // Continuous Mixture LOD scores (CMLOD FORMAT field)
-    auto const cmlod_scores = support->ComputeContinuousMixtureLods();
+    auto const cmlod_scores = support->ComputeContinuousMixtureLods(num_alleles);
     absl::InlinedVector<f64, 4> cmlod_vec(cmlod_scores.cbegin(), cmlod_scores.cend());
     sample.SetContinuousMixtureLods(std::move(cmlod_vec));
 
