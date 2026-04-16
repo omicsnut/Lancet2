@@ -313,8 +313,11 @@ endif ()
 # https://gperftools.github.io/gperftools/cpuprofile.html
 if (LANCET_PROFILE_MODE AND ${CMAKE_BUILD_TYPE} MATCHES Release)
 	add_compile_definitions(LANCET_PROFILE_MODE)
+	add_dependencies(lancet_core gperftools)
 	add_dependencies(lancet_cli gperftools)
+	target_include_directories(lancet_core SYSTEM PRIVATE ${GPERFTOOLS_INC_DIR})
 	target_include_directories(lancet_cli SYSTEM PRIVATE ${GPERFTOOLS_INC_DIR})
+	target_link_libraries(lancet_core PRIVATE ${LIB_PROFILER})
 	target_link_libraries(lancet_cli PRIVATE ${LIB_PROFILER})
 endif ()
 
