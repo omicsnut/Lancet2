@@ -85,6 +85,7 @@ void PipelineExecutor::LogWindowStats(WindowStats const& stats) {
 
   std::ranges::for_each(stats, [&nwindows](CodeCounts const& item) -> void {
     auto const [status_code, count] = item;
+    if (status_code == VariantBuilder::StatusCode::UNKNOWN) return;
     auto const pct_count = (100.0 * static_cast<f64>(count)) / static_cast<f64>(nwindows);
     auto const status_str = ToString(status_code);
     LOG_INFO("{} | {:>8.4f}% of total windows | {} windows", status_str, pct_count, count)
