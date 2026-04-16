@@ -57,7 +57,7 @@ make -j$(nproc)
 
 Tumor-normal somatic calling — the primary supported workflow. In the VCF,
 `--tumor` maps to `CASE` and `--normal` maps to `CTRL`
-([why?](https://nygenome.github.io/Lancet2/#basic-usage)):
+([why?](https://nygenome.github.io/Lancet2/latest/#basic-usage)):
 
 ```bash
 Lancet2 pipeline \
