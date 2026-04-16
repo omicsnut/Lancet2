@@ -92,19 +92,19 @@ class SampleInfo {
   /// Assigned by MakeSampleList() after sorting — never set by the constructor.
   [[nodiscard]] auto SampleIndex() const noexcept -> usize { return mSampleIndex; }
 
- private:
-  u64 mNumSampledReads = 0;
-  u64 mNumSampledBases = 0;
-  usize mSampleIndex = 0;
-
-  std::string mSampleName;
-  std::filesystem::path mFilePath;
-  cbdg::Label::Tag mTag = cbdg::Label::REFERENCE;
-
-  friend class ReadCollector;
   void SetSampleIndex(usize const index) { mSampleIndex = index; }
   void SetNumSampledReads(u64 const num_reads) { mNumSampledReads = num_reads; }
   void SetNumSampledBases(u64 const num_bases) { mNumSampledBases = num_bases; }
+
+ private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
+  u64 mNumSampledReads = 0;
+  u64 mNumSampledBases = 0;
+  usize mSampleIndex = 0;
+  std::string mSampleName;
+  std::filesystem::path mFilePath;
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  cbdg::Label::Tag mTag = cbdg::Label::REFERENCE;
 };
 
 }  // namespace lancet::core

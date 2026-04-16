@@ -133,7 +133,7 @@ auto EncodeSequence(std::string_view const raw_seq) -> std::vector<u8> {
 //
 //   2. mIdentity:  fraction of aligned bases that are exact matches.
 //
-//   4. mBaseQual:  Minimum Phred base quality (weakest-link) or flanking boundary.
+//   3. mBaseQual:  Minimum Phred base quality (weakest-link) or flanking boundary.
 //
 // CRITICAL: tpos coordinates in the CIGAR are relative to the alignment start
 // (ref_start from mm_map), NOT position 0 of the haplotype. The caller must

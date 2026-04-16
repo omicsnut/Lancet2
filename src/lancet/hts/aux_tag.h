@@ -1,6 +1,19 @@
 #ifndef SRC_LANCET_HTS_AUX_TAG_H_
 #define SRC_LANCET_HTS_AUX_TAG_H_
 
+#include "lancet/base/types.h"
+
+extern "C" {
+#include "htslib/sam.h"
+}
+
+#include "absl/container/fixed_array.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/types/span.h"
+#include "spdlog/fmt/bundled/format.h"
+#include "spdlog/fmt/bundled/ranges.h"
+
 #include <array>
 #include <limits>
 #include <memory>
@@ -10,19 +23,6 @@
 #include <utility>
 
 #include <cmath>
-
-extern "C" {
-#include "htslib/sam.h"
-}
-
-#include "lancet/base/types.h"
-
-#include "absl/container/fixed_array.h"
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "absl/types/span.h"
-#include "spdlog/fmt/bundled/format.h"
-#include "spdlog/fmt/bundled/ranges.h"
 
 namespace lancet::hts {
 
@@ -65,14 +65,18 @@ class AuxTag {
   using IntVector = absl::FixedArray<i64>;
   using FloatVector = absl::FixedArray<f64>;
 
-  bool mIsSigned = true;
-  std::array<char, 2> mTagName = {'\0', '\0'};
-  int mCharData = MISSING_CHAR;
+  // ── 8B Align ────────────────────────────────────────────────────────────
   i64 mIntData = MISSING_INT;
   f64 mFloatData = MISSING_FLOAT;
   std::shared_ptr<std::string> mStrData = nullptr;
   std::shared_ptr<IntVector> mArrIntData = nullptr;
   std::shared_ptr<FloatVector> mArrFloatData = nullptr;
+  // ── 4B Align ────────────────────────────────────────────────────────────
+  int mCharData = MISSING_CHAR;
+  // ── 2B Align ────────────────────────────────────────────────────────────
+  std::array<char, 2> mTagName = {'\0', '\0'};
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  bool mIsSigned = true;
 
   friend class Alignment;
 

@@ -2,14 +2,12 @@
 
 #include "lancet/base/logging.h"
 #include "lancet/base/types.h"
+#include "lancet/core/bed_parser.h"
 #include "lancet/core/window.h"
 #include "lancet/hts/reference.h"
 
-#include "absl/cleanup/cleanup.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/match.h"
-#include "absl/strings/numbers.h"
-#include "absl/strings/str_split.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
@@ -25,15 +23,10 @@
 
 #include <cmath>
 
-extern "C" {
-#include "htslib/hts.h"
-#include "htslib/kstring.h"
-}
-
 namespace lancet::core {
 
 WindowBuilder::WindowBuilder(std::filesystem::path const& ref_path, Params const& params)
-    : mParams(params), mRefPtr(std::make_unique<hts::Reference>(ref_path)) {
+    : mRefPtr(std::make_unique<hts::Reference>(ref_path)), mParams(params) {
   static constexpr usize DEFAULT_NUM_REGIONS_TO_ALLOCATE = 1024;
   mInputRegions.reserve(DEFAULT_NUM_REGIONS_TO_ALLOCATE);
 }
@@ -74,63 +67,8 @@ void WindowBuilder::AddBatchRegions(absl::Span<std::string const> region_specs) 
 
 void WindowBuilder::AddBatchRegions(std::filesystem::path const& bed_file) {
   if (bed_file.empty()) return;
-
-  // Open the BED file using HTSlib's htsFile API instead of standard C++ streams.
-  // Uses HTSlib's built-in libcurl support to stream BED files from
-  // s3://, gs://, and https:// URLs.
-  htsFile* fptr = hts_open(bed_file.c_str(), "r");
-  if (fptr == nullptr) {
-    throw std::runtime_error(fmt::format("Could not open bed file: {}", bed_file.string()));
-  }
-
-  absl::Cleanup const stream_cleaner = [fptr, &bed_file]() -> void {
-    if (hts_close(fptr) < 0) {
-      LOG_WARN("Failed to properly close BED file stream: {}", bed_file.string());
-    }
-  };
-
-  usize line_num = 0;
-  i64 region_start = 0;
-  i64 region_end = 0;
-
-  std::string curr_chrom;
-  std::vector<std::string_view> tokens;
-  tokens.reserve(3);
-
-  kstring_t line = KS_INITIALIZE;
-  absl::Cleanup const kstring_cleaner = [&line]() -> void { ks_free(&line); };
-
-  // Stream exactly line-by-line avoiding full-file buffering to minimize memory footprint
-  while (hts_getline(fptr, '\n', &line) > 0) {
-    line_num++;
-    std::string_view const line_view(line.s, line.l);
-
-    if (line_view.starts_with('#') || line_view.empty()) continue;
-
-    tokens = absl::StrSplit(line_view, absl::ByChar('\t'));
-
-    if (tokens.size() != 3) {
-      auto const msg = fmt::format("Invalid bed line with {} columns at line number {}",
-                                   tokens.size(), line_num);
-      throw std::runtime_error(msg);
-    }
-
-    if (!absl::SimpleAtoi(tokens[1], &region_start) || !absl::SimpleAtoi(tokens[2], &region_end)) {
-      auto const msg =
-          fmt::format("Could not parse line {} in bed: {}", line_num, bed_file.filename().string());
-      throw std::runtime_error(msg);
-    }
-
-    curr_chrom = tokens[0];
-    if (!mRefPtr->FindChromByName(curr_chrom).ok()) {
-      auto const msg = fmt::format("Could not find chrom {} from bed file line {} in reference",
-                                   tokens[0], line_num);
-      throw std::runtime_error(msg);
-    }
-
-    mInputRegions.emplace_back(
-        ParseRegionResult{.mChromName = curr_chrom, .mRegionSpan = {region_start, region_end}});
-  }
+  auto const regions = ParseBedFile(bed_file, *mRefPtr);
+  mInputRegions.insert(mInputRegions.end(), regions.begin(), regions.end());
 }
 
 auto WindowBuilder::StepSize(Params const& params) -> i64 {
@@ -143,7 +81,6 @@ auto WindowBuilder::StepSize(Params const& params) -> i64 {
 // ---------------------------------------------------------------------------
 // ExpectedTargetWindows: arithmetic estimate without allocations
 // ---------------------------------------------------------------------------
-
 auto WindowBuilder::ExpectedTargetWindows() const -> usize {
   if (mInputRegions.empty()) {
     return 0;
@@ -171,7 +108,6 @@ auto WindowBuilder::ExpectedTargetWindows() const -> usize {
 // ---------------------------------------------------------------------------
 // SortInputRegions: pre-sort for deterministic sequential batch emission
 // ---------------------------------------------------------------------------
-
 void WindowBuilder::SortInputRegions() {
   // Deduplicate first
   std::ranges::sort(mInputRegions,
@@ -199,7 +135,6 @@ void WindowBuilder::SortInputRegions() {
 // ---------------------------------------------------------------------------
 // BuildWindows: monolithic generation (for small region sets / targeted panels)
 // ---------------------------------------------------------------------------
-
 auto WindowBuilder::BuildWindows() const -> std::vector<WindowPtr> {
   if (mInputRegions.empty()) return {};
 

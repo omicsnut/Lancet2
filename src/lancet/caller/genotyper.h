@@ -1,17 +1,6 @@
 #ifndef SRC_LANCET_CALLER_GENOTYPER_H_
 #define SRC_LANCET_CALLER_GENOTYPER_H_
 
-#include <array>
-#include <memory>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
-
-extern "C" {
-#include "minimap.h"
-}
-
 #include "lancet/base/types.h"
 #include "lancet/caller/allele_scoring_types.h"
 #include "lancet/caller/scoring_constants.h"
@@ -21,8 +10,19 @@ extern "C" {
 #include "lancet/hts/cigar_unit.h"
 #include "lancet/hts/cigar_utils.h"
 
+extern "C" {
+#include "minimap.h"
+}
+
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
+
+#include <array>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace lancet::caller {
 

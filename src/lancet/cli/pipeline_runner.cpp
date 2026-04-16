@@ -1,107 +1,33 @@
 #include "lancet/cli/pipeline_runner.h"
 
-#include <algorithm>
-#include <chrono>
-#include <filesystem>
-#include <functional>
-#include <memory>
-#include <numeric>
-#include <stop_token>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <utility>
-#include <vector>
-
-#include <cstdlib>
-
 #ifdef LANCET_PROFILE_MODE
 #include "gperftools/profiler.h"
 #endif
 
-extern "C" {
-#include "htslib/hfile.h"
-}
-
-#include "lancet/base/eta_timer.h"
 #include "lancet/base/logging.h"
 #include "lancet/base/timer.h"
 #include "lancet/base/types.h"
-#include "lancet/base/version.h"
+#include "lancet/cbdg/label.h"
 #include "lancet/cli/cli_params.h"
-#include "lancet/core/async_worker.h"
-#include "lancet/core/read_collector.h"
+#include "lancet/cli/vcf_header_builder.h"
+#include "lancet/core/active_region_detector.h"
+#include "lancet/core/input_spec_parser.h"
+#include "lancet/core/pipeline_executor.h"
 #include "lancet/core/variant_builder.h"
-#include "lancet/core/variant_store.h"
-#include "lancet/core/window.h"
 #include "lancet/core/window_builder.h"
-#include "lancet/hts/alignment.h"
 #include "lancet/hts/bgzf_ostream.h"
-#include "lancet/hts/extractor.h"
-#include "lancet/hts/reference.h"
+#include "lancet/hts/uri_utils.h"
 
-#include "absl/container/btree_map.h"
-#include "absl/container/fixed_array.h"
-#include "absl/hash/hash.h"
-#include "absl/strings/match.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_join.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "concurrentqueue.h"
-#include "spdlog/fmt/bundled/base.h"
-#include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 
-using lancet::base::EtaTimer;
-using lancet::core::AsyncWorker;
-using lancet::core::VariantBuilder;
-using WindowStats = absl::btree_map<VariantBuilder::StatusCode, u64>;
+#include <filesystem>
+#include <memory>
+#include <utility>
 
-namespace {
-
-[[nodiscard]] inline auto InitWindowStats() -> absl::btree_map<VariantBuilder::StatusCode, u64> {
-  using enum VariantBuilder::StatusCode;
-  return WindowStats{{UNKNOWN, 0},
-                     {SKIPPED_NONLY_REF_BASES, 0},
-                     {SKIPPED_REF_REPEAT_SEEN, 0},
-                     {SKIPPED_INACTIVE_REGION, 0},
-                     {SKIPPED_NOASM_HAPLOTYPE, 0},
-                     {MISSING_NO_MSA_VARIANTS, 0},
-                     {FOUND_GENOTYPED_VARIANT, 0}};
-}
-
-void LogWindowStats(WindowStats const& stats) {
-  using CodeCounts = std::pair<VariantBuilder::StatusCode const, u64>;
-  static auto const SUMMER = [](u64 const sum, CodeCounts const& item) -> u64 {
-    return sum + item.second;
-  };
-  auto const nwindows = std::accumulate(stats.cbegin(), stats.cend(), 0, SUMMER);
-
-  std::ranges::for_each(stats, [&nwindows](CodeCounts const& item) -> void {
-    auto const [status_code, count] = item;
-    auto const pct_count = (100.0 * static_cast<f64>(count)) / static_cast<f64>(nwindows);
-    auto const status_str = lancet::core::ToString(status_code);
-    LOG_INFO("{} | {:>8.4f}% of total windows | {} windows", status_str, pct_count, count)
-  });
-}
-
-// NOLINTBEGIN(performance-unnecessary-value-param,readability-function-size)
-void PipelineWorker(std::stop_token stop_token, moodycamel::ProducerToken const* in_token,
-                    AsyncWorker::InQueuePtr in_queue, AsyncWorker::OutQueuePtr out_queue,
-                    AsyncWorker::VariantStorePtr vstore, AsyncWorker::BuilderParamsPtr params,
-                    u32 window_length) {
-#ifdef LANCET_PROFILE_MODE
-  if (ProfilingIsEnabledForAllThreads() != 0) ProfilerRegisterThread();
-#endif
-  auto worker = std::make_unique<AsyncWorker>(std::move(in_queue), std::move(out_queue),
-                                              std::move(vstore), std::move(params), window_length);
-  worker->Process(std::move(stop_token), *in_token);
-}
-// NOLINTEND(performance-unnecessary-value-param,readability-function-size)
-
-}  // namespace
+#include <cstdlib>
 
 namespace lancet::cli {
 
@@ -116,59 +42,75 @@ PipelineRunner::PipelineRunner(std::shared_ptr<CliParams> params) : mParamsPtr(s
 }
 
 // ---------------------------------------------------------------------------
-// InitWindowBuilder: setup and sort regions for batch emission
+// Run: primary pipeline entry point
+//
+// Validates params → sets up output → constructs VCF header → delegates
+// the full batch-fed execution loop to PipelineExecutor.
 // ---------------------------------------------------------------------------
+void PipelineRunner::Run() {
+  base::Timer timer;
+  ValidateAndPopulateParams();
+  SetupGraphOutputDir();
 
-auto PipelineRunner::InitWindowBuilder(CliParams const& params) -> core::WindowBuilder {
-  core::WindowBuilder window_builder(params.mVariantBuilder.mRdCollParams.mRefPath,
-                                     params.mWindowBuilder);
-  window_builder.AddBatchRegions(absl::MakeConstSpan(params.mInRegions));
-  window_builder.AddBatchRegions(params.mBedFile);
+  hts::BgzfOstream output_vcf;
+  OpenOutputVcf(output_vcf);
+  output_vcf << BuildVcfHeader(*mParamsPtr);
+  output_vcf.flush();
+
+  // Initialize the window builder with sorted regions
+  core::WindowBuilder window_builder(mParamsPtr->mVariantBuilder.mRdCollParams.mRefPath,
+                                     mParamsPtr->mWindowBuilder);
+
+  window_builder.AddBatchRegions(absl::MakeConstSpan(mParamsPtr->mInRegions));
+  window_builder.AddBatchRegions(mParamsPtr->mBedFile);
 
   if (window_builder.IsEmpty()) {
-    LOG_WARN(
-        "No input regions provided to build windows. Using contigs in reference as input regions")
+    LOG_WARN("No input regions provided to build windows."
+             " Using contigs in reference as input regions")
     window_builder.AddAllReferenceRegions();
   }
 
   // Sort input regions before batch emission to ensure deterministic genomic ordering
   window_builder.SortInputRegions();
-  return window_builder;
+  core::PipelineExecutor executor(
+      std::move(window_builder),
+      std::make_shared<core::VariantBuilder::Params const>(mParamsPtr->mVariantBuilder),
+      mParamsPtr->mNumWorkerThreads, mParamsPtr->mWindowBuilder.mWindowLength);
+
+  auto const stats = executor.Execute(output_vcf);
+  output_vcf.Close();
+  core::PipelineExecutor::LogWindowStats(stats);
+
+  auto const total_rt = absl::FormatDuration(absl::Trunc(timer.Runtime(), absl::Milliseconds(1)));
+  LOG_INFO("Successfully completed processing | Runtime={}", total_rt)
+  std::exit(EXIT_SUCCESS);
 }
 
 // ---------------------------------------------------------------------------
-// Run: primary pipeline execution with dynamic batch-fed window queue
+// SetupGraphOutputDir — propagate and recreate graph debug output directory
 // ---------------------------------------------------------------------------
 
-// NOLINTNEXTLINE(readability-function-size)  // TODO(lancet): refactor to reduce function size
-void PipelineRunner::Run() {
-  lancet::base::Timer timer;
-  static thread_local auto const THREAD_ID = std::this_thread::get_id();
-  LOG_INFO("Using main thread {:#x} to synchronize variant calling pipeline",
-           absl::Hash<std::thread::id>()(THREAD_ID))
-
-  ValidateAndPopulateParams();
+void PipelineRunner::SetupGraphOutputDir() {
   if (!mParamsPtr->mVariantBuilder.mOutGraphsDir.empty()) {
     mParamsPtr->mVariantBuilder.mGraphParams.mOutGraphsDir =
         mParamsPtr->mVariantBuilder.mOutGraphsDir;
     std::filesystem::remove_all(mParamsPtr->mVariantBuilder.mOutGraphsDir);
     std::filesystem::create_directories(mParamsPtr->mVariantBuilder.mOutGraphsDir);
   }
+}
 
-  // Helper lambda to identify remote cloud bucket URIs.
-  // We explicitly bypass std::filesystem::absolute() for these paths,
-  // since local systems interpret anything without a leading `/` as a relative local directory.
-  auto const is_cloud_uri = [](std::filesystem::path const& fpath) -> bool {
-    auto const uri_str = fpath.string();
-    return absl::StartsWith(uri_str, "gs://") ||
-           absl::StartsWith(uri_str, "s3://") ||
-           absl::StartsWith(uri_str, "http://") ||
-           absl::StartsWith(uri_str, "https://") ||
-           absl::StartsWith(uri_str, "ftp://") ||
-           absl::StartsWith(uri_str, "ftps://");
-  };
-
-  if (!is_cloud_uri(mParamsPtr->mOutVcfGz)) {
+// ---------------------------------------------------------------------------
+// OpenOutputVcf — resolve path, validate cloud credentials, open BGZF stream
+//
+// Local paths are made absolute and parent directories are created.
+// Cloud URIs (gs://, s3://) trigger an immediate zero-byte HTTP PUT via
+// hopen("w") to validate credentials upfront rather than discovering auth
+// failures after a 40-hour pipeline run.
+// ---------------------------------------------------------------------------
+void PipelineRunner::OpenOutputVcf(hts::BgzfOstream& output_vcf) {
+  // Resolve local paths to absolute and ensure parent directories exist.
+  // Cloud URIs (gs://, s3://) bypass local path resolution entirely.
+  if (!hts::IsCloudUri(mParamsPtr->mOutVcfGz.string())) {
     mParamsPtr->mOutVcfGz = std::filesystem::absolute(mParamsPtr->mOutVcfGz);
     if (!std::filesystem::exists(mParamsPtr->mOutVcfGz.parent_path())) {
       std::filesystem::create_directories(mParamsPtr->mOutVcfGz.parent_path());
@@ -181,352 +123,54 @@ void PipelineRunner::Run() {
   // To avoid a silent authentication failure after 40 hours, force an
   // immediate zero-byte HTTP PUT via hopen("w") to validate cloud credentials
   // upfront before starting the pipeline.
-  if (is_cloud_uri(mParamsPtr->mOutVcfGz)) {
-    auto* fptr = hopen(mParamsPtr->mOutVcfGz.c_str(), "w");
-    if (fptr == nullptr || hclose(fptr) < 0) {
+  if (hts::IsCloudUri(mParamsPtr->mOutVcfGz.string())) {
+    auto const err = hts::ValidateCloudAccess(mParamsPtr->mOutVcfGz.string(), "w");
+    if (!err.empty()) {
       LOG_CRITICAL("Cloud authentication failed! Cannot write to remote bucket: {}",
                    mParamsPtr->mOutVcfGz.string())
       std::exit(EXIT_FAILURE);
     }
   }
 
-  hts::BgzfOstream output_vcf;
   if (!output_vcf.Open(mParamsPtr->mOutVcfGz, hts::BgzfFormat::VCF)) {
     LOG_CRITICAL("Could not open output VCF file: {}", mParamsPtr->mOutVcfGz.string())
     std::exit(EXIT_FAILURE);
   }
-
-  output_vcf << BuildVcfHeader(*mParamsPtr);
-  output_vcf.flush();
-
-  // Initialize the window builder with sorted regions
-  auto window_builder = InitWindowBuilder(*mParamsPtr);
-  auto const num_total_windows = window_builder.ExpectedTargetWindows();
-  LOG_INFO("Processing {} window(s) with {} VariantBuilder thread(s)", num_total_windows,
-           mParamsPtr->mNumWorkerThreads)
-
-  // Use the BATCH_SIZE from WindowBuilder for queue feeding granularity
-  static constexpr auto BATCH_SIZE = core::WindowBuilder::BATCH_SIZE;
-
-  // When total windows fit within a multiple of BATCH_SIZE, just generate all windows
-  // upfront to avoid the overhead of batched emission for smaller runs.
-  static constexpr usize BATCH_THRESHOLD = 2 * BATCH_SIZE;
-  bool const use_batching = num_total_windows > BATCH_THRESHOLD;
-
-  // Track all emitted windows for variant flushing (indexed by genome index)
-  std::vector<core::WindowPtr> windows;
-  windows.reserve(num_total_windows);
-
-  absl::FixedArray<bool> done_windows(num_total_windows);
-  done_windows.fill(false);
-
-  auto const send_qptr = std::make_shared<AsyncWorker::InputQueue>(num_total_windows);
-  auto const recv_qptr = std::make_shared<AsyncWorker::OutputQueue>(num_total_windows);
-  moodycamel::ProducerToken const producer_token(*send_qptr);
-
-  usize region_idx = 0;
-  i64 window_start = -1;
-  usize global_idx = 0;
-
-  // Generates the next batch of windows from the builder, enqueues them for
-  // workers, and appends them to the tracking vector. Callers are responsible
-  // for checking whether more windows are needed before invoking.
-  auto const feed_next_batch = [&window_builder, &region_idx, &window_start, &global_idx,
-                                &send_qptr, &producer_token, &windows]() -> void {
-    auto next_batch = window_builder.BuildWindowsBatch(region_idx, window_start, global_idx);
-    if (!next_batch.empty()) {
-      send_qptr->enqueue_bulk(producer_token, next_batch.begin(), next_batch.size());
-      windows.insert(windows.end(), next_batch.begin(), next_batch.end());
-    }
-  };
-
-  if (use_batching) {
-    // Seed the queue with the first batch of windows
-    feed_next_batch();
-  } else {
-    // Small run: generate all windows upfront, no batching overhead
-    windows = window_builder.BuildWindows();
-    global_idx = num_total_windows;  // Mark all as emitted
-    send_qptr->enqueue_bulk(producer_token, windows.begin(), windows.size());
-  }
-
-  // Launch worker threads
-  std::vector<std::jthread> worker_threads;
-  worker_threads.reserve(mParamsPtr->mNumWorkerThreads);
-  auto const varstore = std::make_shared<core::VariantStore>();
-  auto const vb_params =
-      std::make_shared<core::VariantBuilder::Params const>(mParamsPtr->mVariantBuilder);
-  auto const window_length = mParamsPtr->mWindowBuilder.mWindowLength;
-  for (usize idx = 0; idx < mParamsPtr->mNumWorkerThreads; ++idx) {
-    worker_threads.emplace_back(PipelineWorker, &producer_token, send_qptr, recv_qptr, varstore,
-                                vb_params, window_length);
-  }
-
-  auto const percent_done = [&num_total_windows](usize const ndone) -> f64 {
-    return 100.0 * (static_cast<f64>(ndone) / static_cast<f64>(num_total_windows));
-  };
-
-  usize last_contiguous_done = 0;
-  usize idx_to_flush = 0;
-  usize num_completed = 0;
-  core::AsyncWorker::Result async_worker_result;
-  moodycamel::ConsumerToken result_consumer_token(*recv_qptr);
-
-  auto stats = InitWindowStats();
-  constexpr usize NUM_BUFFER_WINDOWS = 100;
-  EtaTimer eta_timer(num_total_windows);
-
-  // ---------------------------------------------------------------------------
-  // Main pipeline loop: process results and dynamically feed new window batches
-  // ---------------------------------------------------------------------------
-  // NOTE: The feed_next_batch check operates unconditionally at the top of the loop.
-  // This guarantees that worker queues are consistently supplied regardless of
-  // whether the subsequent queue read succeeds or times out.
-  //
-  // wait_dequeue_timed serves as a blocking futex call preventing hardware thread-spin.
-  // If the timeout triggers without a payload, we `continue` the loop,
-  // allowing the top-level feed evaluation to re-poll state.
-  constexpr auto QUEUE_TIMEOUT = std::chrono::milliseconds(10);
-  while (num_completed != num_total_windows) {
-    if (use_batching && global_idx < num_total_windows && send_qptr->size_approx() < BATCH_SIZE) {
-      feed_next_batch();
-    }
-
-    // NOTE: Sleep is handled by the wait_dequeue_timed futex block.
-    if (!recv_qptr->wait_dequeue_timed(result_consumer_token, async_worker_result, QUEUE_TIMEOUT)) {
-      continue;
-    }
-
-    num_completed++;
-    stats.at(async_worker_result.mStatus) += 1;
-    done_windows[async_worker_result.mGenomeIdx] = true;
-    core::WindowPtr const& curr_win = windows[async_worker_result.mGenomeIdx];
-    auto const win_name = curr_win->ToSamtoolsRegion();
-    auto const win_status = core::ToString(async_worker_result.mStatus);
-
-    eta_timer.Increment();
-    auto const elapsed_rt = absl::FormatDuration(absl::Trunc(timer.Runtime(), absl::Seconds(1)));
-    auto const rem_rt =
-        absl::FormatDuration(absl::Trunc(eta_timer.EstimatedEta(), absl::Seconds(1)));
-    auto const win_rt =
-        absl::FormatDuration(absl::Trunc(async_worker_result.mRuntime, absl::Microseconds(100)));
-
-    LOG_INFO("Progress: {:>8.4f}% | Elapsed: {} | ETA: {} @ {:.2f}/s | {} done with {} in {}",
-             percent_done(num_completed), elapsed_rt, rem_rt, eta_timer.RatePerSecond(), win_name,
-             win_status, win_rt)
-
-    // -------------------------------------------------------------------------
-    // VCF Output Synchronization & Bulk Flushing
-    // -------------------------------------------------------------------------
-    // Worker threads finish windows out-of-order. We use `done_windows` to track
-    // all completions, and `last_contiguous_done` traces the furthest unbroken
-    // chain of sequentially finished windows starting from the beginning.
-    while (last_contiguous_done < num_total_windows && done_windows[last_contiguous_done]) {
-      last_contiguous_done++;
-    }
-
-    // Rather than writing to disk immediately, we lag behind by `NUM_BUFFER_WINDOWS`.
-    // This safety gap allows active upstream threads to resolve large structural
-    // variants that might overlap across sequential window boundaries.
-    usize target_flush_idx = 0;
-    if (last_contiguous_done > NUM_BUFFER_WINDOWS) {
-      target_flush_idx = last_contiguous_done - NUM_BUFFER_WINDOWS;
-    }
-
-    // varstore->FlushVariantsBeforeWindow takes a target window and dumps ALL
-    // buffered variants chronologically up to that genomic threshold in one shot.
-    //
-    // Example Scenario (If NUM_BUFFER_WINDOWS = 2):
-    //  - `last_contiguous_done` evaluates to 3.
-    //  - Thread A finishes window #5 (done_windows[5] = true, chain unbroken, cursor stays 3).
-    //  - Thread B finishes window #4 (done_windows[4] = true, chain completes!).
-    //  - `last_contiguous_done` instantly slides from 3 up to 5.
-    //  - `target_flush_idx` evaluates to (5 - 2) = 3.
-    //  - `idx_to_flush` jumps from its old state directly to 3.
-    //  - A single FlushVariantsBeforeWindow(*windows[3]) call fires, sweeping
-    //    the store and safely dumping all variants prior to window #3 to disk.
-    if (idx_to_flush < target_flush_idx) {
-      idx_to_flush = target_flush_idx;
-      varstore->FlushVariantsBeforeWindow(*windows[idx_to_flush], output_vcf);
-    }
-  }
-
-  std::ranges::for_each(worker_threads, std::mem_fn(&std::jthread::request_stop));
-  std::ranges::for_each(worker_threads, std::mem_fn(&std::jthread::join));
-
-#ifdef LANCET_PROFILE_MODE
-  ProfilerStop();
-  ProfilerFlush();
-#endif
-
-  varstore->FlushAllVariantsInStore(output_vcf);
-  output_vcf.Close();
-
-  LogWindowStats(stats);
-  auto const total_runtime =
-      absl::FormatDuration(absl::Trunc(timer.Runtime(), absl::Milliseconds(1)));
-  LOG_INFO("Successfully completed processing {} windows | Runtime={}", num_total_windows,
-           total_runtime)
-  std::exit(EXIT_SUCCESS);
 }
 
 // ---------------------------------------------------------------------------
-// BuildVcfHeader
+// ValidateAndPopulateParams — pre-flight checks before pipeline execution
+//
+// 1. Determines case-control mode from parsed sample specs. This must happen
+//    BEFORE the skip-active-region early-return so VCF SHARED/CTRL/CASE INFO
+//    headers are emitted correctly regardless of --no-active-region.
+// 2. Validates that all input BAM/CRAM files contain MD tags. If any file
+//    lacks MD tags, active region detection is disabled with a warning.
 // ---------------------------------------------------------------------------
-
-auto PipelineRunner::BuildVcfHeader(CliParams const& params) -> std::string {
-  using namespace std::string_view_literals;
-  // clang-format off
-  static constexpr auto FORMAT_STR_HEADER = R"raw(##fileformat=VCFv4.5
-##fileDate={RUN_TIMESTAMP}
-##source=Lancet_{FULL_VERSION_TAG}
-##commandLine="{FULL_COMMAND_USED}"
-##reference="{REFERENCE_PATH}"
-{CONTIG_HDR_LINES}{CONDITIONAL_INFO_LINES}##INFO=<ID=TYPE,Number=A,Type=String,Description="Variant type (SNV, INS, DEL, MNP)">
-##INFO=<ID=LENGTH,Number=A,Type=Integer,Description="Variant length in base pairs">
-##INFO=<ID=MULTIALLELIC,Number=0,Type=Flag,Description="Indicates if the site has multiple ALT alleles">
-{ANNOTATION_INFO_LINES}##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
-##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele depth">
-##FORMAT=<ID=ADF,Number=R,Type=Integer,Description="Forward strand allele depth">
-##FORMAT=<ID=ADR,Number=R,Type=Integer,Description="Reverse strand allele depth">
-##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Total read depth">
-##FORMAT=<ID=RMQ,Number=R,Type=Float,Description="RMS mapping quality per allele">
-##FORMAT=<ID=NPBQ,Number=R,Type=Float,Description="Normalized posterior base quality per allele (raw PBQ / allele depth)">
-##FORMAT=<ID=SB,Number=1,Type=Float,Description="Strand bias log odds ratio (Haldane-corrected, coverage-invariant)">
-##FORMAT=<ID=SCA,Number=1,Type=Float,Description="Soft clip asymmetry (ALT minus REF)">
-##FORMAT=<ID=FLD,Number=1,Type=Float,Description="Fragment length delta (signed mean ALT isize minus mean REF isize)">
-##FORMAT=<ID=RPCD,Number=1,Type=Float,Description="Read position Cohen's D effect size (0.0 if untestable)">
-##FORMAT=<ID=BQCD,Number=1,Type=Float,Description="Base quality Cohen's D effect size (0.0 if untestable)">
-##FORMAT=<ID=MQCD,Number=1,Type=Float,Description="Mapping quality Cohen's D effect size (0.0 if untestable)">
-##FORMAT=<ID=ASMD,Number=1,Type=Float,Description="Allele-specific mismatch delta (mean ALT NM minus mean REF NM minus variant length)">
-##FORMAT=<ID=SDFC,Number=1,Type=Float,Description="Site depth fold change (sample DP / per-sample window mean coverage)">
-##FORMAT=<ID=PRAD,Number=1,Type=Float,Description="Polar radius: log10(1 + sqrt(AD_Ref^2 + AD_Alt^2))">
-##FORMAT=<ID=PANG,Number=1,Type=Float,Description="Polar angle: allele identity ratio atan2(AD_Alt, AD_Ref) in radians">
-##FORMAT=<ID=CMLOD,Number=A,Type=Float,Description="Continuous mixture log-odds score per ALT allele (base-quality-weighted LOD vs null)">
-##FORMAT=<ID=FSSE,Number=1,Type=Float,Description="Fragment start Shannon entropy [0,1]. Measures spatial diversity of ALT read start positions. Catches PCR jackpot duplicates that survive MarkDuplicates via exonuclease fraying, alignment jitter, and representative read roulette. Missing (.) if fewer than 3 ALT-supporting reads.">
-##FORMAT=<ID=AHDD,Number=1,Type=Float,Description="ALT-haplotype discordance delta. Mean ALT NM against own haplotype minus mean REF NM against REF. High values signal assembly hallucinations. Missing (.) if either group is empty.">
-##FORMAT=<ID=HSE,Number=1,Type=Float,Description="Haplotype segregation entropy [0,1]. How concentrated ALT reads are on a single SPOA path. Near 0 = concentrated (true variant). Near 1 = scattered (noise). Missing (.) if fewer than 3 ALT reads or single haplotype.">
-##FORMAT=<ID=PDCV,Number=1,Type=Float,Description="Path depth coefficient of variation. K-mer coverage uniformity along the ALT de Bruijn graph path. High values signal chimeric junctions with uneven support. Missing (.) if path has fewer than 2 nodes.">
-##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Phred-scaled genotype likelihoods (Dirichlet-Multinomial model)">
-##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality (second-lowest PL from the Dirichlet-Multinomial model, capped at 99)">
-)raw"sv;
-  // clang-format on
-
-  std::string contig_hdr_lines;
-  static constexpr usize CONTIGS_BUFFER_SIZE = 524'288;
-  contig_hdr_lines.reserve(CONTIGS_BUFFER_SIZE);
-  hts::Reference const ref(params.mVariantBuilder.mRdCollParams.mRefPath);
-  for (auto const& chrom : ref.ListChroms()) {
-    absl::StrAppend(&contig_hdr_lines,
-                    fmt::format("##contig=<ID={},length={}>\n", chrom.Name(), chrom.Length()));
-  }
-
-  // SHARED/CTRL/CASE INFO headers — only when case-control mode is active
-  std::string conditional_info_lines;
-  if (params.mIsCaseCtrlMode) {
-    // clang-format off
-    absl::StrAppend(&conditional_info_lines,
-      "##INFO=<ID=SHARED,Number=0,Type=Flag,Description=\"Variant ALT seen in both case & control sample(s)\">\n"
-      "##INFO=<ID=CTRL,Number=0,Type=Flag,Description=\"Variant ALT seen only in control sample(s)\">\n"
-      "##INFO=<ID=CASE,Number=0,Type=Flag,Description=\"Variant ALT seen only in case sample(s)\">\n");
-    // clang-format on
-  }
-
-  // Complexity feature INFO headers — always emitted
-  std::string annotation_info_lines;
-  // clang-format off
-  absl::StrAppend(&annotation_info_lines,
-    "##INFO=<ID=GRAPH_CX,Number=3,Type=String,Description=\"Graph complexity metrics: GEI,TipToPathCovRatio,MaxSingleDirDegree\">\n"
-    "##INFO=<ID=SEQ_CX,Number=11,Type=String,Description=\"Sequence complexity features: "
-    "ContextHRun,ContextEntropy,ContextFlankLQ,ContextHaplotypeLQ,DeltaHRun,DeltaEntropy,DeltaFlankLQ,TrAffinity,TrPurity,TrPeriod,IsStutterIndel\">\n");
-  // clang-format on
-
-  auto full_hdr = fmt::format(
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
-      FORMAT_STR_HEADER,
-      fmt::arg("RUN_TIMESTAMP",
-               absl::FormatTime(absl::RFC3339_sec, absl::Now(), absl::LocalTimeZone())),
-      fmt::arg("FULL_VERSION_TAG", lancet::base::LancetFullVersion()),
-      fmt::arg("FULL_COMMAND_USED", params.mFullCmdLine),
-      fmt::arg("REFERENCE_PATH", params.mVariantBuilder.mRdCollParams.mRefPath.string()),
-      fmt::arg("CONTIG_HDR_LINES", contig_hdr_lines),
-      fmt::arg("CONDITIONAL_INFO_LINES", conditional_info_lines),
-      fmt::arg("ANNOTATION_INFO_LINES", annotation_info_lines));
-
-  auto const rc_sample_list =
-      core::ReadCollector::BuildSampleNameList(params.mVariantBuilder.mRdCollParams);
-  absl::StrAppend(&full_hdr,
-                  fmt::format("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{}\n",
-                              absl::StrJoin(rc_sample_list, "\t")));
-
-  return full_hdr;
-}
-
-// ---------------------------------------------------------------------------
-// ValidateAndPopulateParams
-// ---------------------------------------------------------------------------
-
 void PipelineRunner::ValidateAndPopulateParams() {
+  auto const& rdcoll = mParamsPtr->mVariantBuilder.mRdCollParams;
+  auto const all_specs =
+      core::ParseAllInputSpecs(rdcoll.mCtrlPaths, rdcoll.mCasePaths, rdcoll.mSampleSpecs);
+
+  // Case-control mode: true when both control and case samples exist.
+  // Computed before skip-active-region so VCF headers are always correct.
+  auto const has_label = [&all_specs](cbdg::Label::Tag label_tag) -> bool {
+    return std::ranges::any_of(all_specs,
+                               [label_tag](auto const& spec) { return spec.mTag == label_tag; });
+  };
+
+  mParamsPtr->mIsCaseCtrlMode = has_label(cbdg::Label::CASE) && has_label(cbdg::Label::CTRL);
   if (mParamsPtr->mVariantBuilder.mSkipActiveRegion) return;
 
-  using lancet::hts::Alignment;
-  static constexpr usize NUM_READS_TO_PEEK = 1000;
-  static std::vector<std::string> const TAGS{"MD"};
+  auto const missing_md = std::ranges::find_if(all_specs, [&rdcoll](auto const& spec) {
+    return core::IsMissingMdTag(spec.mFilePath, rdcoll.mRefPath);
+  });
 
-  lancet::hts::Reference const ref(mParamsPtr->mVariantBuilder.mRdCollParams.mRefPath);
-
-  auto const is_md_missing = [&ref](std::filesystem::path const& aln_path) -> bool {
-    usize peeked_read_count = 0;
-    lancet::hts::Extractor extractor(aln_path, ref, Alignment::Fields::AUX_RGAUX, TAGS, true);
-    for (auto const& aln : extractor) {
-      if (peeked_read_count > NUM_READS_TO_PEEK) break;
-      if (aln.HasTag("MD")) return false;
-      peeked_read_count++;
-    }
-    return true;
-  };
-
-  if (std::ranges::any_of(mParamsPtr->mVariantBuilder.mRdCollParams.mCtrlPaths, is_md_missing)) {
-    LOG_WARN("MD tag missing in control BAM/CRAM. Turning off active region detection")
+  if (missing_md != all_specs.end()) {
+    LOG_WARN("MD tag missing in BAM/CRAM: {}. Turning off active region detection",
+             missing_md->mFilePath.filename().string())
     mParamsPtr->mVariantBuilder.mSkipActiveRegion = true;
-    return;
   }
-
-  if (std::ranges::any_of(mParamsPtr->mVariantBuilder.mRdCollParams.mCasePaths, is_md_missing)) {
-    LOG_WARN("MD tag missing in case BAM/CRAM. Turning off active region detection")
-    mParamsPtr->mVariantBuilder.mSkipActiveRegion = true;
-    return;
-  }
-
-  // Check --sample specs for MD tag presence.
-  // Parse each spec to extract the file path (strip the :role suffix).
-  for (auto const& spec : mParamsPtr->mVariantBuilder.mRdCollParams.mSampleSpecs) {
-    auto const colon_pos = spec.rfind(':');
-    auto const suffix = (colon_pos != std::string::npos && colon_pos < spec.size() - 1)
-                            ? std::string_view(spec).substr(colon_pos + 1)
-                            : std::string_view{};
-    auto const is_known_role = (suffix == "control" || suffix == "case");
-    auto const fpath = is_known_role ? std::filesystem::path(spec.substr(0, colon_pos))
-                                     : std::filesystem::path(spec);
-    if (is_md_missing(fpath)) {
-      LOG_WARN("MD tag missing in --sample BAM/CRAM. Turning off active region detection")
-      mParamsPtr->mVariantBuilder.mSkipActiveRegion = true;
-      return;
-    }
-  }
-
-  // Precompute case-control mode. True when both control and case samples exist.
-  // Checks --tumor paths AND --sample specs with :case suffix so BuildVcfHeader()
-  // emits SHARED/CTRL/CASE INFO lines regardless of which CLI flag provided cases.
-  auto const& rdcoll = mParamsPtr->mVariantBuilder.mRdCollParams;
-  bool const has_case_from_legacy = !rdcoll.mCasePaths.empty();
-  bool const has_case_from_specs =
-      std::ranges::any_of(rdcoll.mSampleSpecs, [](std::string const& spec) -> bool {
-        auto const colon_pos = spec.rfind(':');
-        if (colon_pos == std::string::npos || colon_pos >= spec.size() - 1) return false;
-        return spec.substr(colon_pos + 1) == "case";
-      });
-  mParamsPtr->mIsCaseCtrlMode = has_case_from_legacy || has_case_from_specs;
 }
 
 }  // namespace lancet::cli

@@ -1,13 +1,23 @@
 #include "lancet/caller/genotyper.h"
 
+#include "lancet/base/types.h"
 #include "lancet/caller/allele_scoring_types.h"
 #include "lancet/caller/combined_scorer.h"
 #include "lancet/caller/local_scorer.h"
+#include "lancet/caller/raw_variant.h"
+#include "lancet/caller/variant_set.h"
 #include "lancet/caller/variant_support.h"
 #include "lancet/cbdg/read.h"
 #include "lancet/hts/cigar_unit.h"
 #include "lancet/hts/cigar_utils.h"
 
+// minimap2 C API — POSIX/C headers, not C++ stdlib
+extern "C" {
+#include "minimap.h"
+#include "mmpriv.h"
+}
+
+#include "absl/hash/hash.h"
 #include "absl/types/span.h"
 
 #include <limits>
@@ -17,18 +27,6 @@
 #include <vector>
 
 #include <cstdlib>
-
-// minimap2 C API — POSIX/C headers, not C++ stdlib
-extern "C" {
-#include "minimap.h"
-#include "mmpriv.h"
-}
-
-#include "lancet/base/types.h"
-#include "lancet/caller/raw_variant.h"
-#include "lancet/caller/variant_set.h"
-
-#include "absl/hash/hash.h"
 
 namespace {
 

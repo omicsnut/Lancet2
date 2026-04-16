@@ -137,18 +137,7 @@ Checks: >-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Promote high-confidence checks to hard errors. These represent bugs,
 # performance regressions, or portability issues that must be fixed before merge.
-WarningsAsErrors: >-
-  bugprone-*,
-  -bugprone-exception-escape,
-  cert-*,
-  performance-*,
-  portability-*,
-  modernize-use-override,
-  modernize-use-nullptr,
-  modernize-use-emplace,
-  readability-container-contains,
-  readability-container-size-empty,
-  misc-const-correctness
+WarningsAsErrors: '*'
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HEADER FILTER

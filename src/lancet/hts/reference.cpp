@@ -1,5 +1,19 @@
 #include "lancet/hts/reference.h"
 
+#include "lancet/base/types.h"
+
+extern "C" {
+#include "htslib/faidx.h"
+#include "htslib/hts.h"
+#include "htslib/hts_log.h"
+}
+
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
+#include "spdlog/fmt/bundled/core.h"
+#include "spdlog/fmt/bundled/format.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <optional>
@@ -10,20 +24,6 @@
 #include <vector>
 
 #include <cstdlib>
-
-extern "C" {
-#include "htslib/faidx.h"
-#include "htslib/hts.h"
-#include "htslib/hts_log.h"
-}
-
-#include "lancet/base/types.h"
-
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/ascii.h"
-#include "spdlog/fmt/bundled/core.h"
-#include "spdlog/fmt/bundled/format.h"
 
 namespace lancet::hts {
 
@@ -156,6 +156,7 @@ auto Reference::FetchSeq(std::string const& chrom, OneBasedClosedInterval const&
       faidx_fetch_seq64(mFastaIndex.get(), chrom.c_str(), static_cast<hts_pos_t>(start_pos1 - 1),
                         static_cast<hts_pos_t>(end_pos1 - 1), &parsed_len);
   if (raw_seq == nullptr) {
+    // HTSlib region syntax: chroms with ':' must be brace-wrapped as {chrom}:pos-pos
     auto const colon_in_chrom = chrom.find(':') != std::string::npos;
     auto const regspec = colon_in_chrom ? fmt::format("{{{}}}:{}-{}", chrom, start_pos1, end_pos1)
                                         : fmt::format("{}:{}-{}", chrom, start_pos1, end_pos1);
@@ -166,6 +167,7 @@ auto Reference::FetchSeq(std::string const& chrom, OneBasedClosedInterval const&
   auto const expected_length = end_pos1 - start_pos1 + 1;
   if (std::cmp_not_equal(parsed_len, expected_length)) {
     constexpr auto FORMAT_MSG = "Expected to get {} bases from region {}. Got {} bases instead";
+    // HTSlib region syntax: chroms with ':' must be brace-wrapped as {chrom}:pos-pos
     auto const colon_in_chrom = chrom.find(':') != std::string::npos;
     auto const regspec = colon_in_chrom ? fmt::format("{{{}}}:{}-{}", chrom, start_pos1, end_pos1)
                                         : fmt::format("{}:{}-{}", chrom, start_pos1, end_pos1);
@@ -199,6 +201,7 @@ auto Reference::FetchSeq(std::string const& chrom, OneBasedClosedInterval const&
 }
 
 auto Reference::Region::ToSamtoolsRegion() const -> std::string {
+  // HTSlib region syntax: chroms with ':' must be brace-wrapped as {chrom}:pos-pos
   auto const name_has_colon = mName.find(':') != std::string::npos;
   return name_has_colon ? fmt::format("{{{}}}:{}-{}", mName, mStart1, mEnd1)
                         : fmt::format("{}:{}-{}", mName, mStart1, mEnd1);

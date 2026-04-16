@@ -70,13 +70,16 @@ class WindowBuilder {
   void SortInputRegions();
 
  private:
-  Params mParams;
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::unique_ptr<hts::Reference> mRefPtr;
 
   using ParseRegionResult = hts::Reference::ParseRegionResult;
   /// Stored as a sorted vector (after SortInputRegions) instead of flat_hash_set,
   /// enabling deterministic sequential batch emission without global post-sort.
   std::vector<ParseRegionResult> mInputRegions;
+
+  // ── 4B Align ────────────────────────────────────────────────────────────
+  Params mParams;
 
   // Add `regionPadding` to start and end, while checking for coordinate under/over-flow
   void PadInputRegion(ParseRegionResult& result) const;

@@ -74,6 +74,8 @@ def main() -> int:
     ensure_pixi()
     cmd: list[str] = [
         "pixi", "run", "run-clang-tidy",
+        "-warnings-as-errors", "*",
+        "-hide-progress",
         "-p", str(build_dir),
         "-quiet", "-use-color",
         f"-header-filter={HEADER_FILTER}",

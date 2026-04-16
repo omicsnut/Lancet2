@@ -25,10 +25,9 @@ namespace lancet::core {
 //   3. Run VariantBuilder::ProcessWindow → assemble, call, genotype
 //   4. Push result back to the output queue for progress reporting
 // ============================================================================
-
+// stop_token is a lightweight handle designed for by-value pass per C++20 jthread API
 // NOLINTNEXTLINE(performance-unnecessary-value-param)
-void AsyncWorker::Process(std::stop_token stop_token,
-                          moodycamel::ProducerToken const& /*in_token*/) {
+void AsyncWorker::Process(std::stop_token stop_token) {
   static thread_local auto const THREAD_ID =
       absl::Hash<std::thread::id>()(std::this_thread::get_id());
   LOG_DEBUG("Starting AsyncWorker thread {:#x}", THREAD_ID)

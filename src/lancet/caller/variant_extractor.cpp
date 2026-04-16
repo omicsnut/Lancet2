@@ -29,7 +29,7 @@ VariantExtractor::VariantExtractor(spoa::Graph const& graph, core::Window const&
   // A graph with fewer than 2 sequences has only the REF — no variants to extract.
   if (mNumSeqs < 2) return;
 
-  mCurrentHapPos.assign(mNumSeqs, 0);  // Initializes array accurately bounding paths
+  mCurrentHapPos.assign(mNumSeqs, 0);
 
   // ===========================================================================
   // RANK LOOKUP INITIALIZATION:  O(N) Inverse Topological Indexing
@@ -155,7 +155,7 @@ void VariantExtractor::SinkPointers(absl::Span<std::string> raw_alleles) {
   }
 }
 
-// Phase 1: Determine the lowest active topological boundary amongst traversing sets
+// Find the minimum topological rank among all active (non-null) haplotype pointers.
 auto VariantExtractor::FindLowestActiveRank() const -> u32 {
   u32 min_rank = std::numeric_limits<u32>::max();
   for (auto const* nptr : mActivePtrs) {
@@ -164,8 +164,8 @@ auto VariantExtractor::FindLowestActiveRank() const -> u32 {
   return min_rank;
 }
 
-// Phase 2: Selectively consume and roll exclusively paths
-// pinned precisely against that lowest rank
+// Advance all haplotype pointers that sit at the given topological rank,
+// appending their decoded base to the corresponding allele string.
 void VariantExtractor::ConsumePathsAtRank(u32 target_rank, absl::Span<std::string> raw_alleles) {
   for (usize i = 0; i < mNumSeqs; ++i) {
     if (mActivePtrs[i] != nullptr && mNodeToRank.at(mActivePtrs[i]->id) == target_rank) {

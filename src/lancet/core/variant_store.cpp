@@ -104,7 +104,7 @@ void VariantStore::FlushExtractedVariants(std::vector<Value>& variants_to_write,
   std::ranges::sort(variants_to_write,
                     [](Value const& lhs, Value const& rhs) -> bool { return *lhs < *rhs; });
 
-  // 2. Stream formatted records
+  // Write sorted records to the output stream
   std::ranges::for_each(variants_to_write, [&out](Value const& item) {
     fmt::print(out, "{}\n", item->AsVcfRecord());
   });

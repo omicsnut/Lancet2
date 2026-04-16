@@ -2,25 +2,26 @@
 
 #include "lancet/base/types.h"
 #include "lancet/cbdg/label.h"
+#include "lancet/cbdg/read.h"
+#include "lancet/core/sample_header_reader.h"
 #include "lancet/core/sample_info.h"
 #include "lancet/hts/alignment.h"
-#include "lancet/hts/cigar_unit.h"
 #include "lancet/hts/extractor.h"
+#include "lancet/hts/mate_info.h"
 #include "lancet/hts/reference.h"
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/hash/hash.h"
-#include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -30,69 +31,26 @@
 #include <cmath>
 #include <cstdlib>
 
-using CountMap = absl::flat_hash_map<u32, u32>;
-
 namespace {
 
-// ============================================================================
-// ParseMd — extract mismatch positions from the MD:Z auxiliary tag
+// ---------------------------------------------------------------------------
+// CompareReadsByPriority — 6-key composite comparator for deterministic
+// read ordering. Ensures identical output regardless of HTSlib iteration
+// order across runs.
 //
-// PURPOSE: Detects positions where ≥2 reads disagree with the reference,
-// which signals an active region worth assembling. This is a lightweight
-// pre-filter before the full de Bruijn graph assembly.
-//
-// MD:Z FORMAT (SAM spec §1.5):
-//   Concatenation of: [0-9]+ (matching run) | [ACGT] (mismatch base) | ^[ACGT]+ (deletion)
-//   Example: "10A5^AC6"  →  10 matches, A→? mismatch, 5 matches, 2bp deletion, 6 matches
-//
-// STATE MACHINE:
-//   ┌──────────┐  digit   ┌──────────────┐
-//   │ scanning ├─────────►│ accumulating │
-//   │          │◄─────────┤ match-run len│
-//   └────┬─────┘  letter  └──────────────┘
-//        │ (mismatch base A/C/G/T)
-//        ▼
-//   record genome_pos in result map; if count reaches 2 → return true
-//
-// Returns true as soon as any genome position has ≥2 mismatches (early exit).
-// ============================================================================
-inline auto ParseMd(std::string_view md_val, absl::Span<u8 const> quals, i64 const start,
-                    CountMap* result) -> bool {
-  if (start < 0) return false;
-
-  std::string token;
-  token.reserve(md_val.length());
-  auto genome_pos = static_cast<u32>(start);
-
-  for (auto const& character : md_val) {
-    if (absl::ascii_isdigit(static_cast<unsigned char>(character))) {
-      token += character;
-      continue;
-    }
-
-    auto const step = token.empty() ? 0 : std::strtol(token.c_str(), nullptr, 10);
-    genome_pos += static_cast<u32>(step);
-    token.clear();
-
-    auto const base_pos = static_cast<usize>(genome_pos - start);
-    static constexpr u8 MIN_BASE_QUAL = 20;
-    if (quals.at(base_pos) < MIN_BASE_QUAL) continue;
-
-    auto const base = absl::ascii_toupper(static_cast<unsigned char>(character));
-    if (base == 'A' || base == 'C' || base == 'T' || base == 'G') {
-      if (++(*result)[genome_pos] == 2) return true;
-    }
+// Priority: filter-pass status > sample tag > sample name > qname > chrom > position.
+// ---------------------------------------------------------------------------
+auto CompareReadsByPriority(lancet::cbdg::Read const& lhs, lancet::cbdg::Read const& rhs) -> bool {
+  if (lhs.PassesAlnFilters() != rhs.PassesAlnFilters()) {
+    return static_cast<int>(lhs.PassesAlnFilters()) > static_cast<int>(rhs.PassesAlnFilters());
   }
-
-  return false;
-}
-
-// Returns the graph coloring tag for a known role string,
-// or std::nullopt if the string is not a recognized role.
-inline auto TryParseRole(std::string_view const role) -> std::optional<lancet::cbdg::Label::Tag> {
-  if (role == "control") return lancet::cbdg::Label::CTRL;
-  if (role == "case") return lancet::cbdg::Label::CASE;
-  return std::nullopt;
+  if (lhs.TagKind() != rhs.TagKind()) {
+    return static_cast<u8>(lhs.TagKind()) < static_cast<u8>(rhs.TagKind());
+  }
+  if (lhs.SampleName() != rhs.SampleName()) return lhs.SampleName() < rhs.SampleName();
+  if (lhs.QnameView() != rhs.QnameView()) return lhs.QnameView() < rhs.QnameView();
+  if (lhs.ChromIndex() != rhs.ChromIndex()) return lhs.ChromIndex() < rhs.ChromIndex();
+  return lhs.StartPos0() < rhs.StartPos0();
 }
 
 }  // namespace
@@ -102,7 +60,6 @@ namespace lancet::core {
 // ---------------------------------------------------------------------------
 // Qname hashing utility
 // ---------------------------------------------------------------------------
-
 auto ReadCollector::HashQname(std::string_view qname) -> u64 {
   return absl::HashOf(qname);
 }
@@ -110,16 +67,16 @@ auto ReadCollector::HashQname(std::string_view qname) -> u64 {
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
-
 ReadCollector::ReadCollector(Params params) : mParams(std::move(params)) {
   using hts::Extractor;
   using hts::Alignment::Fields::AUX_RGAUX;
 
-  mSampleList = MakeSampleList(mParams);
+  mSampleList = core::MakeSampleList(mParams);
   auto const no_ctgcheck = mParams.mNoCtgCheck;
 
-  auto const sam_tags = mParams.mExtractPairs ? std::vector<std::string>{"SA", "AS", "XS"}
-                                              : std::vector<std::string>{"AS", "XS"};
+  static std::array<std::string, 1> const SA_TAG{"SA"};
+  auto const sam_tags =
+      mParams.mExtractPairs ? absl::MakeConstSpan(SA_TAG) : absl::Span<std::string const>{};
   static auto const IS_CASE = [](SampleInfo const& sinfo) -> bool {
     return sinfo.TagKind() == cbdg::Label::CASE;
   };
@@ -137,364 +94,210 @@ ReadCollector::ReadCollector(Params params) : mParams(std::move(params)) {
 }
 
 // ---------------------------------------------------------------------------
-// CollectRegionResult: Two-pass uniform paired downsampling
+// CollectRegionResult: orchestrator for three-pass paired downsampling.
 //
-// Pass 1 (Profile): Iterate the region with zero-copy alignment. Collect
-//         per-read statistics (total/pass counts), build a set of unique
-//         qname hashes, and track out-of-region mate candidates. Then
-//         mathematically compute which template qnames to keep, ensuring
-//         both mates of a pair are symmetrically accepted or rejected.
-//
-// Pass 2 (Extract): Re-iterate the region. Only reads whose qname hash
-//         is in the keep_qnames set trigger deep extraction (BuildSequence,
-//         BuildQualities via cbdg::Read construction).
-//
-// Pass 3 (Mates):   For kept reads whose mates fall outside the region,
-//         fetch those mates using targeted single-position queries.
+// Pass 1 (Profile): zero-copy profiling + deterministic downsampling.
+// Pass 2 (Extract): deep-copy only kept reads into mSampledReads.
+// Pass 3 (Mates):   fetch out-of-region mates for kept reads.
 // ---------------------------------------------------------------------------
-
-// NOLINTNEXTLINE(readability-function-cognitive-complexity,readability-function-size)  // TODO(lancet): refactor to reduce function size
 auto ReadCollector::CollectRegionResult(Region const& region) -> Result {
-  std::vector<Read> sampled_reads;
+  mSampledReads.clear();
   auto const max_sample_bases = mParams.mMaxSampleCov * static_cast<f64>(region.Length());
   auto const region_spec = region.ToSamtoolsRegion();
 
   for (auto& sinfo : mSampleList) {
     auto& extractor = mExtractors.at(sinfo);
-    auto const sample_name = std::string(sinfo.SampleName());
+    mSampledBaseCount = 0;
 
-    // -----------------------------------------------------------------------
-    // Pass 1: Profile & Downsample Math (zero-copy, no string allocations)
-    // -----------------------------------------------------------------------
-    u64 num_pass_reads = 0;
-    u64 num_pass_bases = 0;
+    auto profile = ProfileAndDownsample(*extractor, region_spec, max_sample_bases);
+    ExtractKeptReads(*extractor, region_spec, profile.mKeepQnames, sinfo);
 
-    // All unique qname hashes from passing reads (for downsampling)
-    std::vector<u64> pass_qname_hashes;
-    // Track out-of-region mate locations keyed by qname hash
-    MateRegionsMap expected_mates;
-    // Track qname hashes already seen in-region (for mate dedup)
-    absl::flat_hash_set<u64> seen_in_region;
-
-    extractor->SetRegionToExtract(region_spec);
-    for (auto const& aln : *extractor) {
-      auto const bflag = aln.Flag();
-      if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() == 0) {
-        continue;
-      }
-
-      auto const qhash = HashQname(aln.QnameView());
-      bool const passes_filters = aln.MapQual() >= 20;
-      if (passes_filters) {
-        num_pass_reads += 1;
-        num_pass_bases += aln.Length();
-        pass_qname_hashes.push_back(qhash);
-      }
-
-      // Track out-of-region mates if pair extraction is enabled
-      if (mParams.mExtractPairs) {
-        // Check if we already saw the mate in-region
-        if (seen_in_region.contains(qhash)) {
-          expected_mates.erase(qhash);
-        } else {
-          seen_in_region.insert(qhash);
-
-          if (!aln.Flag().IsMateUnmapped() &&
-              (!aln.Flag().IsMappedProperPair() || aln.HasTag("SA"))) {
-            expected_mates.try_emplace(qhash, aln.MateLocation());
-          }
-        }
-      }
+    if (!profile.mExpectedMates.empty() && mParams.mExtractPairs) {
+      RecaptureMates(*extractor, profile.mKeepQnames, profile.mExpectedMates, sinfo);
     }
 
-    // Compute uniform paired downsampling threshold
-    auto const bases_per_read =
-        num_pass_reads > 0 ? static_cast<f64>(num_pass_bases) / static_cast<f64>(num_pass_reads)
-                           : 1.0;
-    auto const max_reads_to_sample = static_cast<u64>(std::ceil(max_sample_bases / bases_per_read));
-    auto const sampled_read_count =
-        num_pass_reads > max_reads_to_sample ? max_reads_to_sample : num_pass_reads;
-
-    // Shuffle unique qname hashes and select the first `sampled_read_count` entries.
-    // This guarantees that if Mate1 is accepted, Mate2 is symmetrically accepted.
-    // Deterministic seed for reproducible downsampling —
-    // variant calls must not change between runs on identical inputs.
-    std::shuffle(pass_qname_hashes.begin(), pass_qname_hashes.end(),
-                 // NOLINTNEXTLINE(bugprone-random-generator-seed,cert-msc32-c,cert-msc51-cpp)
-                 std::default_random_engine(0));
-    absl::flat_hash_set<u64> const keep_qnames(pass_qname_hashes.begin(),
-                                               pass_qname_hashes.begin() +
-                                                   static_cast<i64>(sampled_read_count));
-
-    // -----------------------------------------------------------------------
-    // Pass 2: Deep Copy & Object Emplacement (only for kept reads)
-    // -----------------------------------------------------------------------
-    u64 sampled_base_count = 0;
-    extractor->SetRegionToExtract(region_spec);
-    for (auto const& aln : *extractor) {
-      auto const bflag = aln.Flag();
-      if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() == 0) {
-        continue;
-      }
-      if (!keep_qnames.contains(HashQname(aln.QnameView()))) continue;
-
-      // Only kept reads trigger BuildSequence/BuildQualities via the Read constructor
-      sampled_reads.emplace_back(aln, sample_name, sinfo.TagKind(), sinfo.SampleIndex());
-      sampled_base_count += sampled_reads.back().Length();
-    }
-
-    // -----------------------------------------------------------------------
-    // Pass 3: Recapture out-of-region mates for kept reads
-    // -----------------------------------------------------------------------
-    if (!expected_mates.empty() && mParams.mExtractPairs) {
-      // Remove mates whose qnames were not kept during downsampling
-      for (auto it = expected_mates.begin(); it != expected_mates.end();) {
-        if (!keep_qnames.contains(it->first)) {
-          expected_mates.erase(it++);
-        } else {
-          ++it;
-        }
-      }
-
-      auto rev_mate_regions = RevSortMateRegions(expected_mates);
-      while (!expected_mates.empty()) {
-        auto const& [qhash, minfo] = rev_mate_regions.back();
-        if (!expected_mates.contains(qhash)) {
-          rev_mate_regions.pop_back();
-          continue;
-        }
-
-        auto const mate_reg_spec = MakeRegSpec(minfo, extractor.get());
-        extractor->SetRegionToExtract(mate_reg_spec);
-
-        for (auto const& aln : *extractor) {
-          auto const mate_qhash = HashQname(aln.QnameView());
-          auto const itr = expected_mates.find(mate_qhash);
-          if (itr == expected_mates.end()) continue;
-
-          sampled_reads.emplace_back(aln, sample_name, sinfo.TagKind(), sinfo.SampleIndex());
-          sampled_base_count += sampled_reads.back().Length();
-          expected_mates.erase(itr);
-        }
-
-        rev_mate_regions.pop_back();
-      }
-    }
-
-    // Update sample statistics
-    sinfo.SetNumSampledReads(sampled_read_count);
-    sinfo.SetNumSampledBases(sampled_base_count);
+    sinfo.SetNumSampledReads(profile.mSampledReadCount);
+    sinfo.SetNumSampledBases(mSampledBaseCount);
   }
 
-  std::ranges::sort(sampled_reads, [](Read const& lhs, Read const& rhs) -> bool {
-    if (lhs.PassesAlnFilters() != rhs.PassesAlnFilters()) {
-      return static_cast<int>(lhs.PassesAlnFilters()) > static_cast<int>(rhs.PassesAlnFilters());
+  std::ranges::sort(mSampledReads, CompareReadsByPriority);
+  return {.mSampleReads = std::move(mSampledReads), .mSampleList = mSampleList};
+}
+
+// ---------------------------------------------------------------------------
+// Pass 1: Profile & Downsample Math (zero-copy, no string allocations)
+//
+// Iterates all alignments in the region for a single sample. Counts
+// passing reads/bases, builds a qname hash set, and tracks out-of-region
+// mate locations. Then shuffles the qname hashes and keeps only enough
+// to satisfy the coverage cap. Both mates of a pair are symmetrically
+// accepted or rejected because downsampling operates on qname hashes.
+// ---------------------------------------------------------------------------
+auto ReadCollector::ProfileAndDownsample(hts::Extractor& extractor, std::string const& region_spec,
+                                         f64 const max_sample_bases) const -> ProfileResult {
+  u64 num_pass_reads = 0;
+  u64 num_pass_bases = 0;
+
+  std::vector<u64> pass_qname_hashes;
+  MateRegionsMap expected_mates;
+  absl::flat_hash_set<u64> seen_in_region;
+
+  extractor.SetRegionToExtract(region_spec);
+  for (auto const& aln : extractor) {
+    auto const bflag = aln.Flag();
+    if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() == 0) {
+      continue;
     }
-    if (lhs.TagKind() != rhs.TagKind()) {
-      return static_cast<u8>(lhs.TagKind()) < static_cast<u8>(rhs.TagKind());
+
+    auto const qhash = HashQname(aln.QnameView());
+    bool const passes_filters = aln.MapQual() >= 20;
+    if (passes_filters) {
+      num_pass_reads += 1;
+      num_pass_bases += aln.Length();
+      pass_qname_hashes.push_back(qhash);
     }
-    if (lhs.SampleName() != rhs.SampleName()) return lhs.SampleName() < rhs.SampleName();
-    if (lhs.QnameView() != rhs.QnameView()) return lhs.QnameView() < rhs.QnameView();
-    if (lhs.ChromIndex() != rhs.ChromIndex()) return lhs.ChromIndex() < rhs.ChromIndex();
-    return lhs.StartPos0() < rhs.StartPos0();
+
+    if (!mParams.mExtractPairs) continue;
+
+    // Both mates already seen in-region — no out-of-region fetch needed
+    if (seen_in_region.contains(qhash)) {
+      expected_mates.erase(qhash);
+      continue;
+    }
+
+    seen_in_region.insert(qhash);
+    // Track mates with discordant mapping or supplementary alignments (SA tag)
+    auto const is_mate_mapped = aln.Flag().IsMateMapped();
+    auto const is_discordant = !aln.Flag().IsMappedProperPair();
+    auto const has_supplementary = aln.HasTag("SA");
+    if (is_mate_mapped && (is_discordant || has_supplementary)) {
+      expected_mates.try_emplace(qhash, aln.MateLocation());
+    }
+  }
+
+  // Compute the maximum number of reads to keep for coverage-capped downsampling.
+  // Mean read length converts the base-budget (max_sample_bases) into a read count.
+  // std::max guards against zero-read regions to avoid division by zero (branchless).
+  // std::min caps at observed count so we never "upsample" beyond what exists.
+  auto const denominator = static_cast<f64>(std::max(num_pass_reads, u64{1}));
+  auto const bases_per_read = static_cast<f64>(num_pass_bases) / denominator;
+  auto const max_reads_to_sample = static_cast<u64>(std::ceil(max_sample_bases / bases_per_read));
+  auto const sampled_read_count = std::min(num_pass_reads, max_reads_to_sample);
+
+  // Shuffle and select the first `sampled_read_count` entries.
+  // Fixed seed=0 is intentional: variant calls MUST be deterministic across
+  // runs on identical inputs. A random seed would cause non-reproducible VCF
+  // output, violating the pipeline's reproducibility guarantee.
+  // NOLINTBEGIN(bugprone-random-generator-seed,cert-msc32-c,cert-msc51-cpp)
+  std::shuffle(pass_qname_hashes.begin(), pass_qname_hashes.end(), std::default_random_engine(0));
+  // NOLINTEND(bugprone-random-generator-seed,cert-msc32-c,cert-msc51-cpp)
+
+  auto const keep_qnames_end = pass_qname_hashes.begin() + static_cast<i64>(sampled_read_count);
+  absl::flat_hash_set<u64> keep_qnames(pass_qname_hashes.begin(), keep_qnames_end);
+
+  return {.mKeepQnames = std::move(keep_qnames),
+          .mExpectedMates = std::move(expected_mates),
+          .mSampledReadCount = sampled_read_count};
+}
+
+// ---------------------------------------------------------------------------
+// Pass 2: Deep Copy & Object Emplacement (only for kept reads)
+//
+// Re-iterates the region. Only reads whose qname hash is in keep_qnames
+// trigger deep extraction (BuildSequence, BuildQualities via Read ctor).
+// ---------------------------------------------------------------------------
+void ReadCollector::ExtractKeptReads(hts::Extractor& extractor, std::string const& region_spec,
+                                     absl::flat_hash_set<u64> const& keep_qnames,
+                                     SampleInfo const& sinfo) {
+  auto const sample_name = std::string(sinfo.SampleName());
+  extractor.SetRegionToExtract(region_spec);
+  for (auto const& aln : extractor) {
+    auto const bflag = aln.Flag();
+    if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() == 0) {
+      continue;
+    }
+
+    if (!keep_qnames.contains(HashQname(aln.QnameView()))) continue;
+
+    mSampledReads.emplace_back(aln, sample_name, sinfo.TagKind(), sinfo.SampleIndex());
+    mSampledBaseCount += mSampledReads.back().Length();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pass 3: Recapture out-of-region mates for kept reads
+//
+// Walks mate locations in reverse-sorted genomic order for sequential
+// disk access. Removes mates whose qnames were not kept during downsampling
+// before querying, to avoid unnecessary HTSlib seeks.
+// ---------------------------------------------------------------------------
+void ReadCollector::RecaptureMates(hts::Extractor& extractor,
+                                   absl::flat_hash_set<u64> const& keep_qnames,
+                                   MateRegionsMap& expected_mates, SampleInfo const& sinfo) {
+  // Remove mates whose qnames are not in the keep set (rejected by downsampling
+  // or already captured during the in-region linear scan)
+  absl::erase_if(expected_mates, [&keep_qnames](auto const& entry) -> bool {
+    return !keep_qnames.contains(entry.first);
   });
 
-  return {.mSampleReads = std::move(sampled_reads), .mSampleList = mSampleList};
-}
+  auto const sample_name = std::string(sinfo.SampleName());
+  // Reverse-sorted so pop_back() yields ascending genomic order (sequential BAM I/O)
+  auto rev_mate_regions = ReverseSortMateRegions(expected_mates);
+  while (!expected_mates.empty()) {
+    auto const& [qhash, minfo] = rev_mate_regions.back();
+    if (!expected_mates.contains(qhash)) {
+      rev_mate_regions.pop_back();
+      continue;
+    }
 
-// ---------------------------------------------------------------------------
-// IsActiveRegion: uses zero-copy alignment for rapid region evaluation.
-// BuildQualities() is called on-demand only for reads that have MD tags.
-// ---------------------------------------------------------------------------
-
-// NOLINTNEXTLINE(readability-function-cognitive-complexity,readability-function-size)  // TODO(lancet): refactor to reduce function size
-auto ReadCollector::IsActiveRegion(Params const& params, Region const& region) -> bool {
-  CountMap mismatches;                // genome position -> number of mismatches at position
-  CountMap insertions;                // genome position -> number of insertions at position
-  CountMap deletions;                 // genome position -> number of deletions at position
-  CountMap softclips;                 // genome position -> number of softclips at position
-  std::vector<u32> genome_positions;  // softclip genome positions for single alignment
-
-  auto const sample_list = MakeSampleList(params);
-  for (auto const& sinfo : sample_list) {
-    genome_positions.clear();
-    mismatches.clear();
-    insertions.clear();
-    deletions.clear();
-    softclips.clear();
-
-    using hts::Alignment::Fields::AUX_RGAUX;
-    hts::Extractor extractor(sinfo.Path(), hts::Reference(params.mRefPath), AUX_RGAUX,
-                             {"MD", "AS", "XS"}, params.mNoCtgCheck);
-    extractor.SetRegionToExtract(region.ToSamtoolsRegion());
+    auto const mate_reg_spec = MakeRegionSpec(minfo, &extractor);
+    extractor.SetRegionToExtract(mate_reg_spec);
 
     for (auto const& aln : extractor) {
-      auto const bflag = aln.Flag();
-      if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() == 0) {
-        continue;
-      }
+      auto const mate_qhash = HashQname(aln.QnameView());
+      auto const itr = expected_mates.find(mate_qhash);
+      if (itr == expected_mates.end()) continue;
 
-      if (aln.HasTag("MD")) {
-        auto const md_tag = aln.GetTag<std::string_view>("MD");
-        // BuildQualities performs on-demand deep copy of quality values
-        auto const quals = aln.BuildQualities();
-        if (ParseMd(md_tag.value(), absl::MakeConstSpan(quals), aln.StartPos0(), &mismatches)) {
-          return true;
-        }
-      }
-
-      auto const cigar_units = aln.CigarData();
-      auto curr_genome_pos = static_cast<u32>(aln.StartPos0());
-      bool has_soft_clip = false;
-
-      // lambda function to increment the counter for `genome_positions`
-      static auto const INCREMENT_GENOME_POS = [](CountMap& counts, u32 genome_pos) -> bool {
-        return ++counts[genome_pos] == 2;
-      };
-
-      for (auto const& cig_unit : cigar_units) {
-        if (cig_unit.ConsumesReference()) {
-          curr_genome_pos += cig_unit.Length();
-        }
-
-        switch (cig_unit.Operation()) {
-          case hts::CigarOp::INSERTION:
-            if (INCREMENT_GENOME_POS(insertions, curr_genome_pos)) {
-              return true;
-            }
-            break;
-          case hts::CigarOp::DELETION:
-            if (INCREMENT_GENOME_POS(deletions, curr_genome_pos)) {
-              return true;
-            }
-            break;
-          case hts::CigarOp::SEQUENCE_MISMATCH:
-            if (INCREMENT_GENOME_POS(mismatches, curr_genome_pos)) {
-              return true;
-            }
-            break;
-          case hts::CigarOp::SOFT_CLIP:
-            has_soft_clip = true;
-            break;
-          default:
-            break;
-        }
-      }
-
-      genome_positions.clear();
-      if (has_soft_clip && aln.GetSoftClips(nullptr, nullptr, &genome_positions, false)) {
-        for (auto const gpos : genome_positions) {
-          if (INCREMENT_GENOME_POS(softclips, gpos)) {
-            return true;
-          }
-        }
-      }
+      mSampledReads.emplace_back(aln, sample_name, sinfo.TagKind(), sinfo.SampleIndex());
+      mSampledBaseCount += mSampledReads.back().Length();
+      expected_mates.erase(itr);
     }
+
+    rev_mate_regions.pop_back();
   }
-
-  return false;
 }
 
 // ---------------------------------------------------------------------------
-// Utility methods
+// ReverseSortMateRegions — descending-order sort for stack-based consumption
+//
+// Returns mate locations sorted by descending chrom index, then descending
+// start position. RecaptureMates consumes via pop_back(), which yields
+// ascending genomic order — matching BAM/CRAM coordinate sort for sequential
+// disk I/O. Using pop_back() is O(1), unlike front-erasure which is O(n).
 // ---------------------------------------------------------------------------
-
-auto ReadCollector::BuildSampleNameList(Params const& params) -> std::vector<std::string> {
-  auto const sinfo_list = MakeSampleList(params);
-  std::vector<std::string> results;
-  results.reserve(sinfo_list.size());
-  std::ranges::transform(
-      sinfo_list, std::back_inserter(results),
-      [](SampleInfo const& item) -> std::string { return std::string(item.SampleName()); });
-  return results;
-}
-
-auto ReadCollector::MakeSampleList(Params const& params) -> std::vector<SampleInfo> {
-  std::vector<SampleInfo> results;
-  results.reserve(params.mCtrlPaths.size() + params.mCasePaths.size() + params.mSampleSpecs.size());
-  hts::Reference const ref(params.mRefPath);
-
-  // Shared helper: extract SM read group tag from BAM/CRAM header → SampleInfo.
-  auto const make_sample = [&ref](std::filesystem::path const& fpath,
-                                  cbdg::Label::Tag const tag) -> SampleInfo {
-    hts::Extractor const extractor(fpath, ref, hts::Alignment::Fields::CORE_QNAME, {}, true);
-    return SampleInfo(extractor.SampleName(), fpath, tag);
+auto ReadCollector::ReverseSortMateRegions(MateRegionsMap const& data)
+    -> std::vector<MateHashAndLocation> {
+  // Descending comparator: higher chrom index first,
+  // then higher start position within the same chrom.
+  static auto const COMPARE_DESCENDING = [](MateHashAndLocation const& lhs,
+                                            MateHashAndLocation const& rhs) -> bool {
+    if (lhs.second.mChromIndex != rhs.second.mChromIndex) {
+      return lhs.second.mChromIndex > rhs.second.mChromIndex;
+    }
+    return lhs.second.mMateStartPos0 > rhs.second.mMateStartPos0;
   };
 
-  // Legacy --normal paths → control samples
-  std::ranges::transform(params.mCtrlPaths, std::back_inserter(results),
-                         [&](auto const& fpath) { return make_sample(fpath, cbdg::Label::CTRL); });
-
-  // Legacy --tumor paths → case samples
-  std::ranges::transform(params.mCasePaths, std::back_inserter(results),
-                         [&](auto const& fpath) { return make_sample(fpath, cbdg::Label::CASE); });
-
-  // Unified --sample specs (<path>:<role>)
-  // Check if the suffix after the LAST colon is a known role string
-  // ("control" or "case"). If it is, split there. If not, the entire
-  // string is the path and the tag defaults to Label::CTRL.
-  // This handles cloud URIs (s3://bucket/file.bam) without false splits.
-  for (auto const& spec : params.mSampleSpecs) {
-    auto const colon_pos = spec.rfind(':');
-    auto const suffix = (colon_pos != std::string::npos && colon_pos < spec.size() - 1)
-                            ? std::string_view(spec).substr(colon_pos + 1)
-                            : std::string_view{};
-    auto const parsed_tag = TryParseRole(suffix);
-
-    auto const fpath = parsed_tag.has_value() ? std::filesystem::path(spec.substr(0, colon_pos))
-                                              : std::filesystem::path(spec);
-    auto const tag = parsed_tag.value_or(cbdg::Label::CTRL);
-    results.emplace_back(make_sample(fpath, tag));
-  }
-
-  std::ranges::sort(results, std::less<SampleInfo>{});
-
-  // ======================================================================
-  // Assign sample indices AFTER sorting.
-  //
-  // Sorting by (TagKind, SampleName) guarantees deterministic ordering
-  // regardless of CLI argument order. Index assignment uses unique
-  // (role, name) pairs: two BAM files sharing the same SM read group
-  // tag and same role receive the same index.
-  //
-  // INVARIANT: sample index = sorted position = VCF FORMAT column position.
-  //   mSampleList[i].SampleIndex() == i  (for unique samples)
-  //   mSampleGenotypes[i] in VariantCall corresponds to mSampleList[i]
-  //   VCF #CHROM header sample columns follow this same order
-  // ======================================================================
-  usize current_idx = 0;
-  for (usize pos = 0; pos < results.size(); ++pos) {
-    if (pos > 0 &&
-        results[pos].SampleName() == results[pos - 1].SampleName() &&
-        results[pos].TagKind() == results[pos - 1].TagKind()) {
-      // Same logical sample (same SM tag + same role) split across files.
-      // Assign the same index so their reads increment the same counter.
-      results[pos].SetSampleIndex(results[pos - 1].SampleIndex());
-    } else {
-      results[pos].SetSampleIndex(current_idx++);
-    }
-  }
-
-  return results;
-}
-
-auto ReadCollector::RevSortMateRegions(MateRegionsMap const& data)
-    -> std::vector<MateHashAndLocation> {
   std::vector<MateHashAndLocation> results(data.cbegin(), data.cend());
-  std::ranges::sort(results,
-                    [](MateHashAndLocation const& lhs, MateHashAndLocation const& rhs) -> bool {
-                      return (lhs.second.mChromIndex != rhs.second.mChromIndex)
-                                 ? lhs.second.mChromIndex > rhs.second.mChromIndex
-                                 : lhs.second.mMateStartPos0 > rhs.second.mMateStartPos0;
-                    });
-
+  std::ranges::sort(results, COMPARE_DESCENDING);
   return results;
 }
 
-auto ReadCollector::MakeRegSpec(hts::MateInfo const& info, hts::Extractor const* ext)
+auto ReadCollector::MakeRegionSpec(hts::MateInfo const& info, hts::Extractor const* ext)
     -> std::string {
   auto const mate_chrom = ext->ChromName(info.mChromIndex);
   auto const mate_pos1 = info.mMateStartPos0 + 1;
+  // HTSlib region syntax: chroms with ':' in their name (e.g. HLA contigs)
+  // must be brace-wrapped as {chrom}:pos-pos to avoid ambiguous parsing.
   auto const colon_in_mate_chrom = mate_chrom.find(':') != std::string::npos;
   return colon_in_mate_chrom ? fmt::format("{{{}}}:{}-{}", mate_chrom, mate_pos1, mate_pos1)
                              : fmt::format("{}:{}-{}", mate_chrom, mate_pos1, mate_pos1);

@@ -1,26 +1,26 @@
 #ifndef SRC_LANCET_HTS_ALIGNMENT_H_
 #define SRC_LANCET_HTS_ALIGNMENT_H_
 
-#include <string>
-#include <string_view>
-#include <vector>
-
-extern "C" {
-#include "htslib/hts.h"
-#include "htslib/sam.h"
-}
-
 #include "lancet/base/types.h"
 #include "lancet/hts/cigar_unit.h"
 #include "lancet/hts/mate_info.h"
 #include "lancet/hts/reference.h"
 #include "lancet/hts/sam_flag.h"
 
+extern "C" {
+#include "htslib/hts.h"
+#include "htslib/sam.h"
+}
+
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
+
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace lancet::hts {
 

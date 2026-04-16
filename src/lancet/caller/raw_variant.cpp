@@ -27,12 +27,12 @@ namespace lancet::caller {
 //
 // Thus, VCF Parsimony halts prematurely for ALT1!
 // When ALT1 evaluates its payload conventionally: `REF="ATGC"`, `ALT="AT"`.
-// If we naively utilized length logic (`diff = -2` and `length > 1`), we would classify this
-// erroneously as a `CPX` (Complex) mutation because the length boundary is artificially inflated!
+// If we used length logic directly (`diff = -2` and `length > 1`), we would classify this
+// as a `CPX` (Complex) mutation because the length boundary is artificially inflated!
 //
 // -> THE SEQUENCE CORE SOLUTION:
-// By aggressively symmetrically squeezing matching 5' prefixes and 3' suffixes exclusively
-// between the 1-on-1 pairs immediately prior to classification, we computationally decouple
+// By symmetrically squeezing matching 5' prefixes and 3' suffixes
+// between the 1-on-1 pairs immediately prior to classification, we decouple
 // the biological Core from the VCF-Padding constraints.
 //
 //    [REF]     :  A T (G C)  ---> "GC"

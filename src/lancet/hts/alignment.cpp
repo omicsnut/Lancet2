@@ -1,6 +1,19 @@
 #include "lancet/hts/alignment.h"
 
+#include "lancet/base/types.h"
 #include "lancet/hts/cigar_unit.h"
+#include "lancet/hts/reference.h"
+
+extern "C" {
+#include "htslib/sam.h"
+}
+
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "spdlog/fmt/bundled/base.h"
+#include "spdlog/fmt/bundled/core.h"
+#include "spdlog/fmt/bundled/format.h"
 
 #include <algorithm>
 #include <array>
@@ -9,20 +22,6 @@
 #include <vector>
 
 #include <cerrno>
-
-extern "C" {
-#include "htslib/sam.h"
-}
-
-#include "lancet/base/types.h"
-#include "lancet/hts/reference.h"
-
-#include "absl/status/status.h"
-#include "absl/status/statusor.h"
-#include "absl/strings/str_cat.h"
-#include "spdlog/fmt/bundled/base.h"
-#include "spdlog/fmt/bundled/core.h"
-#include "spdlog/fmt/bundled/format.h"
 
 namespace lancet::hts {
 

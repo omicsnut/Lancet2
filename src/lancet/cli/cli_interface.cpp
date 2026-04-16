@@ -1,23 +1,5 @@
 #include "lancet/cli/cli_interface.h"
 
-#include <iostream>
-#include <limits>
-#include <memory>
-#include <string>
-#include <thread>
-
-// POSIX header — not part of the C/C++ standard library
-extern "C" {
-#include "unistd.h"
-}
-
-#include <cstdio>
-#include <cstdlib>
-
-extern "C" {
-#include "htslib/hfile.h"
-}
-
 #include "lancet/base/logging.h"
 #include "lancet/base/types.h"
 #include "lancet/base/version.h"
@@ -25,14 +7,29 @@ extern "C" {
 #include "lancet/cli/cli_params.h"
 #include "lancet/cli/pipeline_runner.h"
 #include "lancet/core/window_builder.h"
+#include "lancet/hts/uri_utils.h"
 
 #include "CLI/CLI.hpp"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "spdlog/common.h"
 #include "spdlog/fmt/bundled/core.h"
 #include "spdlog/fmt/bundled/format.h"
 #include "spdlog/fmt/bundled/ostream.h"
+
+// POSIX header — not part of the C/C++ standard library
+extern "C" {
+#include "unistd.h"
+}
+
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <thread>
+
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 
@@ -53,24 +50,10 @@ class CliExistingUriOrFile : public CLI::Validator {
   CliExistingUriOrFile() {
     name_ = "EXISTING_URI_OR_FILE";
     func_ = [](std::string const& str) -> std::string {
-      // Accept cloud/web URIs (s3://, gs://, http://) by checking with htslib's
-      // hopen() instead of local filesystem existence.
-      if (absl::StartsWith(str, "gs://") ||
-          absl::StartsWith(str, "s3://") ||
-          absl::StartsWith(str, "http://") ||
-          absl::StartsWith(str, "https://") ||
-          absl::StartsWith(str, "ftp://") ||
-          absl::StartsWith(str, "ftps://")) {
-        hFILE* fptr = hopen(str.c_str(), "r");
-        if (fptr == nullptr) {
-          return fmt::format("Could not open existing cloud/web resource: {}", str);
-        }
-        if (hclose(fptr) < 0) {
-          return fmt::format("Failed to properly close existing cloud/web resource connection: {}",
-                             str);
-        }
-        return "";
+      if (lancet::hts::IsCloudUri(str)) {
+        return lancet::hts::ValidateCloudAccess(str, "r");
       }
+
       return CLI::ExistingFile(str);
     };
   }
@@ -81,20 +64,39 @@ class CliNonexistentUriOrPath : public CLI::Validator {
   CliNonexistentUriOrPath() {
     name_ = "NONEXISTENT_URI_OR_PATH";
     func_ = [](std::string const& str) -> std::string {
-      // Skip filesystem check for cloud output paths (s3://, gs://) — the path
-      // doesn't need to exist locally.
-      if (absl::StartsWith(str, "gs://") ||
-          absl::StartsWith(str, "s3://") ||
-          absl::StartsWith(str, "http://") ||
-          absl::StartsWith(str, "https://") ||
-          absl::StartsWith(str, "ftp://") ||
-          absl::StartsWith(str, "ftps://")) {
-        return "";
-      }
+      if (lancet::hts::IsCloudUri(str)) return "";
       return CLI::NonexistentPath(str);
     };
   }
 };
+
+// ── CLI option groups ─────────────────────────────────────────────────────
+constexpr auto GRP_DATASETS = "Datasets";
+constexpr auto GRP_REQUIRED = "Required";
+constexpr auto GRP_REGIONS = "Regions";
+constexpr auto GRP_PARAMETERS = "Parameters";
+constexpr auto GRP_FLAGS = "Flags";
+constexpr auto GRP_OPTIONAL = "Optional";
+
+/// Register a CLI option with standard required/group boilerplate.
+/// Returns CLI::Option* for optional ->check() or ->type_name() chaining.
+template <typename T>
+auto AddOpt(CLI::App* sub, std::string_view flags, T& target, std::string_view desc,
+            std::string_view group, bool required = false) -> CLI::Option* {
+  auto* opt = sub->add_option(std::string(flags), target, std::string(desc));
+  opt->required(required);
+  opt->group(std::string(group));
+  return opt;
+}
+
+/// Register a CLI boolean flag with standard group boilerplate.
+template <typename T>
+auto AddFlag(CLI::App* sub, std::string_view flags, T& target, std::string_view desc,
+             std::string_view group) -> CLI::Option* {
+  auto* opt = sub->add_flag(std::string(flags), target, std::string(desc));
+  opt->group(std::string(group));
+  return opt;
+}
 
 }  // namespace
 
@@ -114,7 +116,7 @@ $$$$$$$$\\$$$$$$$ |$$ |  $$ |\$$$$$$$\ \$$$$$$$\  \$$$$  |
 )raw";
 // clang-format on
 
-static constexpr auto APP_NAME_FMT_STR = "Lancet, {}\nMicrosssembly based somatic variant caller\n";
+static constexpr auto APP_NAME_FMT_STR = "Lancet, {}\nMicroassembly based somatic variant caller\n";
 
 namespace lancet::cli {
 
@@ -155,137 +157,101 @@ auto CliInterface::RunMain(int const argc, char const** argv) -> int {
 }
 
 void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& params) {
-  auto* subcmd = app->add_subcommand("pipeline", "Run the Lancet variant calling pipeline");
-  subcmd->option_defaults()->always_capture_default();
+  auto* sub = app->add_subcommand("pipeline", "Run the Lancet variant calling pipeline");
+  sub->option_defaults()->always_capture_default();
 
   // Print help and exit 0 when pipeline subcommand is invoked with no arguments.
-  subcmd->preparse_callback([subcmd](std::size_t remaining) -> void {
+  sub->preparse_callback([sub](std::size_t remaining) -> void {
     if (remaining == 0) throw CLI::CallForHelp();
   });
 
-  auto& wb_prms = params->mWindowBuilder;
-  auto& vb_prms = params->mVariantBuilder;
-  auto& rc_prms = vb_prms.mRdCollParams;
-  auto& grph_prms = vb_prms.mGraphParams;
+  auto& win_params = params->mWindowBuilder;
+  auto& var_params = params->mVariantBuilder;
+  auto& rc_params = var_params.mRdCollParams;
+  auto& graph_params = var_params.mGraphParams;
 
-  static int const MAX_NUM_THREADS = static_cast<int>(std::thread::hardware_concurrency());
+  static int const MAX_THREADS = static_cast<int>(std::thread::hardware_concurrency());
 
-  // Datasets
-  subcmd
-      ->add_option("-n,--normal", rc_prms.mCtrlPaths,
-                   "Path to one (or) more control (normal) BAM/CRAM file(s)")
-      ->required(true)
-      ->group("Datasets");
-  subcmd
-      ->add_option("-t,--tumor", rc_prms.mCasePaths,
-                   "Path to one (or) more case (tumor) BAM/CRAM file(s)")
-      ->required(false)
-      ->group("Datasets");
-  subcmd
-      ->add_option("-s,--sample", rc_prms.mSampleSpecs,
-                   "Sample input as <path>:<role> (roles: control, case)")
-      ->required(false)
-      ->group("Datasets");
+  // ── Datasets ────────────────────────────────────────────────────────────
+  AddOpt(sub, "-n,--normal", rc_params.mCtrlPaths,
+         "Path to one (or) more control (normal) BAM/CRAM file(s)", GRP_DATASETS, true);
+  AddOpt(sub, "-t,--tumor", rc_params.mCasePaths,
+         "Path to one (or) more case (tumor) BAM/CRAM file(s)", GRP_DATASETS);
+  AddOpt(sub, "-s,--sample", rc_params.mSampleSpecs,
+         "Sample input as <path>:<role> (roles: control, case)", GRP_DATASETS);
 
-  // Required
-  subcmd->add_option("-r,--reference", rc_prms.mRefPath, "Path to the reference FASTA file")
-      ->required(true)
-      ->group("Required")
+  // ── Required ────────────────────────────────────────────────────────────
+  AddOpt(sub, "-r,--reference", rc_params.mRefPath, "Path to the reference FASTA file",
+         GRP_REQUIRED, true)
       ->check(CliExistingUriOrFile{});
-  subcmd->add_option("-o,--out-vcfgz", params->mOutVcfGz, "Output path to the compressed VCF file")
-      ->required(true)
-      ->group("Required")
+  AddOpt(sub, "-o,--out-vcfgz", params->mOutVcfGz, "Output path to the compressed VCF file",
+         GRP_REQUIRED, true)
       ->check(CliExistingUriOrFile{} | CliNonexistentUriOrPath{});
 
-  // Regions
-  subcmd
-      ->add_option("-R,--region", params->mInRegions,
-                   "One (or) more regions (1-based both inclusive)")
-      ->group("Regions")
+  // ── Regions ─────────────────────────────────────────────────────────────
+  AddOpt(sub, "-R,--region", params->mInRegions, "One (or) more regions (1-based both inclusive)",
+         GRP_REGIONS)
       ->type_name("REF:[:START[-END]]");
-  subcmd->add_option("-b,--bed-file", params->mBedFile, "Path to BED file with regions to process")
-      ->group("Regions")
+  AddOpt(sub, "-b,--bed-file", params->mBedFile, "Path to BED file with regions to process",
+         GRP_REGIONS)
       ->check(CliExistingUriOrFile{});
-  subcmd
-      ->add_option("-P,--padding", wb_prms.mRegionPadding,
-                   "Padding for both sides of all input regions")
-      ->group("Regions")
-      ->check(CLI::Range(static_cast<u32>(0), core::WindowBuilder::MAX_ALLOWED_REGION_PAD));
-  subcmd
-      ->add_option("-p,--pct-overlap", wb_prms.mPercentOverlap,
-                   "Percent overlap between consecutive windows")
-      ->group("Regions")
+  AddOpt(sub, "-P,--padding", win_params.mRegionPadding,
+         "Padding for both sides of all input regions", GRP_REGIONS)
+      ->check(CLI::Range(u32{0}, core::WindowBuilder::MAX_ALLOWED_REGION_PAD));
+  AddOpt(sub, "-p,--pct-overlap", win_params.mPercentOverlap,
+         "Percent overlap between consecutive windows", GRP_REGIONS)
       ->check(CLI::Range(core::WindowBuilder::MIN_ALLOWED_PCT_OVERLAP,
                          core::WindowBuilder::MAX_ALLOWED_PCT_OVERLAP));
-  subcmd
-      ->add_option("-w,--window-size", params->mWindowBuilder.mWindowLength,
-                   "Window size for variant calling tasks")
-      ->group("Regions")
+  AddOpt(sub, "-w,--window-size", win_params.mWindowLength, "Window size for variant calling tasks",
+         GRP_REGIONS)
       ->check(CLI::Range(core::WindowBuilder::MIN_ALLOWED_WINDOW_LEN,
                          core::WindowBuilder::MAX_ALLOWED_WINDOW_LEN));
 
-  // Parameters
-  subcmd
-      ->add_option("-T,--num-threads", params->mNumWorkerThreads,
-                   "Number of additional async worker threads")
-      ->group("Parameters")
-      ->check(CLI::Range(0, MAX_NUM_THREADS));
-  subcmd
-      ->add_option("-k,--min-kmer", vb_prms.mGraphParams.mMinKmerLen,
-                   "Min. kmer length to try for graph nodes")
-      ->group("Parameters")
+  // ── Parameters ──────────────────────────────────────────────────────────
+  AddOpt(sub, "-T,--num-threads", params->mNumWorkerThreads,
+         "Number of additional async worker threads", GRP_PARAMETERS)
+      ->check(CLI::Range(0, MAX_THREADS));
+  AddOpt(sub, "-k,--min-kmer", graph_params.mMinKmerLen, "Min. kmer length to try for graph nodes",
+         GRP_PARAMETERS)
       ->check(CLI::Range(cbdg::DEFAULT_MIN_KMER_LEN, cbdg::MAX_ALLOWED_KMER_LEN - 2));
-  subcmd
-      ->add_option("-K,--max-kmer", vb_prms.mGraphParams.mMaxKmerLen,
-                   "Max. kmer length to try for graph nodes")
-      ->group("Parameters")
+  AddOpt(sub, "-K,--max-kmer", graph_params.mMaxKmerLen, "Max. kmer length to try for graph nodes",
+         GRP_PARAMETERS)
       ->check(CLI::Range(cbdg::DEFAULT_MIN_KMER_LEN + 2, cbdg::MAX_ALLOWED_KMER_LEN));
-  subcmd
-      ->add_option("--kmer-step", vb_prms.mGraphParams.mKmerStepLen,
-                   "Kmer step length to try for graph nodes")
-      ->group("Parameters")
+  AddOpt(sub, "--kmer-step", graph_params.mKmerStepLen, "Kmer step length to try for graph nodes",
+         GRP_PARAMETERS)
       ->check(CLI::IsMember({2, 4, 6, 8, 10}));
-  subcmd
-      ->add_option("--min-anchor-cov", grph_prms.mMinAnchorCov,
-                   "Min. coverage for anchor nodes (source/sink)")
-      ->group("Parameters")
-      ->check(CLI::Range(static_cast<u32>(1), std::numeric_limits<u32>::max()));
-  subcmd
-      ->add_option("--min-node-cov", grph_prms.mMinNodeCov,
-                   "Min. coverage for nodes kept in the graph")
-      ->group("Parameters")
-      ->check(CLI::Range(static_cast<u32>(0), std::numeric_limits<u32>::max()));
-  subcmd
-      ->add_option("--max-sample-cov", rc_prms.mMaxSampleCov,
-                   "Max. per sample coverage before downsampling")
-      ->group("Parameters")
-      ->check(CLI::Range(static_cast<u32>(0), std::numeric_limits<u32>::max()));
+  AddOpt(sub, "--min-anchor-cov", graph_params.mMinAnchorCov,
+         "Min. coverage for anchor nodes (source/sink)", GRP_PARAMETERS)
+      ->check(CLI::Range(u32{1}, std::numeric_limits<u32>::max()));
+  AddOpt(sub, "--min-node-cov", graph_params.mMinNodeCov,
+         "Min. coverage for nodes kept in the graph", GRP_PARAMETERS)
+      ->check(CLI::Range(u32{0}, std::numeric_limits<u32>::max()));
+  AddOpt(sub, "--max-sample-cov", rc_params.mMaxSampleCov,
+         "Max. per sample coverage before downsampling", GRP_PARAMETERS)
+      ->check(CLI::Range(u32{0}, std::numeric_limits<u32>::max()));
 
-  // Feature flags
-  subcmd->add_flag("--verbose", params->mEnableVerboseLogging, "Turn on verbose logging")
-      ->group("Flags");
-  subcmd->add_flag("--extract-pairs", rc_prms.mExtractPairs, "Extract all useful read pairs")
-      ->group("Flags");
-  subcmd->add_flag("--no-active-region", vb_prms.mSkipActiveRegion, "Force assemble all windows")
-      ->group("Flags");
-  subcmd->add_flag("--no-contig-check", rc_prms.mNoCtgCheck, "Skip contig check with reference")
-      ->group("Flags");
+  // ── Flags ───────────────────────────────────────────────────────────────
+  AddFlag(sub, "--verbose", params->mEnableVerboseLogging, "Turn on verbose logging", GRP_FLAGS);
+  AddFlag(sub, "--extract-pairs", rc_params.mExtractPairs, "Extract all useful read pairs",
+          GRP_FLAGS);
+  AddFlag(sub, "--no-active-region", var_params.mSkipActiveRegion, "Force assemble all windows",
+          GRP_FLAGS);
+  AddFlag(sub, "--no-contig-check", rc_params.mNoCtgCheck, "Skip contig check with reference",
+          GRP_FLAGS);
 
-  // Optional
-  subcmd
-      ->add_option("--graphs-dir", vb_prms.mOutGraphsDir,
-                   "Output directory to write per window graphs")
-      ->check(CLI::NonexistentPath | CLI::ExistingDirectory)
-      ->group("Optional");
-  subcmd
-      ->add_option("--genome-gc-bias", vb_prms.mGcFraction,
-                   "Global genome GC fraction for LongdustQ score correction. "
-                   "Default: 0.41 (human genome-wide average). "
-                   "Set to 0.5 to disable GC correction (uniform model).")
-      ->group("Optional")
+  // ── Optional ────────────────────────────────────────────────────────────
+  AddOpt(sub, "--graphs-dir", var_params.mOutGraphsDir,
+         "Output directory to write per window graphs", GRP_OPTIONAL)
+      ->check(CLI::NonexistentPath | CLI::ExistingDirectory);
+  AddOpt(sub, "--genome-gc-bias", var_params.mGcFraction,
+         "Global genome GC fraction for LongdustQ score correction. "
+         "Default: 0.41 (human genome-wide average). "
+         "Set to 0.5 to disable GC correction (uniform model).",
+         GRP_OPTIONAL)
       ->check(CLI::Range(0.0, 1.0));
 
-  subcmd->callback([params]() -> void {
+  // ── Subcommand callback ─────────────────────────────────────────────────
+  sub->callback([params]() -> void {
     if (static_cast<bool>(isatty(fileno(stderr)))) fmt::print(std::cerr, FIGLET_LANCET_LOGO);
     if (params->mEnableVerboseLogging) SetLancetLoggerLevel(spdlog::level::trace);
 

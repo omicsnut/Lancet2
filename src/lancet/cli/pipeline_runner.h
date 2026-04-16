@@ -2,12 +2,9 @@
 #define SRC_LANCET_CLI_PIPELINE_RUNNER_H_
 
 #include "lancet/cli/cli_params.h"
-#include "lancet/core/window.h"
-#include "lancet/core/window_builder.h"
+#include "lancet/hts/bgzf_ostream.h"
 
 #include <memory>
-#include <string>
-#include <vector>
 
 namespace lancet::cli {
 
@@ -24,14 +21,15 @@ class PipelineRunner {
   // Modularized helpers extracted from the monolithic Run() method
   // ---------------------------------------------------------------------------
 
-  /// Initializes the WindowBuilder from CLI params, populates regions, and sorts them.
-  [[nodiscard]] static auto InitWindowBuilder(CliParams const& params) -> core::WindowBuilder;
-
-  /// Builds the full VCF header string from CLI params and reference metadata.
-  [[nodiscard]] static auto BuildVcfHeader(CliParams const& params) -> std::string;
-
   /// Validates BAM/CRAM inputs and populates derived params (e.g. MD tag check).
   void ValidateAndPopulateParams();
+
+  /// Propagates graph output directory from CLI params and recreates it on disk.
+  void SetupGraphOutputDir();
+
+  /// Resolves the output VCF path (local or cloud), validates credentials,
+  /// and opens the BGZF output stream. Exits on failure.
+  void OpenOutputVcf(hts::BgzfOstream& output_vcf);
 };
 
 }  // namespace lancet::cli

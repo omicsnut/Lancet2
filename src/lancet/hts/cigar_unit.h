@@ -1,11 +1,11 @@
 #ifndef SRC_LANCET_HTS_CIGAR_UNIT_H_
 #define SRC_LANCET_HTS_CIGAR_UNIT_H_
 
+#include "lancet/base/types.h"
+
 extern "C" {
 #include "htslib/sam.h"
 }
-
-#include "lancet/base/types.h"
 
 #include <array>
 
@@ -92,8 +92,8 @@ class CigarUnit {
   // Implicit conversion from BAM u32 cigar encoding enables span-based assign().
   // NOLINTNEXTLINE(google-explicit-constructor)
   CigarUnit(u32 sam_cigop)
-      : mCigOp(static_cast<CigarOp>(bam_cigar_opchr(sam_cigop))),
-        mLength(bam_cigar_oplen(sam_cigop)) {}
+      : mLength(bam_cigar_oplen(sam_cigop)),
+        mCigOp(static_cast<CigarOp>(bam_cigar_opchr(sam_cigop))) {}
 
   CigarUnit() = delete;
 
@@ -111,8 +111,10 @@ class CigarUnit {
   }
 
  private:
-  CigarOp mCigOp;
+  // ── 4B Align ────────────────────────────────────────────────────────────
   u32 mLength;
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  CigarOp mCigOp;
 };
 
 }  // namespace lancet::hts

@@ -116,7 +116,8 @@ add_library(lancet_hts STATIC
 		src/lancet/hts/sam_flag.cpp src/lancet/hts/sam_flag.h
 		src/lancet/hts/alignment.cpp src/lancet/hts/alignment.h
 		src/lancet/hts/iterator.cpp src/lancet/hts/iterator.h
-		src/lancet/hts/extractor.cpp src/lancet/hts/extractor.h)
+		src/lancet/hts/extractor.cpp src/lancet/hts/extractor.h
+		src/lancet/hts/uri_utils.cpp src/lancet/hts/uri_utils.h)
 add_dependencies(lancet_hts htslib)
 set_target_properties(lancet_hts PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 target_include_directories(lancet_hts SYSTEM PUBLIC ${HTSLIB_ROOT_DIR})
@@ -223,13 +224,21 @@ target_link_libraries(lancet_caller PUBLIC lancet_cbdg spoa absl::btree boost_ma
 set_target_properties(lancet_caller PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Layer 5: lancet_core — windowing, read collection, variant building pipeline
+# Layer 5: lancet_core — windowing, read collection, variant building, pipeline execution
 #
 # Data flow:
 #
 #   window, sample_info                    genomic region + sample metadata
 #       ↓
+#   input_spec_parser                      unified --normal/--tumor/--sample parsing
+#       ↓
+#   sample_header_reader                   BAM header SM extraction + sort + index
+#       ↓
+#   bed_parser                             BED file streaming (HTSlib)
+#       ↓
 #   window_builder                         region partitioning
+#       ↓
+#   active_region_detector                 fast pre-scan for mutation evidence + MD tag check
 #       ↓
 #   read_collector                         BAM read extraction per window
 #       ↓
@@ -238,37 +247,47 @@ set_target_properties(lancet_caller PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQU
 #   variant_annotator → variant_store      annotation + dedup + VCF output
 #       ↓
 #   async_worker                           thread pool executor
+#       ↓
+#   pipeline_executor                      batch-fed thread pool orchestration
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_core STATIC
 		# ── Header-only: window + sample metadata ─────────────────────────
 		src/lancet/core/window.h
 		src/lancet/core/sample_info.h
-		# ── Implementation pairs: window → reads → build → store → worker ─
+		# ── Implementation pairs: parsing → windowing → reads → build → store → execute ─
+		src/lancet/core/input_spec_parser.cpp src/lancet/core/input_spec_parser.h
+		src/lancet/core/sample_header_reader.cpp src/lancet/core/sample_header_reader.h
+		src/lancet/core/bed_parser.cpp src/lancet/core/bed_parser.h
+		src/lancet/core/active_region_detector.cpp src/lancet/core/active_region_detector.h
 		src/lancet/core/window_builder.cpp src/lancet/core/window_builder.h
 		src/lancet/core/read_collector.cpp src/lancet/core/read_collector.h
 		src/lancet/core/variant_builder.cpp src/lancet/core/variant_builder.h
 		src/lancet/core/variant_annotator.cpp src/lancet/core/variant_annotator.h
 		src/lancet/core/variant_store.cpp src/lancet/core/variant_store.h
-		src/lancet/core/async_worker.cpp src/lancet/core/async_worker.h)
+		src/lancet/core/async_worker.cpp src/lancet/core/async_worker.h
+		src/lancet/core/pipeline_executor.cpp src/lancet/core/pipeline_executor.h)
 target_include_directories(lancet_core PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(lancet_core PUBLIC lancet_caller absl::synchronization concurrentqueue PRIVATE absl::hash)
 set_target_properties(lancet_core PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Layer 6: lancet_cli — command-line interface and pipeline orchestration
+# Layer 6: lancet_cli — command-line interface, VCF header construction, pipeline entry
 #
 # Data flow:
 #
 #   cli_params                             user-facing option definitions
 #       ↓
-#   pipeline_runner                        end-to-end execution orchestrator
+#   vcf_header_builder                     VCF v4.5 header construction
 #       ↓
-#   cli_interface                          CLI11 argument parser
+#   pipeline_runner                        thin orchestrator: validate → I/O → delegate
+#       ↓
+#   cli_interface                          CLI11 argument parser + validators
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_cli STATIC
 		# ── Header-only: CLI parameter definitions ────────────────────────
 		src/lancet/cli/cli_params.h
-		# ── Implementation pairs: pipeline runner → CLI parser ────────────
+		# ── Implementation pairs: VCF header → pipeline runner → CLI parser ─
+		src/lancet/cli/vcf_header_builder.cpp src/lancet/cli/vcf_header_builder.h
 		src/lancet/cli/pipeline_runner.cpp src/lancet/cli/pipeline_runner.h
 		src/lancet/cli/cli_interface.cpp src/lancet/cli/cli_interface.h)
 target_include_directories(lancet_cli PUBLIC "${CMAKE_SOURCE_DIR}/src")

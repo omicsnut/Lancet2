@@ -15,17 +15,19 @@ class CliParams {
  public:
   CliParams() = default;
 
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::string mFullCmdLine;
   std::filesystem::path mOutVcfGz;
   std::filesystem::path mBedFile;
   std::vector<std::string> mInRegions;
-
   usize mNumWorkerThreads = 2;
-  bool mEnableVerboseLogging = false;
-  bool mIsCaseCtrlMode = false;
 
   core::WindowBuilder::Params mWindowBuilder;
   core::VariantBuilder::Params mVariantBuilder;
+
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  bool mEnableVerboseLogging = false;
+  bool mIsCaseCtrlMode = false;
 };
 
 }  // namespace lancet::cli

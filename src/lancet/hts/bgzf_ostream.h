@@ -1,16 +1,16 @@
 #ifndef SRC_LANCET_HTS_BGZF_OSTREAM_H_
 #define SRC_LANCET_HTS_BGZF_OSTREAM_H_
 
-#include <filesystem>
-#include <ios>
-#include <ostream>
-#include <streambuf>
+#include "lancet/base/types.h"
 
 extern "C" {
 #include "htslib/bgzf.h"
 }
 
-#include "lancet/base/types.h"
+#include <filesystem>
+#include <ios>
+#include <ostream>
+#include <streambuf>
 
 namespace lancet::hts {
 

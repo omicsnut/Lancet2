@@ -1,6 +1,16 @@
 #ifndef SRC_LANCET_HTS_REFERENCE_H_
 #define SRC_LANCET_HTS_REFERENCE_H_
 
+#include "lancet/base/assert.h"
+#include "lancet/base/types.h"
+
+extern "C" {
+#include "htslib/faidx.h"
+#include "htslib/hts.h"
+}
+
+#include "absl/status/statusor.h"
+
 #include <array>
 #include <filesystem>
 #include <memory>
@@ -9,16 +19,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-
-extern "C" {
-#include "htslib/faidx.h"
-#include "htslib/hts.h"
-}
-
-#include "lancet/base/assert.h"
-#include "lancet/base/types.h"
-
-#include "absl/status/statusor.h"
 
 namespace lancet::hts {
 

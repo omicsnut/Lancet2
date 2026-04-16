@@ -35,7 +35,6 @@ VariantAnnotator::VariantAnnotator(f64 gc_frac) : mSeqCxScorer(gc_frac) {}
 // If a variant only exists on the REF haplotype (no ALT haps), we score
 // REF vs REF to populate context features (deltas will be zero).
 // ============================================================================
-// NOLINTNEXTLINE(readability-function-size)
 void VariantAnnotator::AnnotateSequenceComplexity(caller::VariantSet const& vset,
                                                   absl::Span<std::string const> haplotypes) const {
   static constexpr usize REF_HAP_IDX = 0;

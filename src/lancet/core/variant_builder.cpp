@@ -10,6 +10,7 @@
 #include "lancet/caller/variant_set.h"
 #include "lancet/caller/variant_support.h"
 #include "lancet/cbdg/read.h"
+#include "lancet/core/active_region_detector.h"
 #include "lancet/core/sample_info.h"
 #include "lancet/core/window.h"
 
@@ -63,7 +64,7 @@ namespace {
  *      spurious small gaps.
  *    - Convex (Dual-Affine) Scoring solves this by taking the minimum of two
  *      intersecting models. It is strict for short gaps to suppress sequencer
- *      noise, but switches to an incredibly cheap extension penalty for large
+ *      noise, but switches to a cheap extension penalty for large
  *      biological gaps.
  *
  * 2. Mismatch Tolerance (Multi-Nucleotide Variants / MNVs):
@@ -195,7 +196,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
   }
 
   auto const& rc_params = mParamsPtr->mRdCollParams;
-  if (!mParamsPtr->mSkipActiveRegion && !ReadCollector::IsActiveRegion(rc_params, *region)) {
+  if (!mParamsPtr->mSkipActiveRegion && !core::IsActiveRegion(rc_params, *region)) {
     LOG_DEBUG("Skipping window {} since it has no evidence of mutation in any sample", reg_str)
     mCurrentCode = StatusCode::SKIPPED_INACTIVE_REGION;
     return {};

@@ -39,6 +39,7 @@ class Window {
   }
 
   [[nodiscard]] auto ToSamtoolsRegion() const -> std::string {
+    // HTSlib region syntax: chroms with ':' must be brace-wrapped as {chrom}:pos-pos
     auto const name_has_colon = mSpec.mChromName.find(':') != std::string::npos;
     return name_has_colon ? fmt::format("{{{}}}:{}-{}", ChromName(), StartPos1(), EndPos1())
                           : fmt::format("{}:{}-{}", ChromName(), StartPos1(), EndPos1());

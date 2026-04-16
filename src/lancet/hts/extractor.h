@@ -1,10 +1,10 @@
 #ifndef SRC_LANCET_HTS_EXTRACTOR_H_
 #define SRC_LANCET_HTS_EXTRACTOR_H_
 
-#include <filesystem>
-#include <memory>
-#include <string>
-#include <string_view>
+#include "lancet/base/types.h"
+#include "lancet/hts/alignment.h"
+#include "lancet/hts/iterator.h"
+#include "lancet/hts/reference.h"
 
 extern "C" {
 #include "htslib/hts.h"
@@ -12,13 +12,13 @@ extern "C" {
 #include "htslib/sam.h"
 }
 
-#include "lancet/base/types.h"
-#include "lancet/hts/alignment.h"
-#include "lancet/hts/iterator.h"
-#include "lancet/hts/reference.h"
-
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
+
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <string_view>
 
 namespace lancet::hts {
 
@@ -88,15 +88,17 @@ class Extractor {
   using HtsFilt = std::unique_ptr<hts_filter_t, detail::HtsFilterDeleter>;
   using SamAln = std::unique_ptr<bam1_t, detail::Bam1Deleter>;
 
+  // ── 8B Align ────────────────────────────────────────────────────────────
   HtsFile mFilePtr = nullptr;
   SamHdr mHdrPtr = nullptr;
   HtsIdx mIdxPtr = nullptr;
   HtsItr mItrPtr = nullptr;
   HtsFilt mFiltrPtr = nullptr;
   SamAln mAlnPtr = nullptr;
-  Alignment::Fields mFieldsNeeded;
   std::filesystem::path mBamCramPath;
   absl::flat_hash_set<std::string> mTagsNeeded;
+  // ── 2B Align ────────────────────────────────────────────────────────────
+  Alignment::Fields mFieldsNeeded;
 
   void SetCramRequiredFields(Alignment::Fields fields);
 

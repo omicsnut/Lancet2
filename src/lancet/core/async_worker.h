@@ -18,8 +18,10 @@ namespace lancet::core {
 class AsyncWorker {
  public:
   struct Result {
+    // ── 8B Align ──────────────────────────────────────────────────────────
     usize mGenomeIdx = 0;
     absl::Duration mRuntime = absl::ZeroDuration();
+    // ── 1B Align ──────────────────────────────────────────────────────────
     VariantBuilder::StatusCode mStatus = VariantBuilder::StatusCode::UNKNOWN;
   };
 
@@ -39,7 +41,7 @@ class AsyncWorker {
         mStorePtr(std::move(vstore)),
         mBuilderPtr(std::make_unique<VariantBuilder>(std::move(prms), window_length)) {}
 
-  void Process(std::stop_token stop_token, moodycamel::ProducerToken const& in_token);
+  void Process(std::stop_token stop_token);
 
  private:
   InQueuePtr mInPtr;

@@ -1,5 +1,26 @@
 #include "lancet/hts/extractor.h"
 
+#include "lancet/base/logging.h"
+#include "lancet/base/types.h"
+#include "lancet/hts/alignment.h"
+#include "lancet/hts/reference.h"
+
+extern "C" {
+#include "htslib/cram.h"
+#include "htslib/hts.h"
+#include "htslib/hts_expr.h"
+#include "htslib/hts_log.h"
+#include "htslib/sam.h"
+}
+
+#include "absl/container/flat_hash_map.h"
+#include "absl/strings/match.h"
+#include "absl/strings/str_split.h"
+#include "absl/strings/strip.h"
+#include "absl/types/span.h"
+#include "spdlog/fmt/bundled/core.h"
+#include "spdlog/fmt/bundled/format.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <functional>
@@ -10,35 +31,14 @@
 #include <utility>
 #include <vector>
 
-extern "C" {
-#include "htslib/cram.h"
-#include "htslib/hts.h"
-#include "htslib/hts_expr.h"
-#include "htslib/hts_log.h"
-#include "htslib/sam.h"
-}
-
-#include "lancet/base/logging.h"
-#include "lancet/base/types.h"
-#include "lancet/hts/alignment.h"
-#include "lancet/hts/reference.h"
-
-#include "absl/container/flat_hash_map.h"
-#include "absl/strings/match.h"
-#include "absl/strings/str_split.h"
-#include "absl/strings/strip.h"
-#include "absl/types/span.h"
-#include "spdlog/fmt/bundled/core.h"
-#include "spdlog/fmt/bundled/format.h"
-
 namespace lancet::hts {
 
 Extractor::Extractor(std::filesystem::path aln_file, Reference const& ref,
                      Alignment::Fields const fields, absl::Span<std::string const> tags,
                      bool const skip_ref_contig_check)
-    : mFieldsNeeded(fields),
-      mBamCramPath(std::move(aln_file)),
-      mTagsNeeded(tags.cbegin(), tags.cend()) {
+    : mBamCramPath(std::move(aln_file)),
+      mTagsNeeded(tags.cbegin(), tags.cend()),
+      mFieldsNeeded(fields) {
   hts_set_log_level(HTS_LOG_ERROR);
   auto const bc_path = mBamCramPath.string();
 

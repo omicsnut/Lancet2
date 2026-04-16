@@ -24,7 +24,7 @@ class VariantBuilder {
   static constexpr u32 MAX_PHRED_SCORE = 255;
 
   struct Params {
-    bool mSkipActiveRegion = false;
+    // ── 8B Align ──────────────────────────────────────────────────────────
     std::filesystem::path mOutGraphsDir;
 
     /// Global genome GC fraction for LongdustQ bias correction.
@@ -36,6 +36,9 @@ class VariantBuilder {
 
     cbdg::GraphParams mGraphParams;
     ReadCollector::Params mRdCollParams;
+
+    // ── 1B Align ──────────────────────────────────────────────────────────
+    bool mSkipActiveRegion = false;
   };
 
   VariantBuilder(std::shared_ptr<Params const> params, u32 window_length);
@@ -57,6 +60,7 @@ class VariantBuilder {
   [[nodiscard]] auto ProcessWindow(std::shared_ptr<Window const> const& window) -> WindowResults;
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   cbdg::Graph mDebruijnGraph;
   ReadCollector mReadCollector;
   caller::Genotyper mGenotyper;
@@ -66,6 +70,7 @@ class VariantBuilder {
   /// Variant annotator — produces coverage-invariant complexity features per variant.
   VariantAnnotator mAnnotator;
 
+  // ── 1B Align ────────────────────────────────────────────────────────────
   StatusCode mCurrentCode = StatusCode::UNKNOWN;
 
   [[nodiscard]] auto MakeGfaPath(Window const& win, usize comp_id) const -> std::filesystem::path;

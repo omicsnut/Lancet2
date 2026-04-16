@@ -442,8 +442,7 @@ void VariantCall::BuildInfoField(bool const case_ctrl_mode) {
   info.reserve(1024);
 
   if (case_ctrl_mode) {
-    // State prefix — case-control mode only
-    // SHARED/CTRL/CASE state — only in case-control mode
+    // SHARED/CTRL/CASE state prefix — case-control mode only
     static constexpr std::array<std::string_view, 5> STATE_MAP = {
         {"NONE"sv, "SHARED"sv, "CTRL"sv, "CASE"sv, "UNKNOWN"sv}};
 

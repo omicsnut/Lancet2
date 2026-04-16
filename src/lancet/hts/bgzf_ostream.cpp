@@ -2,16 +2,16 @@
 
 #include "lancet/base/logging.h"
 
+extern "C" {
+#include "htslib/bgzf.h"
+#include "htslib/tbx.h"
+}
+
 #include <filesystem>
 #include <ios>
 
 #include <cstdio>
 #include <cstdlib>
-
-extern "C" {
-#include "htslib/bgzf.h"
-#include "htslib/tbx.h"
-}
 
 namespace lancet::hts {
 
