@@ -190,10 +190,9 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
 
   // Count ALT haplotypes per component (excluding the leading reference path at index 0).
   // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
-  auto const num_haps = std::accumulate(per_comp_haps.cbegin(), per_comp_haps.cend(), u64{0},
-                      [](u64 const sum, auto const& comp_haps) -> u64 {
-                        return sum + comp_haps.size() - 1;
-                      });
+  auto const num_haps = std::accumulate(
+      per_comp_haps.cbegin(), per_comp_haps.cend(), u64{0},
+      [](u64 const sum, auto const& comp_haps) -> u64 { return sum + comp_haps.size() - 1; });
 
   // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
   auto const human_rt = timer.HumanRuntime();
@@ -229,9 +228,10 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
     // expected_errors(i, i+k) = prefix[i+k] − prefix[i].
     per_base_error_probs.clear();
     std::ranges::transform(read.QualView(), std::back_inserter(per_base_error_probs),
-                           [](u8 const qual) -> f64 { return PhredToErrorProb(qual); });
+                           [](u8 const qual) -> f64 { return hts::PhredToErrorProb(qual); });
     std::vector<f64> prefix_sum(per_base_error_probs.size() + 1, 0.0);
-    std::ranges::partial_sum(per_base_error_probs, prefix_sum.begin() + 1);
+    std::partial_sum(per_base_error_probs.cbegin(), per_base_error_probs.cend(),
+                     prefix_sum.begin() + 1);
 
     usize offset = 0;
     auto const added_nodes = AddNodes(read.SeqView(), read.SrcLabel());

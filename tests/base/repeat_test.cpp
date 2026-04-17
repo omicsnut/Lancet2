@@ -9,8 +9,7 @@
 #include <string>
 #include <string_view>
 
-using lancet::base::HammingDistNaive;
-using lancet::base::HammingDistWord64;
+using lancet::base::HammingDist;
 
 namespace {
 
@@ -36,7 +35,7 @@ inline auto GenerateRandomDnaSequence() -> std::string {
 }  // namespace
 
 // ============================================================================
-//  Hamming distance: randomized correctness (naive vs word64)
+//  Hamming distance: randomized correctness
 // ============================================================================
 
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
@@ -47,15 +46,8 @@ TEST_CASE("Can calculate hamming distance correctly for random strings", "[lance
     auto const result = GenerateRandomDnaSequence();
     auto const other = GenerateRandomDnaSequence();
 
-    SECTION("Naive method calculates correct distances") {
-      REQUIRE(HammingDistNaive(result, result) == 0);
-      REQUIRE(HammingDistNaive(result, other) != 0);
-    }
-
-    SECTION("64-bit word method calculates correct distances") {
-      REQUIRE(HammingDistWord64(result, result) == 0);
-      REQUIRE(HammingDistWord64(result, other) != 0);
-    }
+    REQUIRE(HammingDist(result, result) == 0);
+    REQUIRE(HammingDist(result, other) != 0);
   }
 }
 
@@ -68,17 +60,8 @@ TEST_CASE("Can calculate hamming distance correctly for small test", "[lancet][b
   std::string_view const diff_a = "abaa";
   std::string_view const diff_b = "aaba";
 
-  SECTION("Naive method calculates correct distances") {
-    REQUIRE(HammingDistNaive(test, test) == 0);
-    REQUIRE(HammingDistNaive(test, diff_a) == 1);
-    REQUIRE(HammingDistNaive(test, diff_b) == 1);
-    REQUIRE(HammingDistNaive(diff_a, diff_b) == 2);
-  }
-
-  SECTION("64-bit word method calculates correct distances") {
-    REQUIRE(HammingDistWord64(test, test) == 0);
-    REQUIRE(HammingDistWord64(test, diff_a) == 1);
-    REQUIRE(HammingDistWord64(test, diff_b) == 1);
-    REQUIRE(HammingDistWord64(diff_a, diff_b) == 2);
-  }
+  REQUIRE(HammingDist(test, test) == 0);
+  REQUIRE(HammingDist(test, diff_a) == 1);
+  REQUIRE(HammingDist(test, diff_b) == 1);
+  REQUIRE(HammingDist(diff_a, diff_b) == 2);
 }

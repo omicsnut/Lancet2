@@ -6,97 +6,82 @@
 #include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
 
-#include <bit>
-#include <memory>
+#include <algorithm>
 #include <string_view>
+#include <utility>
 
 namespace lancet::base {
 
 // ============================================================================
-// HammingDistWord64 — SWAR (SIMD Within A Register) Hamming distance
+// HammingDist — auto-vectorized byte-level mismatch count
 //
-// Computes the number of byte-level mismatches between two equal-length strings
-// by processing 8 bytes at a time.  Based on the triple_accel Rust crate:
-// https://github.com/Daniel-Liu-c0deb0t/triple_accel/blob/master/src/hamming.rs
+// Counts positions where two equal-length byte strings differ.  The inner
+// loop accumulates into u8 in batches of 255 (max before u8 overflow).
 //
-// ALGORITHM (per 8-byte word):
-//   1. XOR the two words: differing bytes produce non-zero byte lanes
-//   2. Fold each byte lane into a single bit via shift+OR+mask:
-//        val |= val >> 4;  val &= 0x0F...  (collapse each byte's top nibble)
-//        val |= val >> 2;  val &= 0x33...  (collapse 4-bit → 2-bit)
-//        val |= val >> 1;  val &= 0x55...  (collapse 2-bit → 1-bit)
-//      After folding, each byte lane is 0 (match) or 1 (mismatch).
-//   3. popcount gives the number of mismatching bytes in this word.
+// Why u8?  A comparison result is one byte (0 or 1), but a usize accumulator
+// is 8 bytes.  When the accumulator is wider than the data, the compiler must
+// insert extra instructions to widen each 1-byte result to 8 bytes before
+// adding — a 4.7× instruction bloat on GCC 15.2 with AVX2 (168 vs 36 SIMD
+// instructions).  Capping the inner loop at 255 iterations proves to the
+// compiler's value-range analysis that no byte lane can overflow, so it
+// safely drops the widening and sums byte lanes directly in hardware.
 //
-// The tail loop handles the final <8 bytes by masking out-of-bounds bits.
-// reinterpret_cast to u64* is safe because we only read (no alignment issues
-// on x86-64, and string_view data is at least byte-aligned).
+// Pure C++ — no intrinsics.  Works on x86 AVX2/AVX-512 and ARM64 NEON.
+// For Lancet2 k-mer lengths (25–121 bp), the outer loop executes once.
 // ============================================================================
-auto HammingDistWord64(std::string_view first, std::string_view second) -> usize {
+auto HammingDist(std::string_view first, std::string_view second) -> usize {
   LANCET_ASSERT(first.length() == second.length())
+
   usize result = 0;
+  auto const length = first.length();
+  usize idx = 0;
 
-  auto const num_words = (first.length() >> 3);
-  auto const rem_words = static_cast<unsigned long long>(first.length() & 7);
-
-  // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
-  auto const* aptr = reinterpret_cast<unsigned long long const*>(first.data());
-  auto const* bptr = reinterpret_cast<unsigned long long const*>(second.data());
-  // NOLINTEND(cppcoreguidelines-pro-type-reinterpret-cast)
-
-  for (usize idx = 0; idx < num_words; ++idx) {
-    auto val = (aptr[idx] ^ bptr[idx]);
-    val |= val >> 4;
-    val &= 0x0f'0f'0f'0f'0f'0f'0f'0fULL;
-    val |= val >> 2;
-    val &= 0x33'33'33'33'33'33'33'33ULL;
-    val |= val >> 1;
-    val &= 0x55'55'55'55'55'55'55'55ULL;
-    result += std::popcount(val);
-  }
-
-  if (rem_words > 0) {
-    auto val = (aptr[num_words] ^ bptr[num_words]);
-    val |= val >> 4;
-    val &= 0x0f'0f'0f'0f'0f'0f'0f'0fULL;
-    val |= val >> 2;
-    val &= 0x33'33'33'33'33'33'33'33ULL;
-    val |= val >> 1;
-    val &= 0x55'55'55'55'55'55'55'55ULL;
-    // make sure to mask out bits outside the string lengths
-    result += std::popcount((val & ((1ULL << (rem_words << 3ULL)) - 1ULL)));
+  // 255 is the largest count a u8 can hold without overflow (each iteration
+  // adds 0 or 1).  One scalar widen per 255 bytes is negligible overhead.
+  while (idx < length) {
+    u8 batch_sum = 0;
+    auto const batch_end = std::min(idx + 255, length);
+    for (; idx < batch_end; ++idx) {
+      batch_sum += static_cast<u8>(first[idx] != second[idx]);
+    }
+    result += batch_sum;
   }
 
   return result;
 }
 
-auto HammingDistNaive(std::string_view first, std::string_view second) -> usize {
-  LANCET_ASSERT(first.length() == second.length())
-  usize result = 0;
-  auto const length = first.length();
-  for (usize idx = 0; idx < length; ++idx) {
-    result += static_cast<usize>(first[idx] != second[idx]);
+// ============================================================================
+// HasRepeat — repeat detector with fast path for exact matches
+//
+// For exact repeats (max_mismatches=0), uses an O(n) hash-set lookup — the
+// set detects duplicate string_views by content, short-circuiting as soon as
+// a collision is found.  For approximate repeats, falls back to upper-triangle
+// pairwise Hamming distance checks: O(n(n-1)/2) comparisons, returning true
+// as soon as any pair differs in at most `max_mismatches` positions.
+// ============================================================================
+auto HasRepeat(absl::Span<std::string_view const> kmers, usize const max_mismatches) -> bool {
+  // Exact repeat: O(n) hash-set duplicate detection
+  if (max_mismatches == 0) {
+    absl::flat_hash_set<std::string_view> seen;
+    seen.reserve(kmers.size());
+    for (auto const kmer : kmers) {
+      if (auto [iter, inserted] = seen.insert(kmer); !inserted) return true;
+    }
+    return false;
   }
-  return result;
+
+  // Approximate repeat: O(n²) pairwise scan with short-circuit
+  auto const num_kmers = kmers.size();
+  for (usize i = 0; i < num_kmers; ++i) {
+    for (usize j = i + 1; j < num_kmers; ++j) {
+      if (HammingDist(kmers[i], kmers[j]) <= max_mismatches) return true;
+    }
+  }
+  return false;
 }
 
 auto HasExactRepeat(absl::Span<std::string_view const> kmers) -> bool {
-  auto const uniq_kmers = absl::flat_hash_set<std::string_view>(kmers.cbegin(), kmers.cend());
-  return kmers.size() != uniq_kmers.size();
-}
-
-auto HasApproximateRepeat(absl::Span<std::string_view const> kmers,
-                          usize const num_allowed_mismatches) -> bool {
-  for (auto const& first_kmer : kmers) {
-    for (auto const& second_kmer : kmers) {
-      if (std::addressof(first_kmer) == std::addressof(second_kmer)) continue;
-
-      auto const dist = HammingDistWord64(first_kmer, second_kmer);
-      if (dist < num_allowed_mismatches) return true;
-    }
-  }
-
-  return false;
+  return HasRepeat(kmers, 0);
 }
 
 }  // namespace lancet::base

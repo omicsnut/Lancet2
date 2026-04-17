@@ -102,9 +102,7 @@ class Graph {
   [[nodiscard]] static auto HasExactOrApproxRepeat(std::string_view seq, usize window) -> bool {
     auto const klen_seqs = lancet::base::SlidingView(seq, window);
     static constexpr usize NUM_ALLOWED_MISMATCHES = 3;
-    return lancet::base::HasExactRepeat(absl::MakeConstSpan(klen_seqs)) ||
-           lancet::base::HasApproximateRepeat(absl::MakeConstSpan(klen_seqs),
-                                              NUM_ALLOWED_MISMATCHES);
+    return lancet::base::HasRepeat(absl::MakeConstSpan(klen_seqs), NUM_ALLOWED_MISMATCHES);
   }
 
   // ============================================================================
