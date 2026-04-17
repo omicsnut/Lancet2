@@ -5,6 +5,7 @@
 #endif
 
 #include "lancet/base/logging.h"
+#include "lancet/base/memory.h"
 #include "lancet/base/timer.h"
 #include "lancet/cbdg/graph_params.h"
 #include "lancet/cbdg/label.h"
@@ -85,7 +86,8 @@ void PipelineRunner::Run() {
   core::PipelineExecutor::LogWindowStats(stats);
 
   auto const total_rt = absl::FormatDuration(absl::Trunc(timer.Runtime(), absl::Milliseconds(1)));
-  LOG_INFO("Successfully completed processing | Runtime={}", total_rt)
+  auto const peak_rss = lancet::base::FormatPeakRss();
+  LOG_INFO("Successfully completed processing | Runtime={} | PeakRSS={}", total_rt, peak_rss)
   std::exit(EXIT_SUCCESS);
 }
 

@@ -75,6 +75,7 @@ add_library(lancet_base STATIC
 		src/lancet/base/version.h
 		src/lancet/base/logging.h
 		src/lancet/base/timer.h
+		src/lancet/base/memory.h
 		src/lancet/base/rev_comp.h
 		src/lancet/base/compute_stats.h
 		src/lancet/base/sliding.h

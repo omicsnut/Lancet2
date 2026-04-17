@@ -13,7 +13,6 @@
 #include "lancet/hts/phred_quality.h"
 
 #include "absl/container/chunked_queue.h"
-#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
