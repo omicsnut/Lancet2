@@ -10,11 +10,16 @@
 #include <absl/hash/hash.h>
 #include <blockingconcurrentqueue.h>
 #include <chrono>
+#include <cxxabi.h>
+#include <exception>
 #include <memory>
 #include <stop_token>
 #include <thread>
+#include <typeinfo>
 #include <utility>
 #include <vector>
+
+#include <cstdlib>
 
 namespace lancet::core {
 
@@ -49,8 +54,28 @@ void AsyncWorker::Process(std::stop_token stop_token) {
     if (!mInPtr->wait_dequeue_timed(window_ptr, QUEUE_TIMEOUT)) continue;
 
     timer.Reset();
-    auto variants = mBuilderPtr->ProcessWindow(std::const_pointer_cast<Window const>(window_ptr));
-    mStorePtr->AddVariants(std::move(variants));
+    try {
+      auto variants = mBuilderPtr->ProcessWindow(std::const_pointer_cast<Window const>(window_ptr));
+      mStorePtr->AddVariants(std::move(variants));
+    } catch (std::exception const& exc) {
+      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={}: {}", THREAD_ID,
+                   window_ptr->GenomeIndex(), exc.what())
+      std::abort();
+    } catch (...) {
+      // abi::__cxa_current_exception_type() gives the mangled type name of
+      // whatever was thrown (int, char*, custom class, etc.). A rethrow into
+      // catch(std::exception&) is redundant — the catch above already covers
+      // all std::exception subclasses.
+      char const* type_name = "unknown";
+#if defined(__GNUC__) || defined(__clang__)
+      if (auto const* type_info = abi::__cxa_current_exception_type()) {
+        type_name = type_info->name();
+      }
+#endif
+      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={}: non-std exception type={}",
+                   THREAD_ID, window_ptr->GenomeIndex(), type_name)
+      std::abort();
+    }
 
     auto const status_code = mBuilderPtr->CurrentStatus();
     mOutPtr->enqueue(out_token, Result{.mGenomeIdx = window_ptr->GenomeIndex(),
