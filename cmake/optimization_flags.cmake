@@ -1,8 +1,9 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Optimization Flags — architecture targeting, compiler flags, static linking
+# Optimization Flags — frame pointers, architecture targeting, static linking
 #
-# Configures Release-mode compiler flags for maximum throughput on supported
-# platforms (Linux x86_64, Linux ARM64, macOS ARM64).
+# Configures compiler flags for all build modes plus Release-specific
+# optimization flags for maximum throughput on supported platforms
+# (Linux x86_64, Linux ARM64, macOS ARM64).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Static Build ──────────────────────────────────────────────────────────────
@@ -13,6 +14,19 @@ if (${LANCET_BUILD_STATIC})
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -static")
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static")
 endif ()
+
+# ── Frame Pointers (all build modes) ─────────────────────────────────────────
+# Preserve frame pointers in every build type (Debug, Release, RelWithDebInfo).
+# Costs 1 register (~1-2% on x86_64) but enables:
+#   - gperftools' frame-pointer stack unwinder (generic_fp), the only crash-safe
+#     unwinder for CPU profiling from a signal handler
+#   - Reliable backtraces in the crash handler, perf, GDB, and Instruments
+#
+# Set on CMAKE_C/CXX_FLAGS (base flags) so it applies unconditionally.
+# Also included in LANCET_OPT_FLAGS below to propagate to external dependencies
+# (spoa, mimalloc, zlib-ng, htslib, etc.) via their configure scripts.
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
 
 # ── Release Optimization Flags ────────────────────────────────────────────────
 # Each flag and its relevance to Lancet2:
@@ -49,9 +63,9 @@ endif ()
 # optimized to avoid expensive libm calls.
 #
 # -fno-omit-frame-pointer
-#   Preserves frame pointers in Release builds. Costs 1 register but enables
-#   stack-based profiling with pprof, perf, and Instruments. Required for
-#   production performance analysis.
+#   Duplicated here from the base CMAKE_C/CXX_FLAGS above so that external
+#   dependencies also get frame pointers when their configure scripts read
+#   LANCET_OPT_FLAGS from CMakeCache.txt.  See the "Frame Pointers" section.
 #
 # Architecture flags (selected automatically per platform):
 #   ARM64:  always -mcpu=native (ARM binaries are rarely cross-distributed)
@@ -60,16 +74,16 @@ endif ()
 
 if (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64" OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "aarch64")
 	# ARM64: always native — ARM binaries target the build host's microarchitecture
-	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -DNDEBUG -mcpu=native"
+	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -fno-omit-frame-pointer -DNDEBUG -mcpu=native"
 			CACHE STRING "Lancet optimization flags" FORCE)
 elseif (LANCET_NATIVE_BUILD)
 	# x86 native: uses all instruction sets available on this CPU (non-portable)
 	message(STATUS "LANCET_NATIVE_BUILD=ON: using -march=native (non-portable binary)")
-	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -DNDEBUG -march=native"
+	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -fno-omit-frame-pointer -DNDEBUG -march=native"
 			CACHE STRING "Lancet optimization flags" FORCE)
 else ()
 	# x86 portable: AVX2 + BMI2 baseline (covers ~95% of modern server CPUs)
-	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -DNDEBUG -march=x86-64-v3"
+	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -fno-omit-frame-pointer -DNDEBUG -march=x86-64-v3"
 			CACHE STRING "Lancet optimization flags" FORCE)
 endif ()
 
@@ -91,16 +105,16 @@ if (CMAKE_HOST_SYSTEM_NAME MATCHES "Linux")
 endif()
 
 # ── Apply flags to Release configuration ─────────────────────────────────────
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-pointer"
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} ${LANCET_OPT_FLAGS}"
 		CACHE INTERNAL "" FORCE)
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-pointer"
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} ${LANCET_OPT_FLAGS}"
 		CACHE INTERNAL "" FORCE)
 
 # ── Apply flags to RelWithDebInfo configuration ──────────────────────────────
 # Same optimization flags as Release, plus -g for DWARF debug symbols.
 # Used exclusively with LANCET_PROFILE_MODE=ON for source-level profiling
 # via pprof --list. The -g flag adds ~2× binary size but zero runtime cost.
-set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-pointer -g"
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS} ${LANCET_OPT_FLAGS} -g"
 		CACHE INTERNAL "" FORCE)
-set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-pointer -g"
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS} ${LANCET_OPT_FLAGS} -g"
 		CACHE INTERNAL "" FORCE)

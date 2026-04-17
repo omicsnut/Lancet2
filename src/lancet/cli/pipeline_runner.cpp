@@ -37,36 +37,10 @@ namespace lancet::cli {
 
 PipelineRunner::PipelineRunner(std::shared_ptr<CliParams> params) : mParamsPtr(std::move(params)) {
 #ifdef LANCET_PROFILE_MODE
-  // ── Force frame-pointer-based stack unwinder for gperftools ──────────────
-  //
-  // By default, gperftools uses libgcc's _Unwind_Backtrace to capture stack
-  // traces inside the SIGPROF signal handler.  _Unwind_Backtrace reads DWARF
-  // .eh_frame tables and takes internal locks — both of which are unsafe in a
-  // signal handler context.  When SIGPROF fires while the interrupted thread
-  // is in a frame that lacks .eh_frame data (common in statically-linked
-  // third-party libraries such as spoa, zlib-ng, or mimalloc), the unwinder
-  // calls x86_64_fallback_frame_state, reads a garbage frame pointer, and
-  // crashes with SIGSEGV.
-  //
-  // At 250Hz × N worker threads, this crash is non-deterministic (~70% of
-  // runs) because it depends on the exact instruction the thread is executing
-  // when SIGPROF is delivered.
-  //
-  // Setting TCMALLOC_STACKTRACE_METHOD=generic_fp forces gperftools to use
-  // the frame-pointer-based unwinder (stacktrace_generic_fp-inl.h) instead.
-  // This unwinder walks the RBP chain directly:
-  //   - No DWARF parsing, no .eh_frame lookup
-  //   - No locks, fully async-signal-safe
-  //   - Stops cleanly at frames without frame pointers (truncated but safe)
-  //
-  // This works because Lancet2 is compiled with -fno-omit-frame-pointer, so
-  // all Lancet2 frames have valid frame pointers.  Third-party library frames
-  // may appear as leaf nodes in the profile but will never cause a crash.
-  //
-  // Must be set BEFORE ProfilerStart() — the unwinder is selected lazily on
-  // first use via init_default_stack_impl_inner() in stacktrace.cc.
-  // ─────────────────────────────────────────────────────────────────────────
-  setenv("TCMALLOC_STACKTRACE_METHOD", "generic_fp", 1);
+  // NOTE: the stack unwinder is selected at COMPILE TIME via --enable-frame-pointers
+  // in cmake/configure_gperftools.sh.  A runtime setenv() does not work because
+  // gperftools reads TCMALLOC_STACKTRACE_METHOD during static initialization,
+  // before main() runs.  See gperftools_crash_analysis.md for full details.
   setenv("CPUPROFILE_PER_THREAD_TIMERS", "1", 1);
   setenv("CPUPROFILE_FREQUENCY", "250", 1);
   auto const timestamp = absl::FormatTime("%Y%m%d%ET%H%M%S", absl::Now(), absl::LocalTimeZone());
