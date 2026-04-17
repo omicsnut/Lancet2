@@ -298,8 +298,8 @@ static constexpr auto LUT_PHRED_TO_ERROR_PROB = std::array<f64, MAX_PHRED_SCORE 
 // clang-format on
 
 auto PhredToErrorProb(u32 phred_score) -> f64 {
-  auto const idx =
-      phred_score > MAX_PHRED_SCORE ? MAX_PHRED_SCORE : static_cast<usize>(phred_score);
+  auto const idx = phred_score > MAX_PHRED_SCORE ? static_cast<usize>(MAX_PHRED_SCORE)
+                                                 : static_cast<usize>(phred_score);
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
   return LUT_PHRED_TO_ERROR_PROB[idx];
 }

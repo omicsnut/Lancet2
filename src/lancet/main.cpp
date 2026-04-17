@@ -1,3 +1,4 @@
+#include "lancet/base/crash_handler.h"
 #include "lancet/base/logging.h"
 #include "lancet/cli/cli_interface.h"
 
@@ -10,11 +11,11 @@
 #include <spdlog/sinks/ansicolor_sink.h>
 
 auto main(int const argc, char const** argv) -> int {
+  lancet::base::InstallCrashHandler();
   std::ios_base::sync_with_stdio(false);
   std::cin.tie(nullptr);
 
   lancet::RegisterLancetLogger();
-
   absl::Cleanup const cleanup = []() -> void {
     spdlog::shutdown();
     mi_collect(true);
