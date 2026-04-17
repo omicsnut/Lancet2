@@ -85,6 +85,7 @@ add_library(lancet_base STATIC
 		src/lancet/base/hash.cpp src/lancet/base/hash.h
 		src/lancet/base/repeat.cpp src/lancet/base/repeat.h
 		src/lancet/base/eta_timer.cpp src/lancet/base/eta_timer.h
+		src/lancet/base/crash_handler.cpp src/lancet/base/crash_handler.h
 		src/lancet/base/sequence_complexity.cpp src/lancet/base/sequence_complexity.h)
 target_link_libraries(lancet_base PRIVATE absl::flat_hash_set
 		PUBLIC spdlog::spdlog absl::span absl::fixed_array absl::strings absl::time)
