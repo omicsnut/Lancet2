@@ -274,6 +274,19 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
   }
 }
 
+// ============================================================================
+// AddNodes — insert overlapping k+1-mers from a sequence into the graph.
+//
+// For each k+1-mer, creates left and right k-mer nodes (if absent) and
+// connects them with bidirected edges. Uses try_emplace return iterators
+// to avoid the double hash lookup (try_emplace + .at()) — eliminates 2
+// redundant flat_hash_map probes per k+1-mer (~500K saved per window).
+//
+// Cost per k+1-mer:
+//   2× Kmer construction (RevComp + CityHash64 + canonical sequence copy)
+//   2× flat_hash_map probe (try_emplace only — no redundant .at())
+//   2× edge emplacement (linear scan of InlinedVector<Edge, 8>)
+// ============================================================================
 auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vector<Node*> {
   std::vector<Node*> result;
   auto const kplus_ones = lancet::base::SlidingView(sequence, mCurrK + 1);
@@ -288,11 +301,14 @@ auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vecto
     auto const left_id = left_mer.Identifier();
     auto const right_id = right_mer.Identifier();
 
-    mNodes.try_emplace(left_id, std::make_unique<Node>(std::move(left_mer), label));
-    mNodes.try_emplace(right_id, std::make_unique<Node>(std::move(right_mer), label));
+    // try_emplace returns {iterator, bool}. Reuse iterator — no second lookup.
+    auto [left_itr, _left_inserted] =
+        mNodes.try_emplace(left_id, std::make_unique<Node>(std::move(left_mer), label));
+    auto [right_itr, _right_inserted] =
+        mNodes.try_emplace(right_id, std::make_unique<Node>(std::move(right_mer), label));
 
-    auto& first = mNodes.at(left_id);
-    auto& second = mNodes.at(right_id);
+    auto& first = left_itr->second;
+    auto& second = right_itr->second;
 
     if (mer_idx == 0) result.emplace_back(first.get());
 
