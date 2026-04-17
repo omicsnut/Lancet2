@@ -37,20 +37,33 @@ namespace lancet::cbdg {
 
 namespace {
 
-// Filter out low-quality kmers by expected error count (floor of summed Phred error
-// probabilities). Kmers with ≥1 expected error get no read support, ensuring they
-// are removed during the subsequent low-coverage pruning pass.
+// ============================================================================
+// BuildErrorPrefixSum — prefix sum of Phred error probabilities for a read.
+//
+// Given a read's quality array of length L, returns a vector of L+1 values:
+//   prefix[0] = 0.0
+//   prefix[i] = Σ PhredToErrorProb(qual[j]) for j in [0, i)
+//
+// The expected error for any k-mer at position [pos, pos+k) is then:
+//   expected_error = prefix[pos + k] - prefix[pos]          ← O(1)
+//
+// This replaces the previous O(k)-per-kmer std::accumulate approach.
+// For a 150bp read at k=25: 150 LUT lookups (once) + 125 subtractions
+// vs. 125 × 25 = 3,125 LUT lookups. ~11× reduction in LUT accesses.
+//
+// K-mers with floor(expected_error) ≥ 1 are filtered out (no read support),
+// ensuring they are removed during the subsequent low-coverage pruning pass.
 // See https://www.drive5.com/usearch/manual/exp_errs.html
-// See https://doi.org/10.1093/bioinformatics/btv401 for proof on expected errors
-auto const ERROR_SUMMER = [](f64 const sum, u8 const bql) -> f64 {
-  return sum + hts::PhredToErrorProb(bql);
-};
-
-auto const IS_LOW_QUAL_KMER = [](absl::Span<u8 const> quals) -> bool {
-  f64 const expected_errors =
-      std::floor(std::accumulate(quals.cbegin(), quals.cend(), 0.0, ERROR_SUMMER));
-  return static_cast<i64>(expected_errors) > 0;
-};
+// See https://doi.org/10.1093/bioinformatics/btv401
+// ============================================================================
+auto BuildErrorPrefixSum(absl::Span<u8 const> quals) -> std::vector<f64> {
+  auto const read_len = quals.size();
+  std::vector<f64> prefix(read_len + 1, 0.0);
+  for (usize idx = 0; idx < read_len; ++idx) {
+    prefix[idx + 1] = prefix[idx] + hts::PhredToErrorProb(quals[idx]);
+  }
+  return prefix;
+}
 
 // Count ALT haplotypes per component (excluding the leading reference path at index 0).
 auto const SUMMER = [](u64 const sum, auto const& comp_haps) -> u64 {
@@ -241,17 +254,20 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
   for (auto const& read : mReads) {
     if (!read.PassesAlnFilters()) continue;
 
-    usize offset = 0;
+    // O(read_length) prefix sum — done once per read.
+    auto const error_prefix = BuildErrorPrefixSum(read.QualView());
     auto added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
 
-    for (auto* node : added_nodes) {
+    for (usize offset = 0; offset < added_nodes.size(); ++offset) {
+      auto* node = added_nodes[offset];
       MateMer mm_pair{
           .mQname = read.QnameView(), .mKmerHash = node->Identifier(), .mTagKind = read.TagKind()};
 
-      auto const curr_qual = read.QualView().subspan(offset, mCurrK);
-      offset++;
+      // O(1) expected error for k-mer at [offset, offset+k) via prefix sum.
+      auto const kmer_expected_err = error_prefix[offset + mCurrK] - error_prefix[offset];
+      auto const is_low_qual = static_cast<i64>(std::floor(kmer_expected_err)) > 0;
 
-      if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) continue;
+      if (is_low_qual || mate_mers.contains(mm_pair)) continue;
       node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
       mate_mers.emplace(mm_pair);
     }
