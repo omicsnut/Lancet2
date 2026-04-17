@@ -236,6 +236,9 @@ data/*.txt
 data/chm13_giab_genome_stratifications
 data/chm13_repeat_annotations
 
+# profiling data
+profiling/*.bin
+
 # documentation
 .cache/
 pyenv/
