@@ -92,3 +92,12 @@ set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-
 		CACHE INTERNAL "" FORCE)
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-pointer"
 		CACHE INTERNAL "" FORCE)
+
+# ── Apply flags to RelWithDebInfo configuration ──────────────────────────────
+# Same optimization flags as Release, plus -g for DWARF debug symbols.
+# Used exclusively with LANCET_PROFILE_MODE=ON for source-level profiling
+# via pprof --list. The -g flag adds ~2× binary size but zero runtime cost.
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-pointer -g"
+		CACHE INTERNAL "" FORCE)
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS} ${LANCET_OPT_FLAGS} -fno-omit-frame-pointer -g"
+		CACHE INTERNAL "" FORCE)

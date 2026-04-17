@@ -38,6 +38,25 @@ build-debug = { cmd = "cmake --build cmake-build-debug", depends-on = [
   "configure-debug",
 ], description = "Build Lancet2 in Debug mode (with tests)" }
 
+# ── Profiling (RelWithDebInfo + gperftools) ──────────────────────────────────
+# Dedicated tasks for profiling builds. Uses RelWithDebInfo (same flags as
+# Release, plus -g for DWARF debug info) to enable pprof source-line annotation.
+# platform_checks.cmake enforces RelWithDebInfo when LANCET_PROFILE_MODE=ON,
+# so passing -DCMAKE_BUILD_TYPE explicitly here is redundant but explicit.
+configure-profile = { cmd = [
+  "cmake", "-GNinja",
+  "-B", "cmake-build-profile-release",
+  "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+  "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+  "-DLANCET_PROFILE_MODE=ON",
+  "-DLANCET_BUILD_STATIC=ON",
+  "-DLANCET_ENABLE_CLOUD_IO=OFF",
+], description = "Configure profiling build (RelWithDebInfo + gperftools)" }
+
+build-profile = { cmd = "cmake --build cmake-build-profile-release", depends-on = [
+  "configure-profile",
+], description = "Build Lancet2 for profiling (RelWithDebInfo + gperftools)" }
+
 # ── Test & Benchmark ─────────────────────────────────────────────────────────
 test = { cmd = "./cmake-build-debug/tests/TestLancet2", depends-on = [
   "build-debug",

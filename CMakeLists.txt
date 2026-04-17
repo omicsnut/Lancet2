@@ -308,10 +308,11 @@ if (${CMAKE_BUILD_TYPE} MATCHES Debug)
 	add_compile_definitions(LANCET_DEVELOP_MODE)
 endif ()
 
-# ── Optional: CPU profiling (Release only) ────────────────────────────────────
+# ── Optional: CPU profiling (RelWithDebInfo only) ─────────────────────────────
+# platform_checks.cmake enforces RelWithDebInfo when LANCET_PROFILE_MODE=ON.
 # https://github.com/google/pprof
 # https://gperftools.github.io/gperftools/cpuprofile.html
-if (LANCET_PROFILE_MODE AND ${CMAKE_BUILD_TYPE} MATCHES Release)
+if (LANCET_PROFILE_MODE AND ${CMAKE_BUILD_TYPE} MATCHES RelWithDebInfo)
 	add_compile_definitions(LANCET_PROFILE_MODE)
 	add_dependencies(lancet_core gperftools)
 	add_dependencies(lancet_cli gperftools)

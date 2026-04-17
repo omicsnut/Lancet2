@@ -53,3 +53,13 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 	set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif ()
+
+# ── Profiling build type override ────────────────────────────────────────────
+# LANCET_PROFILE_MODE requires RelWithDebInfo: retains -O2 optimized codegen
+# while preserving DWARF debug info for pprof's --list source-line annotation.
+# Release strips debug info, making sub-function profiling impossible.
+if (LANCET_PROFILE_MODE AND NOT CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+	message(STATUS "LANCET_PROFILE_MODE=ON requires RelWithDebInfo for source-level profiling.")
+	message(STATUS "Overriding CMAKE_BUILD_TYPE from '${CMAKE_BUILD_TYPE}' to 'RelWithDebInfo'.")
+	set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build." FORCE)
+endif ()

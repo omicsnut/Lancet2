@@ -14,17 +14,27 @@ This guide covers the end-to-end workflow for profiling Lancet2: building with p
 
 ## Building with Profiling
 
-Lancet2 uses [gperftools](https://github.com/gperftools/gperftools) for CPU profiling. Enable it at CMake configure time:
+Lancet2 uses [gperftools](https://github.com/gperftools/gperftools) for CPU profiling. The build system provides dedicated profiling tasks that automatically configure the correct build type:
 
 ```bash
-pixi run configure-release -- -DLANCET_PROFILE_MODE=ON
-pixi run build-release
+pixi run build-profile
 ```
 
-This links the gperftools `libprofiler.a` (CPU profiler only — Lancet2 uses mimalloc as its allocator, not tcmalloc) into the `lancet_core` and `lancet_cli` targets. The binary runs at full Release-mode optimization — profiling overhead is negligible (~2–5%).
+This is equivalent to the expanded form:
+
+```bash
+pixi run configure-profile    # sets RelWithDebInfo + LANCET_PROFILE_MODE=ON
+pixi run build-profile        # builds with profiling enabled
+```
+
+The profiling build uses `CMAKE_BUILD_TYPE=RelWithDebInfo`, which applies the same optimization flags as Release (`-O3`, architecture targeting, `-ffast-math`) plus `-g` for DWARF debug symbols. This preserves full-speed codegen while enabling pprof's `--list` source-line annotation — a critical capability for sub-function bottleneck resolution.
+
+If `LANCET_PROFILE_MODE=ON` is passed with any other build type (e.g., Release), `platform_checks.cmake` automatically overrides to `RelWithDebInfo` and prints a status message.
+
+The build links gperftools `libprofiler.a` (CPU profiler only — Lancet2 uses mimalloc as its allocator, not tcmalloc) into the `lancet_core` and `lancet_cli` targets. Profiling overhead is negligible (~2–5%).
 
 > [!WARNING]
-> **Do NOT profile Debug builds.** Debug builds have optimizations disabled (`-O0`), inlined functions are not inlined, and timing data is meaningless for performance analysis. Always profile Release builds.
+> **Do NOT profile Debug builds.** Debug builds have optimizations disabled (`-O0`), inlined functions are not inlined, and timing data is meaningless for performance analysis. Always use `pixi run build-profile` for profiling.
 
 ---
 
@@ -41,7 +51,7 @@ Each worker thread registers itself via `ProfilerRegisterThread()` in `PipelineE
 Run Lancet2 normally — the profile is written automatically:
 
 ```bash
-./cmake-build-release/Lancet2 pipeline \
+./cmake-build-profile-release/Lancet2 pipeline \
     --normal normal.bam --tumor tumor.bam --reference ref.fa \
     --region chr1:1000000-2000000 --out-vcf test.vcf.gz --num-threads 8
 ```
