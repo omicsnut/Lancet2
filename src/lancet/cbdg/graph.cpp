@@ -35,30 +35,6 @@
 
 namespace lancet::cbdg {
 
-namespace {
-
-// Filter out low-quality kmers by expected error count (floor of summed Phred error
-// probabilities). Kmers with ≥1 expected error get no read support, ensuring they
-// are removed during the subsequent low-coverage pruning pass.
-// See https://www.drive5.com/usearch/manual/exp_errs.html
-// See https://doi.org/10.1093/bioinformatics/btv401 for proof on expected errors
-auto const ERROR_SUMMER = [](f64 const sum, u8 const bql) -> f64 {
-  return sum + hts::PhredToErrorProb(bql);
-};
-
-auto const IS_LOW_QUAL_KMER = [](absl::Span<u8 const> quals) -> bool {
-  f64 const expected_errors =
-      std::floor(std::accumulate(quals.cbegin(), quals.cend(), 0.0, ERROR_SUMMER));
-  return static_cast<i64>(expected_errors) > 0;
-};
-
-// Count ALT haplotypes per component (excluding the leading reference path at index 0).
-auto const SUMMER = [](u64 const sum, auto const& comp_haps) -> u64 {
-  return sum + comp_haps.size() - 1;
-};
-
-}  // namespace
-
 /// Pipeline architecture for haplotype assembly from a colored de Bruijn graph:
 ///
 ///  ┌─────────────┐
@@ -212,9 +188,12 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
     }
   }
 
+  // Count ALT haplotypes per component (excluding the leading reference path at index 0).
   // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
-  auto const num_haps =
-      std::accumulate(per_comp_haps.cbegin(), per_comp_haps.cend(), u64{0}, SUMMER);
+  auto const num_haps = std::accumulate(per_comp_haps.cbegin(), per_comp_haps.cend(), u64{0},
+                      [](u64 const sum, auto const& comp_haps) -> u64 {
+                        return sum + comp_haps.size() - 1;
+                      });
 
   // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
   auto const human_rt = timer.HumanRuntime();
@@ -238,20 +217,40 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
                          [](Node const* node) -> NodeID { return node->Identifier(); });
 
   mate_mers.clear();
+  std::vector<f64> per_base_error_probs;
+  static constexpr usize EXPECTED_READ_LENGTH = 150;
+  per_base_error_probs.reserve(mReads.empty() ? EXPECTED_READ_LENGTH : mReads[0].Length());
+
   for (auto const& read : mReads) {
     if (!read.PassesAlnFilters()) continue;
 
+    // Amortize Phred → error-prob look up to once per read instead of k times per kmer.
+    // Prefix sum enables O(1) expected-error range queries:
+    // expected_errors(i, i+k) = prefix[i+k] − prefix[i].
+    per_base_error_probs.clear();
+    std::ranges::transform(read.QualView(), std::back_inserter(per_base_error_probs),
+                           [](u8 const qual) -> f64 { return PhredToErrorProb(qual); });
+    std::vector<f64> prefix_sum(per_base_error_probs.size() + 1, 0.0);
+    std::ranges::partial_sum(per_base_error_probs, prefix_sum.begin() + 1);
+
     usize offset = 0;
-    auto added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
+    auto const added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
 
     for (auto* node : added_nodes) {
       MateMer mm_pair{
           .mQname = read.QnameView(), .mKmerHash = node->Identifier(), .mTagKind = read.TagKind()};
 
-      auto const curr_qual = read.QualView().subspan(offset, mCurrK);
+      // Filter out low-quality kmers by expected error count (floor of summed Phred error
+      // probabilities). Kmers with ≥1 expected error get no read support,
+      // ensuring they are removed during the subsequent low-coverage pruning pass.
+      // See https://www.drive5.com/usearch/manual/exp_errs.html
+      // See https://doi.org/10.1093/bioinformatics/btv401 for proof on expected errors
+      // O(1) expected-error check for kmer at [offset, offset+k)
+      auto const raw_expected_error = prefix_sum[offset + mCurrK] - prefix_sum[offset];
+      auto const expected_error = static_cast<i64>(std::floor(raw_expected_error));
       offset++;
 
-      if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) continue;
+      if (expected_error > 0 || mate_mers.contains(mm_pair)) continue;
       node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
       mate_mers.emplace(mm_pair);
     }

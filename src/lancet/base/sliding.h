@@ -25,9 +25,9 @@ using SeqMers = absl::FixedArray<std::string_view>;
     return absl::ClippedSubstr(seq, offset, window);
   });
 
-  for (auto const& view : result) {
-    LANCET_ASSERT(view.length() == window)
-  }
+  LANCET_ASSERT(std::ranges::all_of(result, [&](std::string_view const view) {
+    return view.length() == window;
+  }));
 
   return result;
 }
