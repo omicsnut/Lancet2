@@ -22,11 +22,18 @@ endif ()
 #     unwinder for CPU profiling from a signal handler
 #   - Reliable backtraces in the crash handler, perf, GDB, and Instruments
 #
+# -momit-leaf-frame-pointer reclaims the RBP register in leaf functions (functions
+# that don't call other functions), which are the tightest inner loops where
+# register pressure matters most (DP matrices, k-mer hashing).  Profilers can
+# still attribute time to leaf functions via the instruction pointer, and the
+# generic_fp (safe variant) stops cleanly at the garbage RBP via bounds checking.
+# gperftools itself uses this same flag combination since v2.11.
+#
 # Set on CMAKE_C/CXX_FLAGS (base flags) so it applies unconditionally.
 # Also included in LANCET_OPT_FLAGS below to propagate to external dependencies
 # (spoa, mimalloc, zlib-ng, htslib, etc.) via their configure scripts.
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer -momit-leaf-frame-pointer")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -momit-leaf-frame-pointer")
 
 # ── Release Optimization Flags ────────────────────────────────────────────────
 # Each flag and its relevance to Lancet2:
@@ -62,7 +69,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
 # Lancet2's FP-heavy code (polar_coords.h, scoring) is already hand-
 # optimized to avoid expensive libm calls.
 #
-# -fno-omit-frame-pointer
+# -fno-omit-frame-pointer -momit-leaf-frame-pointer
 #   Duplicated here from the base CMAKE_C/CXX_FLAGS above so that external
 #   dependencies also get frame pointers when their configure scripts read
 #   LANCET_OPT_FLAGS from CMakeCache.txt.  See the "Frame Pointers" section.
@@ -72,18 +79,21 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
 #   x86_64: -march=x86-64-v3 (portable, AVX2 + BMI2, Haswell 2013+)
 #           -march=native    (non-portable, when -DLANCET_NATIVE_BUILD=ON)
 
+set(LANCET_BASE_OPT "-O3 -pipe -fno-math-errno -fno-trapping-math"
+	" -fno-omit-frame-pointer -momit-leaf-frame-pointer -DNDEBUG")
+
 if (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64" OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "aarch64")
 	# ARM64: always native — ARM binaries target the build host's microarchitecture
-	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -fno-omit-frame-pointer -DNDEBUG -mcpu=native"
+	set(LANCET_OPT_FLAGS "${LANCET_BASE_OPT} -mcpu=native"
 			CACHE STRING "Lancet optimization flags" FORCE)
 elseif (LANCET_NATIVE_BUILD)
 	# x86 native: uses all instruction sets available on this CPU (non-portable)
 	message(STATUS "LANCET_NATIVE_BUILD=ON: using -march=native (non-portable binary)")
-	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -fno-omit-frame-pointer -DNDEBUG -march=native"
+	set(LANCET_OPT_FLAGS "${LANCET_BASE_OPT} -march=native"
 			CACHE STRING "Lancet optimization flags" FORCE)
 else ()
 	# x86 portable: AVX2 + BMI2 baseline (covers ~95% of modern server CPUs)
-	set(LANCET_OPT_FLAGS "-O3 -pipe -fno-math-errno -fno-trapping-math -fno-omit-frame-pointer -DNDEBUG -march=x86-64-v3"
+	set(LANCET_OPT_FLAGS "${LANCET_BASE_OPT} -march=x86-64-v3"
 			CACHE STRING "Lancet optimization flags" FORCE)
 endif ()
 
