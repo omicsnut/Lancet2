@@ -13,6 +13,7 @@
 #include "lancet/hts/phred_quality.h"
 
 #include "absl/container/chunked_queue.h"
+#include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -36,33 +37,20 @@ namespace lancet::cbdg {
 
 namespace {
 
-// ============================================================================
-// BuildErrorPrefixSum — prefix sum of Phred error probabilities for a read.
-//
-// Given a read's quality array of length L, returns a vector of L+1 values:
-//   prefix[0] = 0.0
-//   prefix[i] = Σ PhredToErrorProb(qual[j]) for j in [0, i)
-//
-// The expected error for any k-mer at position [pos, pos+k) is then:
-//   expected_error = prefix[pos + k] - prefix[pos]          ← O(1)
-//
-// This replaces the previous O(k)-per-kmer std::accumulate approach.
-// For a 150bp read at k=25: 150 LUT lookups (once) + 125 subtractions
-// vs. 125 × 25 = 3,125 LUT lookups. ~11× reduction in LUT accesses.
-//
-// K-mers with floor(expected_error) ≥ 1 are filtered out (no read support),
-// ensuring they are removed during the subsequent low-coverage pruning pass.
+// Filter out low-quality kmers by expected error count (floor of summed Phred error
+// probabilities). Kmers with ≥1 expected error get no read support, ensuring they
+// are removed during the subsequent low-coverage pruning pass.
 // See https://www.drive5.com/usearch/manual/exp_errs.html
-// See https://doi.org/10.1093/bioinformatics/btv401
-// ============================================================================
-auto BuildErrorPrefixSum(absl::Span<u8 const> quals) -> std::vector<f64> {
-  auto const read_len = quals.size();
-  std::vector<f64> prefix(read_len + 1, 0.0);
-  for (usize idx = 0; idx < read_len; ++idx) {
-    prefix[idx + 1] = prefix[idx] + hts::PhredToErrorProb(quals[idx]);
-  }
-  return prefix;
-}
+// See https://doi.org/10.1093/bioinformatics/btv401 for proof on expected errors
+auto const ERROR_SUMMER = [](f64 const sum, u8 const bql) -> f64 {
+  return sum + hts::PhredToErrorProb(bql);
+};
+
+auto const IS_LOW_QUAL_KMER = [](absl::Span<u8 const> quals) -> bool {
+  f64 const expected_errors =
+      std::floor(std::accumulate(quals.cbegin(), quals.cend(), 0.0, ERROR_SUMMER));
+  return static_cast<i64>(expected_errors) > 0;
+};
 
 // Count ALT haplotypes per component (excluding the leading reference path at index 0).
 auto const SUMMER = [](u64 const sum, auto const& comp_haps) -> u64 {
@@ -253,42 +241,23 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
   for (auto const& read : mReads) {
     if (!read.PassesAlnFilters()) continue;
 
-    // O(read_length) prefix sum — done once per read.
-    auto const error_prefix = BuildErrorPrefixSum(read.QualView());
+    usize offset = 0;
     auto added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
 
-    for (usize offset = 0; offset < added_nodes.size(); ++offset) {
-      auto* node = added_nodes[offset];
+    for (auto* node : added_nodes) {
       MateMer mm_pair{
           .mQname = read.QnameView(), .mKmerHash = node->Identifier(), .mTagKind = read.TagKind()};
 
-      // O(1) expected error for k-mer at [offset, offset+k) via prefix sum.
-      auto const kmer_expected_err = error_prefix[offset + mCurrK] - error_prefix[offset];
-      auto const is_low_qual = static_cast<i64>(std::floor(kmer_expected_err)) > 0;
+      auto const curr_qual = read.QualView().subspan(offset, mCurrK);
+      offset++;
 
-      if (is_low_qual || mate_mers.contains(mm_pair)) continue;
+      if (IS_LOW_QUAL_KMER(curr_qual) || mate_mers.contains(mm_pair)) continue;
       node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
       mate_mers.emplace(mm_pair);
     }
   }
 }
 
-// ============================================================================
-// AddNodes — insert overlapping k+1-mers from a sequence into the graph.
-//
-// For each k+1-mer, creates left and right k-mer nodes (if absent) and
-// connects them with bidirected edges.
-//
-// NOTE: we cannot reuse try_emplace return iterators here. The second
-// try_emplace call can trigger a flat_hash_map rehash, which invalidates
-// ALL existing iterators — including the one from the first try_emplace.
-// Instead, we insert both nodes first, then do fresh lookups via operator[].
-//
-// Cost per k+1-mer:
-//   2× Kmer construction (RevComp + CityHash64 + canonical sequence copy)
-//   4× flat_hash_map probe (2 try_emplace + 2 operator[])
-//   2× edge emplacement (linear scan of InlinedVector<Edge, 8>)
-// ============================================================================
 auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vector<Node*> {
   std::vector<Node*> result;
   auto const kplus_ones = lancet::base::SlidingView(sequence, mCurrK + 1);
@@ -303,13 +272,11 @@ auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vecto
     auto const left_id = left_mer.Identifier();
     auto const right_id = right_mer.Identifier();
 
-    // Insert both nodes before any lookups — either insert may cause a rehash.
     mNodes.try_emplace(left_id, std::make_unique<Node>(std::move(left_mer), label));
     mNodes.try_emplace(right_id, std::make_unique<Node>(std::move(right_mer), label));
 
-    // Safe: fresh lookups after both inserts are complete.
-    auto& first = mNodes[left_id];
-    auto& second = mNodes[right_id];
+    auto& first = mNodes.at(left_id);
+    auto& second = mNodes.at(right_id);
 
     if (mer_idx == 0) result.emplace_back(first.get());
 
