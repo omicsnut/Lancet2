@@ -77,7 +77,7 @@ void AsyncWorker::Process(std::stop_token stop_token) {
       LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={} region={}: {}", THREAD_ID,
                    window_ptr->GenomeIndex(), region_str, exc.what())
       lancet::base::ClearSlotWindowInfo(crash_slot);
-      std::abort();
+      std::terminate();
     } catch (...) {
       // abi::__cxa_current_exception_type() gives the mangled type name of
       // whatever was thrown (int, char*, custom class, etc.). A rethrow into
@@ -89,8 +89,8 @@ void AsyncWorker::Process(std::stop_token stop_token) {
         type_name = type_info->name();
       }
 #endif
-      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={} region={}: non-std "
-                   "exception type={}",
+      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={} region={}: "
+                   "non-std exception type={}",
                    THREAD_ID, window_ptr->GenomeIndex(), region_str, type_name)
       lancet::base::ClearSlotWindowInfo(crash_slot);
       std::abort();
