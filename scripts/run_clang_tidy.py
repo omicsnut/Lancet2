@@ -57,6 +57,11 @@ _RE_DIAG = re.compile(
     r"\[(?P<check>[^\]]+)\]$"
 )
 
+# Strip ANSI escape sequences (colors, bold, reset) from clang-tidy output.
+# clang-tidy emits these when UseColor: true is set in .clang-tidy, regardless
+# of the -use-color flag passed to run-clang-tidy.
+_RE_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
 
 @dataclass
 class Diagnostic:
@@ -78,7 +83,8 @@ def parse_clang_tidy_output(
     repo_prefix = str(repo_root) + "/"
 
     for line in output.splitlines():
-        match = _RE_DIAG.match(line)
+        clean_line = _RE_ANSI.sub("", line)
+        match = _RE_DIAG.match(clean_line)
         if not match:
             continue
 
@@ -233,7 +239,9 @@ def main() -> int:
 
     cmd.append(FILE_FILTER)
 
-    # Stream output live while capturing it for the summary
+    # Stream output live while capturing it for the summary.
+    # run-clang-tidy forks child clang-tidy processes — their diagnostics go to
+    # stderr, so we must merge stderr into stdout to capture everything.
     output_lines: list[str] = []
     with subprocess.Popen(
         cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -241,6 +249,7 @@ def main() -> int:
         assert proc.stdout is not None
         for line in proc.stdout:
             sys.stdout.write(line)
+            sys.stdout.flush()
             output_lines.append(line)
         proc.wait()
 
@@ -250,6 +259,12 @@ def main() -> int:
 
     if diagnostics:
         return 1
+
+    # Fallback: if the parser missed diagnostics but run-clang-tidy itself
+    # returned non-zero, propagate that exit code.
+    if proc.returncode != 0:
+        return proc.returncode
+
     return 0
 
 
