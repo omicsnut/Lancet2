@@ -1,5 +1,6 @@
 #include "lancet/core/async_worker.h"
 
+#include "lancet/base/crash_handler.h"
 #include "lancet/base/logging.h"
 #include "lancet/base/timer.h"
 #include "lancet/base/types.h"
@@ -14,6 +15,7 @@
 #include <exception>
 #include <memory>
 #include <stop_token>
+#include <string>
 #include <thread>
 #include <typeinfo>
 #include <utility>
@@ -30,8 +32,15 @@ namespace lancet::core {
 // lock-free MPMC queue (moodycamel::BlockingConcurrentQueue).  The loop:
 //   1. Check stop_token — cooperative cancellation from the main thread
 //   2. Dequeue a window (10ms timeout — prevents busy-spinning)
-//   3. Run VariantBuilder::ProcessWindow → assemble, call, genotype
-//   4. Push result back to the output queue for progress reporting
+//   3. Register crash context (genome index + region string)
+//   4. Run VariantBuilder::ProcessWindow → assemble, call, genotype
+//   5. Clear crash context and push result to output queue
+//
+// Crash context lifecycle:
+//   RegisterThreadSlot()     — once at thread startup
+//   SetSlotWindowInfo()      — before each ProcessWindow() call
+//   ClearSlotWindowInfo()    — after ProcessWindow() returns (or in catch)
+//   UnregisterThreadSlot()   — at thread exit
 // ============================================================================
 // stop_token is a lightweight handle designed for by-value pass per C++20 jthread API
 // NOLINTNEXTLINE(performance-unnecessary-value-param)
@@ -39,6 +48,8 @@ void AsyncWorker::Process(std::stop_token stop_token) {
   static thread_local auto const THREAD_ID =
       absl::Hash<std::thread::id>()(std::this_thread::get_id());
   LOG_DEBUG("Starting AsyncWorker thread {:#x}", THREAD_ID)
+
+  auto const crash_slot = lancet::base::RegisterThreadSlot();
 
   lancet::base::Timer timer;
   usize num_done = 0;
@@ -53,13 +64,19 @@ void AsyncWorker::Process(std::stop_token stop_token) {
     // periodic re-check of the stop_token.
     if (!mInPtr->wait_dequeue_timed(window_ptr, QUEUE_TIMEOUT)) continue;
 
+    // Record which window this thread is about to process.  If a crash occurs
+    // inside ProcessWindow(), the crash handler prints this context.
+    auto const region_str = window_ptr->ToSamtoolsRegion();
+    lancet::base::SetSlotWindowInfo(crash_slot, window_ptr->GenomeIndex(), region_str.c_str());
+
     timer.Reset();
     try {
       auto variants = mBuilderPtr->ProcessWindow(std::const_pointer_cast<Window const>(window_ptr));
       mStorePtr->AddVariants(std::move(variants));
     } catch (std::exception const& exc) {
-      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={}: {}", THREAD_ID,
-                   window_ptr->GenomeIndex(), exc.what())
+      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={} region={}: {}", THREAD_ID,
+                   window_ptr->GenomeIndex(), region_str, exc.what())
+      lancet::base::ClearSlotWindowInfo(crash_slot);
       std::abort();
     } catch (...) {
       // abi::__cxa_current_exception_type() gives the mangled type name of
@@ -72,10 +89,14 @@ void AsyncWorker::Process(std::stop_token stop_token) {
         type_name = type_info->name();
       }
 #endif
-      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={}: non-std exception type={}",
-                   THREAD_ID, window_ptr->GenomeIndex(), type_name)
+      LOG_CRITICAL("AsyncWorker thread {:#x} CRASHED on window idx={} region={}: non-std "
+                   "exception type={}",
+                   THREAD_ID, window_ptr->GenomeIndex(), region_str, type_name)
+      lancet::base::ClearSlotWindowInfo(crash_slot);
       std::abort();
     }
+
+    lancet::base::ClearSlotWindowInfo(crash_slot);
 
     auto const status_code = mBuilderPtr->CurrentStatus();
     mOutPtr->enqueue(out_token, Result{.mGenomeIdx = window_ptr->GenomeIndex(),
@@ -84,6 +105,7 @@ void AsyncWorker::Process(std::stop_token stop_token) {
     num_done++;
   }
 
+  lancet::base::UnregisterThreadSlot(crash_slot);
   LOG_DEBUG("Quitting AsyncWorker thread {:#x} after processing {} windows", THREAD_ID, num_done)
 }
 

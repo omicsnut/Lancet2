@@ -1,8 +1,8 @@
 #ifndef SRC_LANCET_BASE_TYPES_H_
 #define SRC_LANCET_BASE_TYPES_H_
 
-#include <cstddef>
-#include <cstdint>
+#include <cstddef>  // IWYU pragma: export
+#include <cstdint>  // IWYU pragma: export
 
 using i8 = std::int8_t;
 using i16 = std::int16_t;

@@ -10,7 +10,6 @@
 
 #include <compare>
 #include <optional>
-#include <stdint.h>
 #include <string>
 #include <string_view>
 #include <utility>

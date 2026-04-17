@@ -18,8 +18,6 @@
 #include <string>
 #include <vector>
 
-#include <cstddef>
-
 namespace lancet::cbdg {
 
 MaxFlow::MaxFlow(Graph::NodeTable const* graph, NodeIDPair const& /*src_and_snk*/,
