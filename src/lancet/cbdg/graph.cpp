@@ -277,13 +277,16 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
 // AddNodes — insert overlapping k+1-mers from a sequence into the graph.
 //
 // For each k+1-mer, creates left and right k-mer nodes (if absent) and
-// connects them with bidirected edges. Uses try_emplace return iterators
-// to avoid the double hash lookup (try_emplace + .at()) — eliminates 2
-// redundant flat_hash_map probes per k+1-mer (~500K saved per window).
+// connects them with bidirected edges.
+//
+// NOTE: we cannot reuse try_emplace return iterators here. The second
+// try_emplace call can trigger a flat_hash_map rehash, which invalidates
+// ALL existing iterators — including the one from the first try_emplace.
+// Instead, we insert both nodes first, then do fresh lookups via operator[].
 //
 // Cost per k+1-mer:
 //   2× Kmer construction (RevComp + CityHash64 + canonical sequence copy)
-//   2× flat_hash_map probe (try_emplace only — no redundant .at())
+//   4× flat_hash_map probe (2 try_emplace + 2 operator[])
 //   2× edge emplacement (linear scan of InlinedVector<Edge, 8>)
 // ============================================================================
 auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vector<Node*> {
@@ -300,14 +303,13 @@ auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vecto
     auto const left_id = left_mer.Identifier();
     auto const right_id = right_mer.Identifier();
 
-    // try_emplace returns {iterator, bool}. Reuse iterator — no second lookup.
-    auto [left_itr, _left_inserted] =
-        mNodes.try_emplace(left_id, std::make_unique<Node>(std::move(left_mer), label));
-    auto [right_itr, _right_inserted] =
-        mNodes.try_emplace(right_id, std::make_unique<Node>(std::move(right_mer), label));
+    // Insert both nodes before any lookups — either insert may cause a rehash.
+    mNodes.try_emplace(left_id, std::make_unique<Node>(std::move(left_mer), label));
+    mNodes.try_emplace(right_id, std::make_unique<Node>(std::move(right_mer), label));
 
-    auto& first = left_itr->second;
-    auto& second = right_itr->second;
+    // Safe: fresh lookups after both inserts are complete.
+    auto& first = mNodes[left_id];
+    auto& second = mNodes[right_id];
 
     if (mer_idx == 0) result.emplace_back(first.get());
 
