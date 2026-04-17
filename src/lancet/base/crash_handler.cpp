@@ -2,28 +2,46 @@
 
 #include "lancet/base/types.h"
 
-#include <ucontext.h>
-
 // ============================================================================
-// Crash handler implementation — POSIX signal-based crash diagnostics with
-// per-thread window context and all-thread enumeration.
+// crash_handler.cpp — POSIX signal-based crash diagnostics.
 //
-// On SIGSEGV or SIGABRT the handler prints to stderr:
-//   1. Faulting address (si_addr) — null deref vs heap vs stack corruption
-//   2. Signal code (si_code)     — SEGV_MAPERR (1) or SEGV_ACCERR (2)
-//   3. Thread ID                 — identifies the crashing worker thread
-//   4. Instruction pointer (RIP) — the exact crashing instruction
-//   5. Stack backtrace           — best-effort, may be empty if stack is corrupt
-//   6. All registered thread contexts — which window each worker was processing
-//   7. /proc/self/task enumeration — instruction pointer of every OS thread
+// PURPOSE:
+//   When the pipeline encounters a fatal signal (SIGSEGV, SIGABRT) that
+//   bypasses normal C++ exception handling, this module prints a diagnostic
+//   report to stderr showing which worker thread crashed and which genomic
+//   window it was processing.  This turns a blank "Segmentation fault" into
+//   an actionable single-threaded reproduction command.
 //
-// The handler runs on a dedicated 64KB alternate signal stack (sigaltstack)
-// so it can function even when the crash is caused by stack overflow.
-// After printing, it re-raises the signal with SIG_DFL to produce a core dump.
+// HOW IT WORKS (high level):
 //
-// All output uses write() and manual hex formatting — no heap allocation.
-// Pipe output through `c++filt` to demangle C++ symbols in the backtrace.
-// Resolve the RIP with: addr2line -e ./Lancet2 -f <RIP address>
+//   ┌──────────────┐   Worker threads register a "crash slot" and update
+//   │ Worker N     │   it with the current window before each ProcessWindow()
+//   │  ┌─────────┐ │   call.  If a crash occurs mid-processing, the signal
+//   │  │ Slot[N] │ │   handler reads all slots and prints their state.
+//   │  └─────────┘ │
+//   └──────┬───────┘
+//          │ SIGSEGV / SIGABRT
+//          ▼
+//   ┌──────────────┐   The signal handler runs on a dedicated 64KB alternate
+//   │ CrashHandler │   stack (so it works even on stack overflow), prints
+//   │  - signal    │   diagnostic info, then re-raises the signal to produce
+//   │  - backtrace │   a core dump via the default handler.
+//   │  - contexts  │
+//   └──────────────┘
+//
+// IMPORTANT CONSTRAINT — async-signal safety:
+//   Code inside a signal handler must NOT call malloc, printf, or any function
+//   that takes a lock.  This is because the crash may have occurred while the
+//   thread was holding a lock or inside malloc — calling those functions again
+//   would deadlock.  All output in this file uses write() (which is safe) and
+//   manual formatting into stack-allocated buffers (no heap).
+//
+// FILE ORGANIZATION:
+//   §1  Signal-safe output helpers    — WriteStr, WriteHex, WriteInt, WriteU64
+//   §2  Per-thread crash context      — CrashSlot array + DumpAllThreadContexts
+//   §3  All-thread instruction pointers — DumpAllThreadIPs (Linux only, via /proc)
+//   §4  Signal handler                — CrashHandler (the actual SIGSEGV handler)
+//   §5  Public API                    — InstallCrashHandler, Register/Set/Clear
 // ============================================================================
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -31,6 +49,7 @@
 #include <execinfo.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <ucontext.h>
 #include <unistd.h>
 
 #ifdef __linux__
@@ -44,17 +63,24 @@
 
 namespace {
 
-// Maximum number of stack frames to capture in the backtrace.
 constexpr int MAX_BACKTRACE_FRAMES = 64;
 
-// Minimum alternate stack size — at least 64KB or SIGSTKSZ, whichever is larger.
+// 64KB or SIGSTKSZ, whichever is larger.  The alternate stack lets
+// the handler run even when the crash is caused by stack overflow.
 constexpr usize ALT_STACK_SIZE = SIGSTKSZ > 65'536 ? SIGSTKSZ : 65'536;
 
 // ============================================================================
-// Async-signal-safe output helpers — no heap allocation, no stdio.
+// §1  Signal-safe output helpers
+//
+// These functions format and write data using only write() and stack-allocated
+// buffers.  They replace printf/fprintf which are NOT safe to call from a
+// signal handler (printf calls malloc internally).
+//
+// write() is one of the few functions guaranteed safe inside a signal handler
+// by POSIX (see `man 7 signal-safety`).  clang-tidy doesn't know this, so
+// we suppress its warnings on every write() call.
 // ============================================================================
 
-// Async-signal-safe write of a NUL-terminated string to a file descriptor.
 void WriteStr(int file_desc, char const* str) {
   usize len = 0;
   while (str[len] != '\0') {
@@ -64,9 +90,9 @@ void WriteStr(int file_desc, char const* str) {
   static_cast<void>(write(file_desc, str, len));
 }
 
-// Async-signal-safe hex formatter — writes "0x" + 16 hex digits, no heap allocation.
+// Writes "0x" followed by exactly 16 hex digits (zero-padded).
 void WriteHex(int file_desc, u64 val) {
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — raw byte buffer for signal-safe formatting
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — stack buffer, no heap
   char buf[18] = {'0', 'x'};
   for (int idx = 17; idx >= 2; --idx) {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index)
@@ -77,9 +103,9 @@ void WriteHex(int file_desc, u64 val) {
   static_cast<void>(write(file_desc, buf, sizeof(buf)));
 }
 
-// Async-signal-safe decimal integer writer for small values.
+// Writes a signed integer in decimal.
 void WriteInt(int file_desc, int val) {
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — raw byte buffer for signal-safe formatting
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — stack buffer, no heap
   char buf[16];
   int pos = 0;
   if (val < 0) {
@@ -87,7 +113,6 @@ void WriteInt(int file_desc, int val) {
     val = -val;
   }
 
-  // Format digits in reverse, then reverse the digit portion.
   int const digit_start = pos;
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-do-while)
   do {
@@ -95,7 +120,6 @@ void WriteInt(int file_desc, int val) {
     val /= 10;
   } while (val > 0);
 
-  // Reverse the digits in place.
   for (int lo = digit_start, hi = pos - 1; lo < hi; ++lo, --hi) {
     char const tmp = buf[lo];
     buf[lo] = buf[hi];
@@ -106,9 +130,9 @@ void WriteInt(int file_desc, int val) {
   static_cast<void>(write(file_desc, buf, pos));
 }
 
-// Async-signal-safe decimal writer for u64 values (used for genome index).
+// Writes an unsigned 64-bit integer in decimal.
 void WriteU64(int file_desc, u64 val) {
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — raw byte buffer for signal-safe formatting
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — stack buffer, no heap
   char buf[20];
   int pos = 0;
 
@@ -118,7 +142,6 @@ void WriteU64(int file_desc, u64 val) {
     val /= 10;
   } while (val > 0);
 
-  // Reverse in place.
   for (int lo = 0, hi = pos - 1; lo < hi; ++lo, --hi) {
     char const tmp = buf[lo];
     buf[lo] = buf[hi];
@@ -130,40 +153,56 @@ void WriteU64(int file_desc, u64 val) {
 }
 
 // ============================================================================
-// Per-thread crash context slot array.
+// §2  Per-thread crash context (the "crash slot" system)
 //
-// Each worker thread claims a slot via atomic compare-exchange on mInUse.
-// The crash handler reads all slots — no locks needed since writes are
-// atomic stores and reads tolerate tearing (worst case: stale region string).
+// Each worker thread "registers" a slot in a fixed-size global array.  Before
+// processing a genomic window, the thread writes the window's index and region
+// string into its slot.  If the thread crashes inside ProcessWindow(), the
+// signal handler reads all slots and prints which windows were being processed.
 //
-// Memory layout per slot (cache-line aligned to prevent false sharing):
-//   mInUse       — 0 = free, 1 = registered thread, read atomically
-//   mActive      — 0 = idle, 1 = currently processing a window
-//   mGenomeIdx   — Window::GenomeIndex() of the window being processed
-//   mThreadId    — pthread_t of the owning thread (for identification)
-//   mRegion      — human-readable region string ("chr4:12345-67890")
+// Why not just use try/catch?
+//   SIGSEGV and SIGABRT are POSIX signals, not C++ exceptions.  A null pointer
+//   dereference or heap corruption does NOT trigger try/catch — it triggers the
+//   kernel's signal delivery.  The crash slots capture context for these cases.
+//   (C++ exceptions like std::out_of_range ARE caught by the try/catch in
+//   AsyncWorker::Process — the crash slots are for everything else.)
+//
+// Thread safety without locks:
+//   Each thread writes ONLY to its own slot, claimed via atomic compare-and-swap
+//   (CAS — atomically checks "is this slot free?" and claims it in one step).
+//   The signal handler only READS slots.  Atomic stores with release ordering
+//   (guarantees that all prior writes are visible before the flag is set)
+//   ensure the handler sees consistent data.  No mutex is needed.
+//
+// Memory layout:
+//   ┌──────────────────────────────────────────────────────────────────┐
+//   │ CrashSlot (192 bytes, aligned to 64-byte CPU cache line so that  │
+//   │ different threads' slots don't share the same cache line, which  │
+//   │ would cause unnecessary cross-core synchronization overhead)     │
+//   ├──────────┬──────────┬────────────┬────────────┬──────────────────┤
+//   │ mInUse   │ mActive  │ mGenomeIdx │ mThreadId  │ mRegion[128]     │
+//   │ 4B       │ 4B       │ 8B         │ 8B         │ 128B             │
+//   │ 0=free   │ 0=idle   │ window     │ pthread_t  │ chr4:12345-67890 │
+//   │ 1=claimed│ 1=active │ ordinal    │            │ NUL-terminated   │
+//   └──────────┴──────────┴────────────┴────────────┴──────────────────┘
 // ============================================================================
 
 struct alignas(64) CrashSlot {
-  int volatile mInUse;      // 4B — atomic flag: 0 = free, 1 = claimed by a thread
-  int volatile mActive;     // 4B — atomic flag: 0 = idle, 1 = processing a window
-  u64 volatile mGenomeIdx;  // 8B — genome-wide window ordinal being processed
-  pthread_t mThreadId;      // 8B — owning thread, used to correlate with crashing thread
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — fixed buffer for async-signal-safe region string
-  char mRegion[lancet::base::MAX_REGION_LEN];  // 128B
-} /* 192B, padded to 192B by alignas(64) */;
+  int volatile mInUse;      // 4B — 0 = free, 1 = claimed by a thread
+  int volatile mActive;     // 4B — 0 = idle, 1 = processing a window
+  u64 volatile mGenomeIdx;  // 8B — Window::GenomeIndex() being processed
+  pthread_t mThreadId;      // 8B — owning thread ID for crash correlation
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — fixed buffer, async-signal-safe
+  char mRegion[lancet::base::MAX_REGION_LEN];  // 128B — e.g. "chr4:12345-67890"
+};
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables) — mutable by design
 std::array<CrashSlot, lancet::base::MAX_CRASH_SLOTS> g_crash_slots = {};
 
-// ============================================================================
-// DumpAllThreadContexts — called from the crash handler to print crash context.
-//
-// Iterates all crash slots and prints each registered thread's state:
-//   - Thread ID (pthread_t as hex)
-//   - Active/idle status
-//   - If active: genome index + region string
-// ============================================================================
+// ---------------------------------------------------------------------------
+// DumpAllThreadContexts: print each worker's state at crash time.
+// Called from the signal handler — must be async-signal-safe.
+// ---------------------------------------------------------------------------
 void DumpAllThreadContexts(int file_desc) {
   WriteStr(file_desc, "\n── Worker Thread Contexts ──────────────────────\n");
 
@@ -191,35 +230,52 @@ void DumpAllThreadContexts(int file_desc) {
   }
 }
 
+// ============================================================================
+// §3  All-thread instruction pointer enumeration (Linux only)
+//
+// On Linux, /proc/self/task/ lists every OS thread in the process.  For each
+// thread, /proc/self/task/<tid>/syscall contains the instruction pointer
+// (the address of the machine instruction the thread was executing).
+// This lets us see what EVERY thread was doing at crash time — not just the
+// workers that registered crash slots, but also the main thread, I/O threads,
+// and any profiler threads.
+//
+// The kernel exposes each thread's state in a text file at the path:
+//   /proc/self/task/<tid>/syscall
+//
+// Example contents when the thread is blocked in a system call:
+//   "0 0x7f6... 0x1000 0x0 0x0 0x0 0x0 0x7ffd... 0x7f61..."
+//    ^                                            ^SP       ^IP
+//    syscall number                               stack ptr instruction ptr
+//
+// The last two hex values are always the stack pointer and instruction
+// pointer (the address of the machine instruction the thread was executing).
+// If the thread is running in user code (not inside a kernel call), the
+// file contains just the word "running".
+//
+// This section uses the raw getdents64 Linux syscall to list directory
+// entries instead of the standard opendir/readdir functions, because
+// opendir calls malloc, which is not safe in a signal handler.
+// ============================================================================
 #ifdef __linux__
-// ============================================================================
-// DumpAllThreadIPs — read instruction pointers for every OS thread via procfs.
-//
-// /proc/self/task/<tid>/syscall contains kernel-level register state:
-//   Format: "syscall_nr arg0 arg1 ... SP IP"
-//   The last two hex fields are stack pointer and instruction pointer.
-//   If the thread is in userspace (not in a syscall), the line is "running".
-//
-// This gives us the IP of threads that did NOT register a crash slot
-// (e.g., the main thread, profiler thread).
-// ============================================================================
 
-// Linux dirent64 layout for raw getdents64 parsing.  Must match kernel ABI
-// exactly — field sizes and offsets are prescribed by the syscall interface.
-// NOLINTNEXTLINE(readability-identifier-naming) — mirrors kernel struct name for clarity
+// Kernel dirent64 layout — must match the kernel's struct exactly.
+// NOLINTNEXTLINE(readability-identifier-naming) — mirrors kernel struct name
 struct linux_dirent64 {
   u64 mIno;                // 8B — inode number
-  u64 mOff;                // 8B — offset to next dirent
-  unsigned short mReclen;  // 2B — length of this record
-  unsigned char mType;     // 1B — file type
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — variable-length kernel ABI field
-  char mName[1];  // variable length — NUL-terminated name
+  u64 mOff;                // 8B — offset to next entry
+  unsigned short mReclen;  // 2B — total record length
+  unsigned char mType;     // 1B — file type (DT_DIR, DT_REG, etc.)
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — variable-length kernel ABI
+  char mName[1];  // NUL-terminated filename
 };
 
-// Dump the syscall register state for a single thread via /proc/self/task/<tid>/syscall.
+// ---------------------------------------------------------------------------
+// DumpOneThreadIP: read and print the syscall state for a single thread.
+// ---------------------------------------------------------------------------
 void DumpOneThreadIP(int file_desc, char const* tid_str) {
-  // Build /proc/self/task/<tid>/syscall path on the stack.
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — stack buffer for path assembly, no heap
+  // Build the path: /proc/self/task/<tid>/syscall
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — stack buffer for path, no heap
   char path[64] = "/proc/self/task/";
   constexpr usize PREFIX_LEN = 16;
   usize plen = PREFIX_LEN;
@@ -227,11 +283,8 @@ void DumpOneThreadIP(int file_desc, char const* tid_str) {
   for (usize idx = 0; tid_str[idx] != '\0' && plen < 48; ++idx) {
     path[plen++] = tid_str[idx];
   }
-
-  // Append "/syscall\0" — memcpy is async-signal-safe per POSIX.
   memcpy(path + plen, "/syscall", 9);
 
-  // Read the syscall file — format: "nr a0 a1 a2 a3 a4 a5 SP IP"
   // NOLINTNEXTLINE(modernize-avoid-c-arrays) — stack buffer for procfs read, no heap
   char syscall_buf[256] = {};
   int const sfd = open(path, O_RDONLY);
@@ -240,38 +293,40 @@ void DumpOneThreadIP(int file_desc, char const* tid_str) {
   close(sfd);
   if (nread <= 0) return;
 
-  WriteStr(file_desc, "  tid=");
-  WriteStr(file_desc, tid_str);
-  WriteStr(file_desc, " syscall: ");
-
-  // Truncate to first newline for clean output.
+  // Truncate at first newline.
   for (long idx = 0; idx < nread; ++idx) {
     if (syscall_buf[idx] == '\n') {
       syscall_buf[idx] = '\0';
       break;
     }
   }
+
+  WriteStr(file_desc, "  tid=");
+  WriteStr(file_desc, tid_str);
+  WriteStr(file_desc, " syscall: ");
   WriteStr(file_desc, syscall_buf);
   WriteStr(file_desc, "\n");
 }
 
+// ---------------------------------------------------------------------------
+// DumpAllThreadIPs: enumerate all OS threads and print their instruction pointers.
+// Uses the raw getdents64 syscall to avoid malloc (opendir is not signal-safe).
+// ---------------------------------------------------------------------------
 void DumpAllThreadIPs(int file_desc) {
   WriteStr(file_desc, "\n── All Thread IPs (via /proc/self/task) ────────\n");
 
-  // Open /proc/self/task to enumerate thread IDs (tids).
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) — open() is a POSIX variadic C function
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) — open() is a POSIX variadic function
   int const dir_fd = open("/proc/self/task", O_RDONLY | O_DIRECTORY);
   if (dir_fd < 0) {
     WriteStr(file_desc, "  (could not open /proc/self/task)\n");
     return;
   }
 
-  // getdents64 buffer — stack-allocated, no heap.
-  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — raw byte buffer for syscall interop
+  // NOLINTNEXTLINE(modernize-avoid-c-arrays) — raw buffer for getdents64 syscall
   char dirents_buf[4096];
 
   while (true) {
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) — syscall() is a POSIX variadic C function
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg) — syscall() is a POSIX variadic function
     auto const nbytes = syscall(SYS_getdents64, dir_fd, dirents_buf, sizeof(dirents_buf));
     if (nbytes <= 0) break;
 
@@ -280,7 +335,6 @@ void DumpAllThreadIPs(int file_desc) {
       auto const* entry = reinterpret_cast<linux_dirent64 const*>(dirents_buf + offset);
       offset += entry->mReclen;
 
-      // Skip "." and ".." entries.
       if (entry->mName[0] == '.') continue;
       DumpOneThreadIP(file_desc, entry->mName);
     }
@@ -290,33 +344,52 @@ void DumpAllThreadIPs(int file_desc) {
 }
 #endif  // __linux__
 
-// NOLINTNEXTLINE(cert-err33-c,cert-dcl03-c) — signal handler signature prescribed by POSIX
-void CrashHandler(int sig, siginfo_t* info, void* ctx) {
-  // SA_RESETHAND already reset us to SIG_DFL — the raise() at the end
-  // produces a proper core dump via the default handler.
+// ============================================================================
+// §4  Signal handler
+//
+// This is the function that runs when SIGSEGV or SIGABRT is delivered.
+// It prints a diagnostic report, then re-raises the signal with the default
+// handler to produce a core dump (a snapshot of the process state that can be
+// examined later with a debugger).
+//
+// The handler uses SA_RESETHAND — it auto-resets to the OS default handler
+// (SIG_DFL) before entering.  This means a crash INSIDE the handler itself
+// will produce a normal core dump instead of infinite recursion.
+// ============================================================================
 
+// NOLINTNEXTLINE(cert-err33-c,cert-dcl03-c) — signature prescribed by POSIX sigaction
+void CrashHandler(int sig, siginfo_t* info, void* ctx) {
   int const file_desc = STDERR_FILENO;
   WriteStr(file_desc, "\n============================================\n");
   WriteStr(file_desc, sig == SIGSEGV ? "*** SIGSEGV ***\n" : "*** SIGABRT ***\n");
 
-  // Faulting address — null deref (0x0), heap corruption, or stack overflow
+  // ── Faulting address ───────────────────────────────────────────────
+  // Shows WHERE the invalid memory access occurred.
+  //   0x0               → null pointer dereference
+  //   0x7f...           → likely heap corruption (address looks like valid heap)
+  //   0x0000XXXX...     → likely stack corruption (invalid address formed by
+  //                        misinterpreting non-pointer data as an address)
   WriteStr(file_desc, "Faulting address (si_addr): ");
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — required to print void* as hex
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — printing void* as hex
   WriteHex(file_desc, reinterpret_cast<u64>(info->si_addr));
   WriteStr(file_desc, "\n");
 
-  // Signal code — SEGV_MAPERR (1) = unmapped, SEGV_ACCERR (2) = no permission
+  // ── Signal code ────────────────────────────────────────────────────
+  // SEGV_MAPERR (1) = address not mapped (null deref, wild pointer)
+  // SEGV_ACCERR (2) = address mapped but no permission (read-only page)
   WriteStr(file_desc, "Signal code    (si_code):  ");
   WriteInt(file_desc, info->si_code);
   WriteStr(file_desc, "\n");
 
-  // Thread ID — identifies which worker thread crashed
+  // ── Thread ID ──────────────────────────────────────────────────────
+  // Match this against the crash slot thread IDs to identify the worker.
   WriteStr(file_desc, "Thread ID:                 ");
   WriteHex(file_desc, static_cast<u64>(pthread_self()));
   WriteStr(file_desc, "\n");
 
-  // Instruction pointer from ucontext — the exact crashing instruction.
-  // Resolve with: addr2line -e ./Lancet2 -f <RIP address>
+  // ── Instruction pointer ────────────────────────────────────────────
+  // The exact machine instruction that caused the crash.
+  // Resolve with: addr2line -e ./Lancet2 -f <address>
 #if defined(__linux__) && defined(__x86_64__)
   auto* uctx = static_cast<ucontext_t*>(ctx);
   auto const rip = static_cast<u64>(uctx->uc_mcontext.gregs[REG_RIP]);
@@ -346,21 +419,23 @@ void CrashHandler(int sig, siginfo_t* info, void* ctx) {
   WriteStr(file_desc, "Instruction ptr:           (unavailable on this arch)\n");
 #endif
 
-  // Best-effort backtrace — may produce 0 frames if the stack is too corrupted
-  // for the DWARF unwinder to walk. The RIP above is always available.
+  // ── Backtrace ──────────────────────────────────────────────────────
+  // Best-effort stack trace.  May produce 0 frames if the stack is
+  // too corrupted to walk.  The instruction pointer above is always
+  // available regardless.
   WriteStr(file_desc, "\nBacktrace:\n");
   std::array<void*, MAX_BACKTRACE_FRAMES> frames{};
   int const depth = backtrace(frames.data(), MAX_BACKTRACE_FRAMES);
   if (depth > 0) {
     backtrace_symbols_fd(frames.data(), depth, file_desc);
   } else {
-    WriteStr(file_desc, "  (no frames — stack is corrupted)\n");
+    WriteStr(file_desc, "  (no frames — stack may be corrupted)\n");
   }
 
-  // Per-thread crash context — which window each worker was processing.
+  // ── Per-thread crash context (§2) ──────────────────────────────────
   DumpAllThreadContexts(file_desc);
 
-  // All-thread instruction pointers via procfs (Linux only).
+  // ── All-thread IPs (§3, Linux only) ────────────────────────────────
 #ifdef __linux__
   DumpAllThreadIPs(file_desc);
 #endif
@@ -371,17 +446,29 @@ void CrashHandler(int sig, siginfo_t* info, void* ctx) {
   WriteStr(file_desc, "============================================\n");
 
   // Re-raise with default handler to produce a core dump.
-  // NOLINTNEXTLINE(cert-err33-c) — raise() return value is irrelevant during crash
+  // NOLINTNEXTLINE(cert-err33-c) — raise() return value irrelevant during crash
   static_cast<void>(raise(sig));
 }
 
 }  // namespace
 
+// ============================================================================
+// §5  Public API — called from main() and AsyncWorker::Process()
+//
+// Lifecycle:
+//   1. main()                 → InstallCrashHandler()        (once, before threads)
+//   2. AsyncWorker::Process() → RegisterThreadSlot()         (once per thread)
+//   3. per-window loop        → SetSlotWindowInfo()          (before ProcessWindow)
+//   4. per-window loop        → ClearSlotWindowInfo()        (after ProcessWindow)
+//   5. AsyncWorker::Process() → UnregisterThreadSlot()       (thread exit)
+// ============================================================================
+
 namespace lancet::base {
 
 void InstallCrashHandler() {
-  // Alternate signal stack (64KB) — the handler runs here even if the crash
-  // is caused by stack overflow on the thread's normal stack.
+  // Allocate the alternate signal stack.  This is a separate stack used ONLY
+  // by the signal handler.  Without this, a stack overflow crash would corrupt
+  // the very stack the handler needs to run on.
   static std::array<char, ALT_STACK_SIZE> alt_stack_mem{};
   stack_t alt_stack{};
   alt_stack.ss_sp = static_cast<void*>(alt_stack_mem.data());
@@ -389,9 +476,11 @@ void InstallCrashHandler() {
   alt_stack.ss_flags = 0;
   sigaltstack(&alt_stack, nullptr);
 
-  // SA_SIGINFO  — gives us siginfo_t with faulting address and ucontext
-  // SA_ONSTACK  — use the alternate signal stack
-  // SA_RESETHAND — auto-reset to SIG_DFL before entering the handler
+  // Register the handler for SIGSEGV and SIGABRT.
+  //   SA_SIGINFO  — provides siginfo_t (faulting address) and ucontext (RIP)
+  //   SA_ONSTACK  — run on the alternate stack allocated above
+  //   SA_RESETHAND — auto-reset to SIG_DFL before entering the handler
+  //                  (prevents infinite recursion if the handler itself crashes)
   struct sigaction act{};
   act.sa_sigaction = CrashHandler;
   act.sa_flags = SA_ONSTACK | SA_RESETHAND | SA_SIGINFO;
@@ -404,8 +493,8 @@ auto RegisterThreadSlot() -> CrashSlotIdx {
   auto const tid = pthread_self();
   for (usize idx = 0; idx < MAX_CRASH_SLOTS; ++idx) {
     auto& slot = g_crash_slots[idx];
+    // Atomic CAS: try to claim this slot (0 → 1).  Only one thread succeeds.
     int expected = 0;
-    // Atomic compare-exchange: claim a free slot.
     if (__atomic_compare_exchange_n(&slot.mInUse, &expected, 1, false, __ATOMIC_SEQ_CST,
                                     __ATOMIC_SEQ_CST)) {
       slot.mThreadId = tid;
@@ -429,11 +518,10 @@ void SetSlotWindowInfo(CrashSlotIdx const slot_idx, u64 const genome_idx, char c
   if (slot_idx >= MAX_CRASH_SLOTS) return;
   auto& slot = g_crash_slots[slot_idx];
 
-  // Write the genome index and region string before marking active.
-  // The fence ensures the crash handler sees consistent data.
+  // Write data BEFORE marking active.  The release fence on the mActive store
+  // ensures the signal handler sees consistent genome_idx and region data.
   slot.mGenomeIdx = genome_idx;
 
-  // Copy region string with truncation — no heap allocation.
   usize pos = 0;
   if (region_str != nullptr) {
     for (; pos < MAX_REGION_LEN - 1 && region_str[pos] != '\0'; ++pos) {
@@ -442,7 +530,6 @@ void SetSlotWindowInfo(CrashSlotIdx const slot_idx, u64 const genome_idx, char c
   }
   slot.mRegion[pos] = '\0';
 
-  // Mark active AFTER data is written — release fence.
   __atomic_store_n(&slot.mActive, 1, __ATOMIC_RELEASE);
 }
 
@@ -453,13 +540,11 @@ void ClearSlotWindowInfo(CrashSlotIdx const slot_idx) {
 
 }  // namespace lancet::base
 
-#else  // Non-POSIX platforms
+#else  // Non-POSIX platforms (Windows, etc.) — all functions are no-ops.
 
 namespace lancet::base {
 
-void InstallCrashHandler() {
-  // No-op on platforms without POSIX signal support.
-}
+void InstallCrashHandler() {}
 
 auto RegisterThreadSlot() -> CrashSlotIdx {
   return INVALID_CRASH_SLOT;
