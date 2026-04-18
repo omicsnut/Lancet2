@@ -929,7 +929,13 @@ def get_git_version() -> dict:
 
 def save_history_entry(tag: str, data: ProfileData, profile_path: str,
                        binary_path: str | None) -> None:
-    """Append a JSON summary to the history file."""
+    """Append a JSON summary to the history file.
+
+    Captures the complete pre-symbolized function list so that future
+    cross-binary diffs (--diff-tag) work by function name without
+    needing the original binary.  The binary is only required once —
+    at save time.
+    """
     total = data.meta.total_sec
 
     # Compute component and module breakdowns
@@ -960,11 +966,19 @@ def save_history_entry(tag: str, data: ProfileData, profile_path: str,
     spoa = comp_flat.get("SPOA (MSA)", 0.0)
     other_sec = total - lancet - mm2 - htslib - spoa
 
-    # Top 10 functions
+    # Top 10 functions (kept for backward compatibility)
     top_10 = [
         {"name": e.name, "flat_sec": round(e.flat_sec, 2), "flat_pct": round(e.flat_pct, 1),
          "cum_sec": round(e.cum_sec, 2), "cum_pct": round(e.cum_pct, 1)}
         for e in data.by_flat[:10]
+    ]
+
+    # ALL profiled functions — the pre-symbolized snapshot used by --diff-tag.
+    # Stored once at save time; the binary is never needed again for this entry.
+    functions = [
+        {"name": e.name, "flat_sec": round(e.flat_sec, 2), "flat_pct": round(e.flat_pct, 1),
+         "cum_sec": round(e.cum_sec, 2), "cum_pct": round(e.cum_pct, 1)}
+        for e in data.by_flat
     ]
 
     entry = {
@@ -975,6 +989,7 @@ def save_history_entry(tag: str, data: ProfileData, profile_path: str,
         "binary": binary_path or "",
         "total_sec": round(total, 2),
         "top_10": top_10,
+        "functions": functions,
         "components": components,
         "modules": modules,
         "internal_vs_external": {
@@ -991,7 +1006,218 @@ def save_history_entry(tag: str, data: ProfileData, profile_path: str,
         fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
 
     console.print(f"[green]✓[/] Saved profile summary with tag [bold]{tag}[/] "
-                  f"to {HISTORY_FILE.relative_to(REPO_ROOT)}")
+                  f"({len(functions)} functions) to {HISTORY_FILE.relative_to(REPO_ROOT)}")
+
+
+def _load_history() -> list[dict]:
+    """Load all entries from the profile history file."""
+    if not HISTORY_FILE.exists():
+        return []
+    entries = []
+    with open(HISTORY_FILE, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+    return entries
+
+
+def _find_history_entry(tag: str) -> dict | None:
+    """Find a history entry by tag name (case-insensitive)."""
+    for entry in _load_history():
+        if entry.get("tag", "").lower() == tag.lower():
+            return entry
+    return None
+
+
+def _compute_function_deltas(
+    base_funcs: list[dict], new_funcs: list[dict],
+) -> list[dict]:
+    """Compute per-function deltas between two pre-symbolized function lists.
+
+    Each input item has keys: name, flat_sec, flat_pct, cum_sec, cum_pct.
+    Returns a list of delta dicts sorted by absolute flat_sec delta descending.
+    """
+    base_lookup = {f["name"]: f for f in base_funcs}
+    new_lookup = {f["name"]: f for f in new_funcs}
+    all_names = set(base_lookup) | set(new_lookup)
+
+    deltas = []
+    for name in all_names:
+        b = base_lookup.get(name)
+        n = new_lookup.get(name)
+        b_flat = b["flat_sec"] if b else 0.0
+        n_flat = n["flat_sec"] if n else 0.0
+        d_flat = n_flat - b_flat
+        d_pct = d_flat / b_flat * 100 if b_flat > 0 else (
+            float("inf") if d_flat > 0 else (float("-inf") if d_flat < 0 else 0)
+        )
+        b_cum = b["cum_sec"] if b else 0.0
+        n_cum = n["cum_sec"] if n else 0.0
+
+        deltas.append({
+            "name": name,
+            "base_flat": b_flat, "new_flat": n_flat,
+            "delta_flat": d_flat, "delta_pct": d_pct,
+            "base_cum": b_cum, "new_cum": n_cum,
+            "status": "new" if not b else "removed" if not n else (
+                "regressed" if d_flat > 0 else "improved" if d_flat < 0 else "unchanged"
+            ),
+        })
+
+    deltas.sort(key=lambda d: abs(d["delta_flat"]), reverse=True)
+    return deltas
+
+
+def _compute_component_deltas(base_entry: dict, new_entry: dict) -> list[dict]:
+    """Compute per-component deltas between two history entries."""
+    base_comps = base_entry.get("components", {})
+    new_comps = new_entry.get("components", {})
+    all_comp_names = sorted(set(base_comps) | set(new_comps))
+
+    deltas = []
+    for comp in all_comp_names:
+        b = base_comps.get(comp, {})
+        n = new_comps.get(comp, {})
+        b_sec = b.get("flat_sec", 0.0)
+        n_sec = n.get("flat_sec", 0.0)
+        d_sec = n_sec - b_sec
+        d_pct = d_sec / b_sec * 100 if b_sec > 0 else (
+            float("inf") if d_sec > 0 else 0
+        )
+        deltas.append({
+            "name": comp, "base_sec": b_sec, "new_sec": n_sec,
+            "delta_sec": d_sec, "delta_pct": d_pct,
+        })
+    deltas.sort(key=lambda d: abs(d["delta_sec"]), reverse=True)
+    return deltas
+
+
+def render_tag_diff(base_tag: str, new_tag: str) -> None:
+    """Render a cross-binary profile diff using pre-symbolized history data."""
+    base_entry = _find_history_entry(base_tag)
+    new_entry = _find_history_entry(new_tag)
+
+    if not base_entry:
+        console.print(f"[red]ERROR:[/] No history entry found for tag '{base_tag}'")
+        console.print("Available tags:", ", ".join(
+            e["tag"] for e in _load_history()) or "(none)")
+        return
+    if not new_entry:
+        console.print(f"[red]ERROR:[/] No history entry found for tag '{new_tag}'")
+        console.print("Available tags:", ", ".join(
+            e["tag"] for e in _load_history()) or "(none)")
+        return
+
+    base_funcs = base_entry.get("functions", base_entry.get("top_10", []))
+    new_funcs = new_entry.get("functions", new_entry.get("top_10", []))
+
+    if "functions" not in base_entry:
+        console.print(f"[yellow]WARNING:[/] Tag '{base_tag}' has no full function data "
+                      f"(saved before --diff-tag support). Using top_10 only. "
+                      f"Re-run --save-summary with the original binary for full data.")
+    if "functions" not in new_entry:
+        console.print(f"[yellow]WARNING:[/] Tag '{new_tag}' has no full function data. "
+                      f"Re-run --save-summary with the original binary for full data.")
+
+    # ── Overview ──────────────────────────────────────────────────────────────
+    base_total = base_entry["total_sec"]
+    new_total = new_entry["total_sec"]
+    delta = new_total - base_total
+    delta_pct = delta / base_total * 100 if base_total > 0 else 0
+
+    verdict_style = "red bold" if delta > 0 else "green bold"
+    verdict = "REGRESSION ▲" if delta > 0 else "IMPROVEMENT ▼"
+
+    overview = Table(show_header=False, box=None, padding=(0, 2))
+    overview.add_column("Key", style="bold")
+    overview.add_column("Value")
+    overview.add_row("Base", f"{base_tag} ({base_entry.get('version', {}).get('full', '?')})")
+    overview.add_row("New", f"{new_tag} ({new_entry.get('version', {}).get('full', '?')})")
+    overview.add_row("Base total", f"{base_total:.2f}s ({base_total / 60:.1f} min)")
+    overview.add_row("New total", f"{new_total:.2f}s ({new_total / 60:.1f} min)")
+    overview.add_row("Delta", Text(f"{delta:+.2f}s ({delta_pct:+.1f}%)", style=verdict_style))
+    overview.add_row("Verdict", Text(verdict, style=verdict_style))
+    console.print(Panel(overview, title="[bold]Cross-Binary Profile Diff[/]", border_style="cyan"))
+
+    # ── Component deltas ─────────────────────────────────────────────────────
+    comp_deltas = _compute_component_deltas(base_entry, new_entry)
+    comp_table = Table(title="Component-Level Changes", title_style="bold",
+                       border_style="dim", expand=True)
+    comp_table.add_column("Component", no_wrap=True)
+    comp_table.add_column("Base (s)", justify="right", width=10)
+    comp_table.add_column("New (s)", justify="right", width=10)
+    comp_table.add_column("Δ (s)", justify="right", width=10)
+    comp_table.add_column("Δ%", justify="right", width=8)
+
+    for cd in comp_deltas:
+        if abs(cd["delta_sec"]) < 0.1:
+            continue
+        style = "red" if cd["delta_sec"] > 0 else "green"
+        d_pct_str = f"{cd['delta_pct']:+.1f}%" if abs(cd["delta_pct"]) < 1e6 else "new"
+        comp_table.add_row(
+            cd["name"], f"{cd['base_sec']:.2f}", f"{cd['new_sec']:.2f}",
+            Text(f"{cd['delta_sec']:+.2f}", style=style),
+            Text(d_pct_str, style=style),
+        )
+    console.print(comp_table)
+
+    # ── Function deltas ──────────────────────────────────────────────────────
+    func_deltas = _compute_function_deltas(base_funcs, new_funcs)
+
+    func_table = Table(title="Top Function Changes by Self-Time Delta", title_style="bold",
+                       border_style="dim", expand=True)
+    func_table.add_column("Function", no_wrap=True)
+    func_table.add_column("Base (s)", justify="right", width=10)
+    func_table.add_column("New (s)", justify="right", width=10)
+    func_table.add_column("Δ (s)", justify="right", width=10)
+    func_table.add_column("Δ%", justify="right", width=8)
+    func_table.add_column("Status", width=14)
+
+    STATUS_ICONS = {
+        "regressed": ("red", "🔴 regressed"),
+        "improved": ("green", "🟢 improved"),
+        "new": ("yellow", "🆕 new"),
+        "removed": ("dim", "⛔ removed"),
+        "unchanged": ("dim", "— unchanged"),
+    }
+
+    regressions: list[str] = []
+    improvements: list[str] = []
+    for fd in func_deltas[:40]:
+        if abs(fd["delta_flat"]) < 0.01:
+            continue
+        style, status_text = STATUS_ICONS.get(fd["status"], ("dim", fd["status"]))
+        d_pct_str = (
+            f"{fd['delta_pct']:+.1f}%" if abs(fd["delta_pct"]) < 1e6
+            else "new" if fd["status"] == "new" else "removed"
+        )
+        func_table.add_row(
+            fd["name"], f"{fd['base_flat']:.2f}", f"{fd['new_flat']:.2f}",
+            Text(f"{fd['delta_flat']:+.2f}", style=style),
+            Text(d_pct_str, style=style),
+            Text(status_text, style=style),
+        )
+        if fd["delta_flat"] > 1.0 and fd["status"] in ("regressed", "new"):
+            regressions.append(f"{fd['name']}: {fd['delta_flat']:+.2f}s ({d_pct_str})")
+        elif fd["delta_flat"] < -1.0 and fd["status"] in ("improved", "removed"):
+            improvements.append(f"{fd['name']}: {fd['delta_flat']:+.2f}s ({d_pct_str})")
+
+    console.print(func_table)
+
+    # ── Summary panels ───────────────────────────────────────────────────────
+    if improvements:
+        imp_text = "\n".join(f"  • {r}" for r in improvements[:15])
+        console.print(Panel(
+            f"[green bold]Top improvements (>1s self-time reduction):[/]\n{imp_text}",
+            title="[green bold]✓ Improvements[/]", border_style="green",
+        ))
+    if regressions:
+        reg_text = "\n".join(f"  • {r}" for r in regressions[:15])
+        console.print(Panel(
+            f"[red bold]Regressions (>1s self-time increase):[/]\n{reg_text}",
+            title="[red bold]⚠ Regressions Detected[/]", border_style="red",
+        ))
 
 
 def render_history() -> None:
@@ -1001,13 +1227,7 @@ def render_history() -> None:
         console.print("Run with --save-summary <tag> after analyzing a profile.")
         return
 
-    entries = []
-    with open(HISTORY_FILE, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                entries.append(json.loads(line))
-
+    entries = _load_history()
     if not entries:
         console.print("[yellow]History file is empty.[/]")
         return
@@ -1199,7 +1419,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nodecount", type=int, default=200,
                         help="Max nodes for pprof to consider (default: 200)")
     parser.add_argument("--diff-base", default=None, dest="diff_base",
-                        help="Base profile for diff comparison")
+                        help="Base profile for same-binary diff comparison")
+    parser.add_argument("--diff-tag", nargs=2, default=None, dest="diff_tags",
+                        metavar=("BASE_TAG", "NEW_TAG"),
+                        help="Cross-binary diff via pre-symbolized history entries")
     parser.add_argument("--html", default=None,
                         help="Output path for self-contained HTML report")
     parser.add_argument("--list", default=None, dest="list_pattern",
@@ -1217,6 +1440,13 @@ def main() -> int:
     # ── History mode (no profile needed) ─────────────────────────────────────
     if args.history:
         render_history()
+        return 0
+
+    # ── Cross-binary diff mode (no profile needed) ───────────────────────────
+    if args.diff_tags:
+        base_tag, new_tag = args.diff_tags
+        console.print(Panel("[bold]Lancet2 Cross-Binary Profile Diff[/]", border_style="cyan"))
+        render_tag_diff(base_tag, new_tag)
         return 0
 
     # ── Validate inputs ──────────────────────────────────────────────────────

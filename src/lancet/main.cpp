@@ -11,6 +11,14 @@
 #include <memory>
 
 auto main(int const argc, char const** argv) -> int {
+  // Disable mimalloc's arena purge cycle entirely. Without this, mimalloc
+  // calls madvise(MADV_DONTNEED) to decommit freed pages every ~100ms,
+  // costing ~200s of CPU time over a full run. Since graph node count is
+  // bounded, per-thread heap memory plateaus early and is reused across
+  // windows — purging just adds decommit/recommit churn with no benefit.
+  // mi_collect(true) at exit releases everything.
+  mi_option_set(mi_option_purge_delay, -1);
+
   lancet::base::InstallCrashHandler();
   std::ios_base::sync_with_stdio(false);
   std::cin.tie(nullptr);

@@ -154,7 +154,9 @@ This invokes `pprof -list=<regex>` and renders the annotated C++ source with syn
 
 ## Diffing Two Profiles
 
-Compare a new profile against a baseline to measure the impact of a code change:
+### Same-Binary Diff (`--diff-base`)
+
+Compare two profiles collected from the **same binary** (e.g., different inputs, different thread counts):
 
 ```bash
 pixi run -e profiling analyze-profile <new_profile.bin> -- --diff-base <old_profile.bin>
@@ -165,14 +167,34 @@ The diff report shows:
 2. **Top changes table** — functions sorted by absolute self-time delta, with 🔴 regressed / 🟢 improved status
 3. **Regression warnings** — auto-detected functions with >10% regression AND >1s absolute increase
 
-### Diff + HTML
+> [!WARNING]
+> **`--diff-base` only works when both profiles were collected with the same binary.**
+> pprof symbolizes both profiles using one binary's symbol table. If the code changed between profiles (different inlining decisions, renamed functions, different function layout), the diff produces garbage — functions appear as "new" or "disappeared" when they actually exist in both.
+
+### Cross-Binary Diff (`--diff-tag`)
+
+Compare profiles collected from **different binaries** (e.g., before and after a code change). This is the primary mechanism for measuring optimization impact:
 
 ```bash
-pixi run -e profiling analyze-profile <new.bin> -- --diff-base <old.bin> --html diff_report.html
+# Step 1: save each profile with its own binary at collection time
+pixi run -e profiling analyze-profile <old.bin> -- --binary <old_binary> --save-summary before-change
+pixi run -e profiling analyze-profile <new.bin> -- --binary <new_binary> --save-summary after-change
+
+# Step 2: diff by tag — no binary needed, uses pre-symbolized data
+pixi run -e profiling analyze-profile -- --diff-tag before-change after-change
 ```
 
+The diff report shows:
+1. **Overview panel** — base tag, new tag, version info, total time delta, and verdict
+2. **Component-level changes** — per-component delta table (minimap2, graph, HTSlib, etc.)
+3. **Function-level changes** — top 40 functions sorted by absolute self-time delta
+4. **Summary panels** — top improvements (>1s reduction) and regressions (>1s increase)
+
+> [!IMPORTANT]
+> **`--save-summary` captures all symbolized function data permanently.** The binary is only needed once — at save time. After that, `--diff-tag` works by function name from the pre-symbolized snapshots, producing accurate diffs regardless of binary changes.
+
 > [!NOTE]
-> **Diffing requires only the current binary.** `pprof -diff_base` symbolizes both profiles using the current binary's symbol table. You do not need the old binary. If function signatures changed between versions, some functions may appear as "new" in the diff.
+> Old history entries saved before `--diff-tag` support only contain `top_10` functions. The diff will work but with limited coverage. Re-run `--save-summary` with the original binary to capture full function data.
 
 ---
 
@@ -204,7 +226,8 @@ Each history entry contains:
 | `version.dirty` | Whether the working tree has uncommitted changes |
 | `timestamp` | UTC ISO 8601 timestamp |
 | `total_sec` | Total CPU time in seconds |
-| `top_10` | Top 10 functions by self-time (name, flat_sec, flat_pct, cum_sec, cum_pct) |
+| `top_10` | Top 10 functions by self-time (backward compat) |
+| `functions` | **All** profiled functions — the pre-symbolized snapshot used by `--diff-tag` |
 | `components` | Per-component breakdown (flat_sec, flat_pct) |
 | `modules` | Per-module breakdown for modules ≥0.1s |
 | `internal_vs_external` | Lancet2 own code vs minimap2 vs HTSlib vs SPOA vs other |
@@ -242,14 +265,14 @@ A data-driven performance optimization loop:
 
 3. **Optimize.** Make your code change.
 
-4. **Measure.** Rebuild with profiling, re-run the same workload, diff against baseline:
+4. **Measure.** Rebuild with profiling, re-run the same workload, save with a new tag:
    ```bash
-   pixi run -e profiling analyze-profile <new.bin> -- --diff-base <old.bin>
+   pixi run -e profiling analyze-profile <new.bin> -- --binary <new_binary> --save-summary post-my-optimization
    ```
 
-5. **Record.** If the change is an improvement, save the new data point:
+5. **Diff.** Compare against the baseline by tag:
    ```bash
-   pixi run -e profiling analyze-profile <new.bin> -- --save-summary post-my-optimization
+   pixi run -e profiling analyze-profile -- --diff-tag first-baseline post-my-optimization
    ```
 
 6. **Repeat.** Check `--history` to verify the trend is going in the right direction.
@@ -321,8 +344,9 @@ pixi run -e profiling analyze-profile <profile.bin> -- --list "BuildGraph"      
 pixi run -e profiling analyze-profile <profile.bin> -- --html report.html        # HTML report
 
 # ── Diff mode ────────────────────────────────────────────────────────────
-pixi run -e profiling analyze-profile <new.bin> -- --diff-base <old.bin>          # terminal diff
+pixi run -e profiling analyze-profile <new.bin> -- --diff-base <old.bin>          # same-binary diff
 pixi run -e profiling analyze-profile <new.bin> -- --diff-base <old.bin> --html d.html  # HTML diff
+pixi run -e profiling analyze-profile -- --diff-tag <base-tag> <new-tag>           # cross-binary diff
 
 # ── History tracking ─────────────────────────────────────────────────────
 pixi run -e profiling analyze-profile <profile.bin> -- --save-summary <tag>       # save snapshot

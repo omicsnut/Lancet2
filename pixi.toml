@@ -169,10 +169,19 @@ mkdocs-git-revision-date-localized-plugin = "==1.5.1"
 #   pixi run -e profiling analyze-profile path/to/profile.bin -- --view tree
 #   pixi run -e profiling analyze-profile path/to/profile.bin -- --view tree --focus "lancet::caller"
 #   pixi run -e profiling analyze-profile path/to/profile.bin -- --view hotpaths
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --html report.html   (static HTML)
-#   pixi run -e profiling analyze-profile new.bin -- --diff-base old.bin               (diff mode)
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --html report.html    (static HTML)
+#   pixi run -e profiling analyze-profile path/to/profile.bin -- --list "BuildGraph"   (source)
+#
+# Same-binary diff (both profiles collected from the same binary):
+#   pixi run -e profiling analyze-profile new.bin -- --diff-base old.bin               (same-binary diff)
 #   pixi run -e profiling analyze-profile new.bin -- --diff-base old.bin --html d.html (diff HTML)
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --list "BuildGraph"  (source)
+#
+# Cross-binary diff (profiles from different binaries — the primary optimization workflow):
+#   pixi run -e profiling analyze-profile old.bin -- --binary old_binary --save-summary before   (save)
+#   pixi run -e profiling analyze-profile new.bin -- --binary new_binary --save-summary after    (save)
+#   pixi run -e profiling analyze-profile -- --diff-tag before after                             (diff)
+#
+# History:
 #   pixi run -e profiling analyze-profile -- --history                                 (trends)
 # ═══════════════════════════════════════════════════════════════════════════════
 
