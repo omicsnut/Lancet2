@@ -105,7 +105,6 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
               mNodes.size(), mReads.size())
 
     RemoveLowCovNodes(0);
-    mNodes.rehash(0);
     WriteDotDevelop(GraphState::FIRST_LOW_COV_REMOVAL, 0);
 
     auto const components = MarkConnectedComponents();
