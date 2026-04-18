@@ -79,7 +79,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -momit-leaf-fram
 #   x86_64: -march=x86-64-v3 (portable, AVX2 + BMI2, Haswell 2013+)
 #           -march=native    (non-portable, when -DLANCET_NATIVE_BUILD=ON)
 
-set(LANCET_BASE_OPT "-O3 -pipe -fno-math-errno -fno-trapping-math"
+string(CONCAT LANCET_BASE_OPT "-O3 -pipe -fno-math-errno -fno-trapping-math"
 	" -fno-omit-frame-pointer -momit-leaf-frame-pointer -DNDEBUG")
 
 if (CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64" OR CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "aarch64")
