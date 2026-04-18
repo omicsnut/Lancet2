@@ -5,11 +5,11 @@
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/ostream.h"
 #include "spoa/alignment_engine.hpp"
+#include "spoa/graph.hpp"
 
 #include <algorithm>
 #include <fstream>
 #include <memory>
-#include <spoa/graph.hpp>
 #include <string>
 #include <vector>
 

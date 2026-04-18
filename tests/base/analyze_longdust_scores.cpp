@@ -18,19 +18,6 @@
 // Usage: AnalyzeLongdustScores <scored.bed.gz> <output_dir>
 // ============================================================================
 
-#include <algorithm>
-#include <filesystem>
-#include <fstream>
-#include <string>
-#include <string_view>
-#include <vector>
-
-#include <cmath>
-
-extern "C" {
-#include "zlib.h"
-}
-
 #include "lancet/base/timer.h"
 #include "lancet/base/types.h"
 
@@ -41,6 +28,19 @@ extern "C" {
 #include "absl/strings/strip.h"
 #include "absl/time/time.h"
 #include "spdlog/fmt/bundled/format.h"
+
+extern "C" {
+#include "zlib.h"
+}
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <cmath>
 
 namespace {
 

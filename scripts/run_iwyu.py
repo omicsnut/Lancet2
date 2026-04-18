@@ -50,6 +50,55 @@ IWYU_FLAGS = [
     "--max_line_length=100",
 ]
 
+# Third-party include prefixes that IWYU incorrectly emits with angle brackets.
+# CMake marks these dirs with -isystem, so IWYU treats them as "system" headers.
+# Lancet2 convention: angle brackets are reserved for C/C++ stdlib only.
+# Derived from cmake/dependencies.cmake — keep in sync when adding new deps.
+_THIRD_PARTY_PREFIXES = (
+    "absl/",
+    "spdlog/",
+    "spoa/",
+    "CLI/",
+    "gperftools/",
+    "htslib/",
+    "benchmark/",
+    "catch_amalgamated",
+    "blockingconcurrentqueue",
+    "concurrentqueue",
+    "mimalloc",
+)
+
+# Matches angle-bracket includes for any third-party prefix above.
+_RE_ANGLE_THIRD_PARTY = re.compile(
+    r'^(\s*#include\s+)<((?:' + '|'.join(re.escape(p) for p in _THIRD_PARTY_PREFIXES) + r')[^>]*)>',
+    re.MULTILINE,
+)
+
+
+def normalize_include_style(repo_root: Path) -> int:
+    """Convert angle-bracket third-party includes to quoted includes.
+
+    IWYU emits angle brackets for headers found via -isystem paths. This
+    normalizer rewrites them to quotes per Lancet2 convention: angle brackets
+    are reserved exclusively for C/C++ standard library headers.
+
+    Scans src/, tests/, and benchmarks/ directories.
+    Returns the number of files modified.
+    """
+    modified = 0
+    for src_dir in ("src", "tests", "benchmarks"):
+        search_dir = repo_root / src_dir
+        if not search_dir.exists():
+            continue
+        for pattern in ("**/*.cpp", "**/*.h"):
+            for filepath in search_dir.glob(pattern):
+                text = filepath.read_text()
+                new_text = _RE_ANGLE_THIRD_PARTY.sub(r'\1"\2"', text)
+                if new_text != text:
+                    filepath.write_text(new_text)
+                    modified += 1
+    return modified
+
 
 @dataclass
 class FileViolation:
@@ -281,6 +330,12 @@ def run_fix(build_dir: Path) -> int:
         edited = fix_result.stdout.count("Fixing #includes in")
         skipped = fix_result.stdout.count("no contentful changes")
         print(f"    Edited {edited} file(s), skipped {skipped} file(s)")
+
+    # Post-fix: normalize third-party includes from <absl/...> to "absl/..."
+    # IWYU emits angle brackets because CMake uses -isystem for third-party deps.
+    normalized = normalize_include_style(REPO_ROOT)
+    if normalized > 0:
+        print(f"==> Normalized include style in {normalized} file(s)")
 
     print("==> Done. Run 'pixi run fmt-fix' to reorder includes, then 'pixi run iwyu-check' to verify.")
     return 0

@@ -1,6 +1,7 @@
 #include "lancet/cbdg/sample_mask.h"
 
-#include <absl/container/inlined_vector.h>
+#include "absl/container/inlined_vector.h"
+
 #include <algorithm>
 #include <bit>
 #include <functional>

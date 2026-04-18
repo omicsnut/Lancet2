@@ -4,11 +4,11 @@
 
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
+#include "absl/types/span.h"
+#include "spdlog/fmt/bundled/base.h"
+#include "spdlog/fmt/bundled/format.h"
 
-#include <absl/types/span.h>
 #include <optional>
-#include <spdlog/fmt/bundled/base.h>
-#include <spdlog/fmt/bundled/format.h>
 #include <string>
 
 namespace {

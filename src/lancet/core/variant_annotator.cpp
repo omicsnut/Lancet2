@@ -6,9 +6,9 @@
 #include "lancet/caller/variant_set.h"
 #include "lancet/cbdg/graph_complexity.h"
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 
-#include <absl/container/flat_hash_map.h>
 #include <algorithm>
 #include <limits>
 #include <string>

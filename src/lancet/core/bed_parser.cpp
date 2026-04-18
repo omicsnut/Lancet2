@@ -5,11 +5,10 @@
 #include "lancet/hts/reference.h"
 
 #include "absl/cleanup/cleanup.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/numbers.h"
 #include "absl/strings/str_split.h"
 #include "spdlog/fmt/bundled/format.h"
-
-#include <absl/status/statusor.h>
 
 extern "C" {
 #include "htslib/hts.h"

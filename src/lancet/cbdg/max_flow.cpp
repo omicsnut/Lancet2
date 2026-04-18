@@ -8,10 +8,10 @@
 #include "lancet/cbdg/traversal_index.h"
 
 #include "absl/container/chunked_queue.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/hash/hash.h"
 
-#include <absl/container/flat_hash_set.h>
-#include <absl/hash/hash.h>
 #include <algorithm>
 #include <memory>
 #include <optional>

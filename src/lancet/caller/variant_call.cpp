@@ -8,6 +8,8 @@
 #include "lancet/caller/vcf_formatter.h"
 #include "lancet/cbdg/label.h"
 
+#include "absl/container/flat_hash_map.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
@@ -15,8 +17,6 @@
 #include "spdlog/fmt/bundled/base.h"
 #include "spdlog/fmt/bundled/format.h"
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/inlined_vector.h>
 #include <algorithm>
 #include <array>
 #include <iterator>

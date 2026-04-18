@@ -8,7 +8,8 @@
 #include "lancet/hts/extractor.h"
 #include "lancet/hts/reference.h"
 
-#include <absl/types/span.h>
+#include "absl/types/span.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <functional>

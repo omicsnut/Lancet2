@@ -1,15 +1,15 @@
 #include "lancet/hts/cigar_utils.h"
 
-#include "catch_amalgamated.hpp"
+#include "lancet/base/types.h"
+#include "lancet/hts/cigar_unit.h"
 
-#include <vector>
+#include "catch_amalgamated.hpp"
 
 extern "C" {
 #include "htslib/sam.h"
 }
 
-#include "lancet/base/types.h"
-#include "lancet/hts/cigar_unit.h"
+#include <vector>
 
 using lancet::hts::CigarRefPosToQueryPos;
 using lancet::hts::CigarUnit;

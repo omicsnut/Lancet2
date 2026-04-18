@@ -24,8 +24,7 @@
 #   minimap2      — read-to-haplotype alignment (ExternalProject, builds libminimap2.a)
 #   spoa          — SIMD Partial Order Alignment (graph-based MSA)
 #
-# Math / Testing / Profiling:
-#   boost_math    — Dirichlet-Multinomial lgamma, beta functions
+# Testing / Benchmarking / Profiling:
 #   Catch2        — unit test framework (amalgamated, tests only)
 #   benchmark     — Google Benchmark (benchmarks only)
 #   gperftools    — CPU profiler (profile mode only)
@@ -129,9 +128,6 @@ add_dependencies(minimap2 zlibstatic)
 set(spoa_optimize_for_native OFF)
 FetchContent_Declare(spoa GIT_REPOSITORY https://github.com/rvaser/spoa GIT_TAG 4.1.5 SYSTEM)
 FetchContent_MakeAvailable(spoa)
-
-FetchContent_Declare(boost_math GIT_REPOSITORY https://github.com/boostorg/math.git GIT_TAG boost-1.90.0 SYSTEM)
-FetchContent_MakeAvailable(boost_math)
 
 if (LANCET_PROFILE_MODE)
 	set(GPERFTOOLS_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/gperftools")

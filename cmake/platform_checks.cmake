@@ -48,7 +48,7 @@ if (CMAKE_HOST_SYSTEM_NAME MATCHES "Darwin" AND LANCET_BUILD_STATIC)
 endif ()
 
 # ── Default build type ───────────────────────────────────────────────────────
-if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+if (NOT LANCET_PROFILE_MODE AND NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	message(STATUS "Setting CMAKE_BUILD_TYPE as Release since none was specified.")
 	set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 	set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")

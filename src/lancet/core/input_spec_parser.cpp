@@ -2,7 +2,8 @@
 
 #include "lancet/cbdg/label.h"
 
-#include <absl/types/span.h>
+#include "absl/types/span.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <iterator>

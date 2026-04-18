@@ -23,20 +23,6 @@
 //   ScoreRegionLongdust <ref.fa.gz> <data_dir> <output.bed.gz> <test.tsv> <threads>
 // ============================================================================
 
-#include <algorithm>
-#include <atomic>
-#include <filesystem>
-#include <fstream>
-#include <stop_token>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <vector>
-
-extern "C" {
-#include "zlib.h"
-}
-
 #include "lancet/base/longdust_scorer.h"
 #include "lancet/base/timer.h"
 #include "lancet/base/types.h"
@@ -53,6 +39,20 @@ extern "C" {
 #include "absl/time/time.h"
 #include "concurrentqueue.h"
 #include "spdlog/fmt/bundled/format.h"
+
+extern "C" {
+#include "zlib.h"
+}
+
+#include <algorithm>
+#include <atomic>
+#include <filesystem>
+#include <fstream>
+#include <stop_token>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
 
 namespace {
 

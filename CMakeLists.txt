@@ -222,7 +222,7 @@ add_library(lancet_caller STATIC
 add_dependencies(lancet_caller minimap2)
 target_include_directories(lancet_caller PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_include_directories(lancet_caller SYSTEM PUBLIC "${MM2_ROOT_DIR}")
-target_link_libraries(lancet_caller PUBLIC lancet_cbdg spoa absl::btree boost_math ${LIB_MM2} PRIVATE zlibstatic)
+target_link_libraries(lancet_caller PUBLIC lancet_cbdg spoa absl::btree ${LIB_MM2} PRIVATE zlibstatic)
 set_target_properties(lancet_caller PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -269,7 +269,7 @@ add_library(lancet_core STATIC
 		src/lancet/core/async_worker.cpp src/lancet/core/async_worker.h
 		src/lancet/core/pipeline_executor.cpp src/lancet/core/pipeline_executor.h)
 target_include_directories(lancet_core PUBLIC "${CMAKE_SOURCE_DIR}/src")
-target_link_libraries(lancet_core PUBLIC lancet_caller absl::synchronization concurrentqueue PRIVATE absl::hash)
+target_link_libraries(lancet_core PUBLIC lancet_caller absl::synchronization concurrentqueue mimalloc-static PRIVATE absl::hash)
 set_target_properties(lancet_core PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -301,7 +301,7 @@ set_target_properties(lancet_cli PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRE
 # ═══════════════════════════════════════════════════════════════════════════════
 add_executable(Lancet2 src/lancet/main.cpp)
 target_include_directories(Lancet2 PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(Lancet2 PRIVATE lancet_cli absl::cleanup mimalloc-static)
+target_link_libraries(Lancet2 PRIVATE lancet_cli absl::cleanup)
 set_target_properties(Lancet2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 set_property(TARGET Lancet2 PROPERTY $<$<ENABLE_LTO>:INTERPROCEDURAL_OPTIMIZATION TRUE>)
 install(TARGETS Lancet2 DESTINATION bin)

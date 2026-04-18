@@ -12,11 +12,11 @@
 #include "lancet/hts/sam_flag.h"
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/hash/hash.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
 #include "absl/types/span.h"
 
-#include <absl/hash/hash.h>
-#include <absl/status/statusor.h>
 #include <algorithm>
 #include <filesystem>
 #include <string>

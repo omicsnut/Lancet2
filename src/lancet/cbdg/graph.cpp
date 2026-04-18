@@ -15,6 +15,7 @@
 #include "absl/container/chunked_queue.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/hash/hash.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/format.h"
