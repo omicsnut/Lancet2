@@ -9,7 +9,6 @@
 #include "absl/hash/hash.h"
 #include "blockingconcurrentqueue.h"
 #include "concurrentqueue.h"
-#include "mimalloc.h"
 
 #include <chrono>
 #include <cxxabi.h>
@@ -46,8 +45,6 @@ namespace lancet::core {
 // stop_token is a lightweight handle designed for by-value pass per C++20 jthread API
 // NOLINTNEXTLINE(performance-unnecessary-value-param)
 void AsyncWorker::Process(std::stop_token stop_token) {
-  mi_thread_set_in_threadpool();  // limit cross-thread page reclamation
-
   static thread_local auto const THREAD_ID =
       absl::Hash<std::thread::id>()(std::this_thread::get_id());
   LOG_DEBUG("Starting AsyncWorker thread {:#x}", THREAD_ID)

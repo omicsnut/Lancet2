@@ -46,6 +46,17 @@
 
 #if defined(__linux__) || defined(__APPLE__)
 
+// macOS marks the ucontext routines as deprecated and gates the declarations
+// behind _XOPEN_SOURCE.  Define the feature-test macro before any system
+// header so that <ucontext.h> (pulled in transitively by <signal.h> as well
+// as directly below) exposes the full ucontext_t definition we need to read
+// the faulting instruction pointer from the machine context.
+#ifdef __APPLE__
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
+#endif
+
 #include <execinfo.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -57,6 +68,7 @@
 #endif
 
 #include <array>
+#include <vector>
 
 #include <csignal>
 #include <cstring>
@@ -65,9 +77,16 @@ namespace {
 
 constexpr int MAX_BACKTRACE_FRAMES = 64;
 
-// 64KB or SIGSTKSZ, whichever is larger.  The alternate stack lets
-// the handler run even when the crash is caused by stack overflow.
-constexpr usize ALT_STACK_SIZE = SIGSTKSZ > 65'536 ? SIGSTKSZ : 65'536;
+// Minimum alternate stack size.  We want at least 64KB so the handler has
+// room for backtrace() and our formatting buffers.  SIGSTKSZ is checked at
+// runtime (glibc >= 2.34 made it a sysconf() call, so it is no longer a
+// compile-time constant).
+constexpr usize MIN_ALT_STACK_SIZE = 65'536;
+
+auto GetAltStackSize() -> usize {
+  auto const sys_size = static_cast<usize>(SIGSTKSZ);
+  return sys_size > MIN_ALT_STACK_SIZE ? sys_size : MIN_ALT_STACK_SIZE;
+}
 
 // ============================================================================
 // §1  Signal-safe output helpers
@@ -212,7 +231,8 @@ void DumpAllThreadContexts(int file_desc) {
     found_any = true;
 
     WriteStr(file_desc, "  Thread ");
-    WriteHex(file_desc, static_cast<u64>(slot.mThreadId));
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — pthread_t is a pointer on macOS
+    WriteHex(file_desc, reinterpret_cast<u64>(slot.mThreadId));
 
     if (slot.mActive != 0) {
       WriteStr(file_desc, " [ACTIVE] window_idx=");
@@ -384,7 +404,8 @@ void CrashHandler(int sig, siginfo_t* info, void* ctx) {
   // ── Thread ID ──────────────────────────────────────────────────────
   // Match this against the crash slot thread IDs to identify the worker.
   WriteStr(file_desc, "Thread ID:                 ");
-  WriteHex(file_desc, static_cast<u64>(pthread_self()));
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — pthread_t is a pointer on macOS
+  WriteHex(file_desc, reinterpret_cast<u64>(pthread_self()));
   WriteStr(file_desc, "\n");
 
   // ── Instruction pointer ────────────────────────────────────────────
@@ -469,7 +490,11 @@ void InstallCrashHandler() {
   // Allocate the alternate signal stack.  This is a separate stack used ONLY
   // by the signal handler.  Without this, a stack overflow crash would corrupt
   // the very stack the handler needs to run on.
-  static std::array<char, ALT_STACK_SIZE> alt_stack_mem{};
+  //
+  // The buffer is allocated once via a static vector (never freed, by design)
+  // because the alt-stack must remain valid for the lifetime of the process
+  // and SIGSTKSZ is no longer a compile-time constant on glibc >= 2.34.
+  static auto alt_stack_mem = std::vector<char>(GetAltStackSize(), '\0');
   stack_t alt_stack{};
   alt_stack.ss_sp = static_cast<void*>(alt_stack_mem.data());
   alt_stack.ss_size = alt_stack_mem.size();
