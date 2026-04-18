@@ -8,6 +8,7 @@
 #include "lancet/caller/variant_set.h"
 #include "lancet/cbdg/graph.h"
 #include "lancet/core/read_collector.h"
+#include "lancet/core/sample_info.h"
 #include "lancet/core/variant_annotator.h"
 #include "lancet/core/window.h"
 
@@ -36,6 +37,10 @@ class VariantBuilder {
 
     cbdg::GraphParams mGraphParams;
     ReadCollector::Params mRdCollParams;
+
+    /// Pre-built sample list — computed once at pipeline startup, immutable.
+    /// Shared across all threads via shared_ptr<Params const>.
+    std::vector<SampleInfo> mSampleList;
 
     // ── 1B Align ──────────────────────────────────────────────────────────
     bool mSkipActiveRegion = false;

@@ -162,7 +162,7 @@ auto HasAltSupport(caller::SupportArray const& evidence) -> bool {
 
 VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const window_length)
     : mDebruijnGraph(params->mGraphParams),
-      mReadCollector(params->mRdCollParams),
+      mReadCollector(params->mRdCollParams, absl::MakeConstSpan(params->mSampleList)),
       mParamsPtr(std::move(params)),
       mSpoaState{.mEngine = spoa::AlignmentEngine::Create(
                      spoa::AlignmentType::kNW, MSA_MATCH_SCORE, MSA_MISMATCH_SCORE, MSA_OPEN1_SCORE,
@@ -195,8 +195,8 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     return {};
   }
 
-  auto const& rc_params = mParamsPtr->mRdCollParams;
-  if (!mParamsPtr->mSkipActiveRegion && !core::IsActiveRegion(rc_params, *region)) {
+  if (!mParamsPtr->mSkipActiveRegion &&
+      !core::IsActiveRegion(mReadCollector.SampleList(), mReadCollector.Extractors(), *region)) {
     LOG_DEBUG("Skipping window {} since it has no evidence of mutation in any sample", reg_str)
     mCurrentCode = StatusCode::SKIPPED_INACTIVE_REGION;
     return {};

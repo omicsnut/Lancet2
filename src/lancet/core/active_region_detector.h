@@ -2,7 +2,10 @@
 #define SRC_LANCET_CORE_ACTIVE_REGION_DETECTOR_H_
 
 #include "lancet/core/read_collector.h"
+#include "lancet/core/sample_info.h"
 #include "lancet/hts/reference.h"
+
+#include "absl/types/span.h"
 
 #include <filesystem>
 
@@ -23,9 +26,12 @@ namespace lancet::core {
 
 /// Returns true if the region shows evidence of mutations (≥2 reads with
 /// mismatches, insertions, deletions, or soft-clips at the same position).
-/// Uses a lightweight MD tag + CIGAR prescan to avoid full assembly of
-/// inactive regions.
-[[nodiscard]] auto IsActiveRegion(ReadCollector::Params const& params,
+/// Uses a lightweight MD tag + CIGAR prescan to avoid full assembly.
+///
+/// Accepts pre-built sample list and per-thread extractors by reference
+/// to avoid redundant BAM file opens and index loads per window.
+[[nodiscard]] auto IsActiveRegion(absl::Span<SampleInfo const> samples,
+                                  ReadCollector::SampleExtractors& extractors,
                                   hts::Reference::Region const& region) -> bool;
 
 }  // namespace lancet::core

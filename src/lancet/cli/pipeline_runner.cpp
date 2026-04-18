@@ -14,6 +14,8 @@
 #include "lancet/core/active_region_detector.h"
 #include "lancet/core/input_spec_parser.h"
 #include "lancet/core/pipeline_executor.h"
+#include "lancet/core/sample_header_reader.h"
+#include "lancet/core/sample_info.h"
 #include "lancet/core/variant_builder.h"
 #include "lancet/core/window_builder.h"
 #include "lancet/hts/bgzf_ostream.h"
@@ -169,6 +171,13 @@ void PipelineRunner::ValidateAndPopulateParams() {
   };
 
   mParamsPtr->mIsCaseCtrlMode = has_label(cbdg::Label::CASE) && has_label(cbdg::Label::CTRL);
+
+  // Compute sample list once at pipeline startup — immutable from here on.
+  // ReadCollector and IsActiveRegion both reference this pre-built list
+  // instead of calling MakeSampleList() per-thread or per-window.
+  mParamsPtr->mVariantBuilder.mSampleList =
+      core::MakeSampleList(mParamsPtr->mVariantBuilder.mRdCollParams);
+
   if (mParamsPtr->mVariantBuilder.mSkipActiveRegion) return;
 
   auto const missing_md = std::ranges::find_if(all_specs, [&rdcoll](auto const& spec) {

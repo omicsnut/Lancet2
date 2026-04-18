@@ -11,6 +11,7 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/types/span.h"
 
 #include <array>
 #include <filesystem>
@@ -24,6 +25,10 @@ namespace lancet::core {
 class ReadCollector {
  public:
   static constexpr f64 DEFAULT_MAX_WINDOW_COVERAGE = 1000.0;
+
+  using ExtractorPtr = std::unique_ptr<hts::Extractor>;
+  using SampleExtractors =
+      absl::flat_hash_map<SampleInfo, ExtractorPtr, SampleInfo::Hash, SampleInfo::Equal>;
 
   struct Params {
     // ── 8B Align ──────────────────────────────────────────────────────────
@@ -49,7 +54,7 @@ class ReadCollector {
   using Region = hts::Reference::Region;
 
   ReadCollector() = delete;
-  explicit ReadCollector(Params params);
+  ReadCollector(Params params, absl::Span<SampleInfo const> sample_list);
 
   struct Result {
     std::vector<Read> mSampleReads;
@@ -59,11 +64,16 @@ class ReadCollector {
   [[nodiscard]] auto CollectRegionResult(Region const& region) -> Result;
   [[nodiscard]] auto IsCaseCtrlMode() const noexcept -> bool { return mIsCaseCtrlMode; }
 
+  /// Expose cached sample list for IsActiveRegion (per-thread, not shared).
+  [[nodiscard]] auto SampleList() const noexcept -> absl::Span<SampleInfo const> {
+    return absl::MakeConstSpan(mSampleList);
+  }
+
+  /// Expose per-sample extractors for IsActiveRegion (per-thread, not shared).
+  [[nodiscard]] auto Extractors() noexcept -> SampleExtractors& { return mExtractors; }
+
  private:
-  using ExtractorPtr = std::unique_ptr<hts::Extractor>;
   using AlnAndRefPaths = std::array<std::filesystem::path, 2>;
-  using SampleExtractors =
-      absl::flat_hash_map<SampleInfo, ExtractorPtr, SampleInfo::Hash, SampleInfo::Equal>;
 
   /// Maps qname hash (u64) -> mate location info for out-of-region mate retrieval.
   /// Using u64 hashes instead of std::string keys avoids string copies during Pass 1.

@@ -2,7 +2,6 @@
 
 #include "lancet/base/types.h"
 #include "lancet/core/read_collector.h"
-#include "lancet/core/sample_header_reader.h"
 #include "lancet/core/sample_info.h"
 #include "lancet/hts/alignment.h"
 #include "lancet/hts/cigar_unit.h"
@@ -19,6 +18,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -211,18 +211,16 @@ class MutationAccumulator {
 
 namespace lancet::core {
 
-auto IsActiveRegion(ReadCollector::Params const& params, hts::Reference::Region const& region)
-    -> bool {
+auto IsActiveRegion(absl::Span<SampleInfo const> samples,
+                    ReadCollector::SampleExtractors& extractors,
+                    hts::Reference::Region const& region) -> bool {
   MutationAccumulator accumulator;
 
-  auto const sample_list = core::MakeSampleList(params);
-  for (auto const& sinfo : sample_list) {
+  for (auto const& sinfo : samples) {
     accumulator.ClearAll();
 
-    using hts::Alignment::Fields::AUX_RGAUX;
-    hts::Extractor extractor(sinfo.Path(), hts::Reference(params.mRefPath), AUX_RGAUX, {"MD"},
-                             params.mNoCtgCheck);
-    extractor.SetRegionToExtract(region.ToSamtoolsRegion());
+    auto& extractor = *extractors.at(sinfo);
+    extractor.SetRegionToExtract(region);
 
     for (auto const& aln : extractor) {
       if (accumulator.CheckAlignment(aln)) return true;

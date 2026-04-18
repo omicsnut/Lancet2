@@ -3,7 +3,6 @@
 #include "lancet/base/types.h"
 #include "lancet/cbdg/label.h"
 #include "lancet/cbdg/read.h"
-#include "lancet/core/sample_header_reader.h"
 #include "lancet/core/sample_info.h"
 #include "lancet/hts/alignment.h"
 #include "lancet/hts/extractor.h"
@@ -67,16 +66,20 @@ auto ReadCollector::HashQname(std::string_view qname) -> u64 {
 // ---------------------------------------------------------------------------
 // Constructor
 // ---------------------------------------------------------------------------
-ReadCollector::ReadCollector(Params params) : mParams(std::move(params)) {
+ReadCollector::ReadCollector(Params params, absl::Span<SampleInfo const> sample_list)
+    : mParams(std::move(params)), mSampleList(sample_list.begin(), sample_list.end()) {
   using hts::Extractor;
   using hts::Alignment::Fields::AUX_RGAUX;
 
-  mSampleList = core::MakeSampleList(mParams);
   auto const no_ctgcheck = mParams.mNoCtgCheck;
 
-  static std::array<std::string, 1> const SA_TAG{"SA"};
+  // Always request MD (for IsActiveRegion prescan), conditionally SA (for mate pairs).
+  // HTSlib lazily parses AUX fields — adding MD has negligible per-read cost.
+  static std::array<std::string, 1> const MD_TAG{"MD"};
+  static std::array<std::string, 2> const MD_SA_TAGS{"MD", "SA"};
   auto const sam_tags =
-      mParams.mExtractPairs ? absl::MakeConstSpan(SA_TAG) : absl::Span<std::string const>{};
+      mParams.mExtractPairs ? absl::MakeConstSpan(MD_SA_TAGS) : absl::MakeConstSpan(MD_TAG);
+
   static auto const IS_CASE = [](SampleInfo const& sinfo) -> bool {
     return sinfo.TagKind() == cbdg::Label::CASE;
   };
