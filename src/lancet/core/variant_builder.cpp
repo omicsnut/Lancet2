@@ -171,7 +171,6 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
       mAnnotator(mParamsPtr->mGcFraction) {
   mSpoaState.mEngine->Prealloc(window_length * PREALLOC_WINDOW_LENGTH_MULTIPLIER,
                                DNA_ALPHABET_SIZE);
-  mGenotyper.SetNumSamples(mParamsPtr->mRdCollParams.InputPathCount());
 }
 
 auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) -> WindowResults {

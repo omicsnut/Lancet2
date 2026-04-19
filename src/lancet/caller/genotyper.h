@@ -203,8 +203,6 @@ class Genotyper {
  public:
   Genotyper();
 
-  void SetNumSamples(usize const num_samples) { mNumSamples = num_samples; }
-
   using Reads = absl::Span<cbdg::Read const>;
   using Haplotypes = absl::Span<std::string const>;
   using Result = absl::flat_hash_map<RawVariant const*, SupportArray>;
@@ -240,7 +238,6 @@ class Genotyper {
   MappingOpts mMappingOpts = std::make_unique<mm_mapopt_t>();    // 8B
   IndexingOpts mIndexingOpts = std::make_unique<mm_idxopt_t>();  // 8B
   ThreadBuffer mThreadBuffer = ThreadBuffer(mm_tbuf_init());     // 8B
-  usize mNumSamples = 0;                                         // 8B
 
   void ResetData(Haplotypes hap_seqs);
 
