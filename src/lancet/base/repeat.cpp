@@ -27,7 +27,7 @@ namespace lancet::base {
 // safely drops the widening and sums byte lanes directly in hardware.
 //
 // Pure C++ — no intrinsics.  Works on x86 AVX2/AVX-512 and ARM64 NEON.
-// For Lancet2 k-mer lengths (25–121 bp), the outer loop executes once.
+// For Lancet2 k-mer lengths (13–127 bp), the outer loop executes once.
 // ============================================================================
 auto HammingDist(std::string_view first, std::string_view second) -> usize {
   LANCET_ASSERT(first.length() == second.length())
