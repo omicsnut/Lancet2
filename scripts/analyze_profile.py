@@ -248,8 +248,8 @@ def auto_detect_binary(profile: str) -> str | None:
     """Search common locations for the Lancet2 binary."""
     candidates = [
         Path(profile).resolve().parent / "Lancet2",
+        REPO_ROOT / "cmake-build-relwithdebinfo" / "Lancet2",
         REPO_ROOT / "cmake-build-release" / "Lancet2",
-        REPO_ROOT / "cmake-build-profile-release" / "Lancet2",
         REPO_ROOT / "cmake-build-debug" / "Lancet2",
     ]
     for path in candidates:
@@ -259,7 +259,7 @@ def auto_detect_binary(profile: str) -> str | None:
 
 
 _BUILD_DIRS = [
-    "cmake-build-profile-release",
+    "cmake-build-relwithdebinfo",
     "cmake-build-release",
     "cmake-build-debug",
 ]
