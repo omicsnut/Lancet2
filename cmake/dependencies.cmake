@@ -22,6 +22,7 @@
 # Bioinformatics:
 #   htslib        — BAM/CRAM/VCF I/O (ExternalProject, builds libhts.a)
 #   minimap2      — read-to-haplotype alignment (ExternalProject, builds libminimap2.a)
+#   WFA2-lib      — wavefront gap-affine alignment (ExternalProject, builds libwfacpp.a)
 #   spoa          — SIMD Partial Order Alignment (graph-based MSA)
 #
 # Testing / Benchmarking / Profiling:
@@ -128,6 +129,21 @@ add_dependencies(minimap2 zlibstatic)
 set(spoa_optimize_for_native OFF)
 FetchContent_Declare(spoa GIT_REPOSITORY https://github.com/rvaser/spoa GIT_TAG 4.1.5 SYSTEM)
 FetchContent_MakeAvailable(spoa)
+
+# ExternalProject (not FetchContent) because WFA2's CMakeLists.txt and Makefile
+# both inject -march=native, which would pollute Lancet2's portable arch flags.
+set(WFA2_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/wfa2")
+set(LIB_WFA2 "${WFA2_ROOT_DIR}/lib/libwfa.a")
+set(LIB_WFA2CPP "${WFA2_ROOT_DIR}/lib/libwfacpp.a")
+set(WFA2_BUILD_PARAMS ${WFA2_ROOT_DIR} ${CMAKE_C_COMPILER} ${CMAKE_CXX_COMPILER})
+ExternalProject_Add(wfa2
+		GIT_REPOSITORY https://github.com/smarco/WFA2-lib.git GIT_TAG v2.3.6
+		PREFIX "${CMAKE_CURRENT_BINARY_DIR}/_deps" SOURCE_DIR ${WFA2_ROOT_DIR}
+		BUILD_IN_SOURCE 1 CONFIGURE_COMMAND "" INSTALL_COMMAND ""
+		BUILD_COMMAND /bin/bash ${CMAKE_SOURCE_DIR}/cmake/build_wfa2.sh ${WFA2_BUILD_PARAMS}
+		BUILD_BYPRODUCTS ${LIB_WFA2} ${LIB_WFA2CPP}
+		LOG_DOWNLOAD ON LOG_CONFIGURE ON LOG_BUILD ON LOG_INSTALL ON
+		USES_TERMINAL_DOWNLOAD OFF USES_TERMINAL_BUILD OFF USES_TERMINAL_INSTALL OFF)
 
 if (LANCET_PROFILE_MODE)
 	set(GPERFTOOLS_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/gperftools")
