@@ -4,7 +4,6 @@
 #include "lancet/base/rev_comp.h"
 #include "lancet/base/types.h"
 
-#include <compare>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -113,9 +112,7 @@ void MergeCords(std::string& k1_dflt, std::string_view k2_dflt, lancet::cbdg::Ed
 
 namespace lancet::cbdg {
 
-Kmer::Kmer(std::string_view seq) {
-  mDfltSign = IsCanonicallyPlus(seq) ? Sign::PLUS : Sign::MINUS;
-
+Kmer::Kmer(std::string_view seq) : mDfltSign(IsCanonicallyPlus(seq) ? Sign::PLUS : Sign::MINUS) {
   switch (mDfltSign) {
     case Sign::PLUS:
       mIdentifier = lancet::base::HashStr64(seq);

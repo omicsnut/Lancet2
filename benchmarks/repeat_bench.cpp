@@ -1,16 +1,19 @@
 // ============================================================================
 // Repeat Benchmark — Hamming distance and repeat detection performance
 //
-// Part 1: Hamming distance accumulator comparison
-//   Benchmarks four approaches to byte-level Hamming distance, demonstrating
-//   how accumulator width affects compiler vectorization quality:
-//     1. HammingDist (production) — u8 batch accumulation from repeat.h
-//     2. HammingDistUsizeAccum    — usize accumulator (widening bottleneck)
-//     3. HammingDistU32Accum      — uint32_t accumulator (partial fix)
-//     4. HammingDistSWAR          — manual SWAR with popcount (defeats vectorizer)
+// Part 1: Hamming distance implementation comparison
+//   Benchmarks six approaches to byte-level Hamming distance:
+//     1. HammingDistIntrinsics (production) — explicit SIMD from repeat.h
+//     2. HammingDistAutoVec   — u8 batch accumulation (compiler auto-vectorized)
+//     3. HammingDistUsizeAccum — usize accumulator (widening bottleneck)
+//     4. HammingDistU32Accum  — uint32_t accumulator (partial fix)
+//     5. HammingDistSWAR      — manual SWAR with popcount
 //
 // Part 2: HasRepeat with varying entropy and mismatch thresholds
-//   Tests repeat detection across three sequence entropy levels:
+//   Tests two implementations:
+//     1. HasRepeatIntrinsics (production) — IsWithinHammingDist + early exit
+//     2. HasRepeatAutoVec                — HammingDistAutoVec + full distance
+//   Across three sequence entropy levels:
 //     Low    — homopolymer-rich (many repeats, fast short-circuit)
 //     Medium — random DNA (realistic k-mer distribution)
 //     High   — all 4 bases uniformly shuffled (few repeats, worst case)
@@ -18,9 +21,11 @@
 
 #include "lancet/base/repeat.h"
 
+#include "lancet/base/assert.h"
 #include "lancet/base/sliding.h"
 #include "lancet/base/types.h"
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/types/span.h"
 #include "benchmark/benchmark.h"
 
@@ -94,8 +99,58 @@ namespace {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Part 1: Hamming distance — accumulator strategy comparison
+// Baseline implementations for benchmarking (not used in production)
 // ════════════════════════════════════════════════════════════════════════════
+
+// ── Auto-vectorized HammingDist (former production) ────────────────────────
+// u8 batch accumulation proves to the compiler's value-range analysis that no
+// byte lane overflows, allowing the auto-vectorizer to emit vpcmpeqb + vpsadbw
+// on AVX2 without widening.  4.7× fewer SIMD instructions than usize accumulator.
+// Replaced in production by explicit SIMD intrinsics with overlapping-tail loads.
+auto HammingDistAutoVec(std::string_view first, std::string_view second) -> usize {
+  LANCET_ASSERT(first.length() == second.length())
+
+  usize result = 0;
+  auto const length = first.length();
+  usize idx = 0;
+
+  // 255 is the largest count a u8 can hold without overflow (each iteration
+  // adds 0 or 1).  One scalar widen per 255 bytes is negligible overhead.
+  while (idx < length) {
+    u8 batch_sum = 0;
+    auto const batch_end = std::min(idx + 255, length);
+    for (; idx < batch_end; ++idx) {
+      batch_sum += static_cast<u8>(first[idx] != second[idx]);
+    }
+    result += batch_sum;
+  }
+
+  return result;
+}
+
+// ── HasRepeat using auto-vectorized HammingDist (former production) ────────
+// Full-distance comparison: always computes the entire Hamming distance before
+// comparing against the threshold.  No early exit within the distance function.
+// Replaced in production by IsWithinHammingDist which early-exits per SIMD chunk.
+auto HasRepeatAutoVec(absl::Span<std::string_view const> kmers, usize const max_mismatches)
+    -> bool {
+  if (max_mismatches == 0) {
+    absl::flat_hash_set<std::string_view> seen;
+    seen.reserve(kmers.size());
+    for (auto const kmer : kmers) {
+      if (auto [iter, inserted] = seen.insert(kmer); !inserted) return true;
+    }
+    return false;
+  }
+
+  auto const num_kmers = kmers.size();
+  for (usize i = 0; i < num_kmers; ++i) {
+    for (usize j = i + 1; j < num_kmers; ++j) {
+      if (HammingDistAutoVec(kmers[i], kmers[j]) <= max_mismatches) return true;
+    }
+  }
+  return false;
+}
 
 // ── Rejected approach 1: usize accumulator ─────────────────────────────────
 // The widening bottleneck: each 1-byte comparison result is zero-extended to
@@ -169,10 +224,13 @@ auto HammingDistSWAR(std::string_view first, std::string_view second) -> usize {
 
 using GeneratorFn = std::string (*)(usize);
 
-// ── Hamming distance benchmark runners ─────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// Part 1: Hamming distance — implementation comparison
+// ════════════════════════════════════════════════════════════════════════════
 
+// ── Production: explicit SIMD intrinsics (AVX2/NEON) ───────────────────────
 template <GeneratorFn generator>
-void BenchHammingDist(benchmark::State& state) {
+void BenchHammingDistIntrinsics(benchmark::State& state) {
   auto const seq_len = static_cast<usize>(state.range(0));
   std::string const first = generator(seq_len);
   std::string const second = generator(seq_len);
@@ -184,6 +242,21 @@ void BenchHammingDist(benchmark::State& state) {
   }
 }
 
+// ── Former production: auto-vectorized u8 batch accumulation ───────────────
+template <GeneratorFn generator>
+void BenchHammingDistAutoVec(benchmark::State& state) {
+  auto const seq_len = static_cast<usize>(state.range(0));
+  std::string const first = generator(seq_len);
+  std::string const second = generator(seq_len);
+
+  // NOLINTNEXTLINE(readability-identifier-length)
+  for ([[maybe_unused]] auto _ : state) {
+    auto result = HammingDistAutoVec(first, second);
+    benchmark::DoNotOptimize(result);
+  }
+}
+
+// ── Rejected: usize accumulator ────────────────────────────────────────────
 template <GeneratorFn generator>
 void BenchHammingDistUsizeAccum(benchmark::State& state) {
   auto const seq_len = static_cast<usize>(state.range(0));
@@ -197,6 +270,7 @@ void BenchHammingDistUsizeAccum(benchmark::State& state) {
   }
 }
 
+// ── Rejected: u32 accumulator ──────────────────────────────────────────────
 template <GeneratorFn generator>
 void BenchHammingDistU32Accum(benchmark::State& state) {
   auto const seq_len = static_cast<usize>(state.range(0));
@@ -210,6 +284,7 @@ void BenchHammingDistU32Accum(benchmark::State& state) {
   }
 }
 
+// ── Rejected: SWAR + popcount ──────────────────────────────────────────────
 template <GeneratorFn generator>
 void BenchHammingDistSWAR(benchmark::State& state) {
   auto const seq_len = static_cast<usize>(state.range(0));
@@ -231,8 +306,9 @@ void BenchHammingDistSWAR(benchmark::State& state) {
 // state.range(2) = max_mismatches (0 = exact repeat, 1–8 = approximate)
 // ════════════════════════════════════════════════════════════════════════════
 
+// ── Production: SIMD intrinsics with early-exit ────────────────────────────
 template <GeneratorFn generator>
-void BenchHasRepeat(benchmark::State& state) {
+void BenchHasRepeatIntrinsics(benchmark::State& state) {
   auto const seq_len = static_cast<usize>(state.range(0));
   auto const window = static_cast<usize>(state.range(1));
   auto const max_mismatches = static_cast<usize>(state.range(2));
@@ -242,6 +318,24 @@ void BenchHasRepeat(benchmark::State& state) {
   // NOLINTNEXTLINE(readability-identifier-length)
   for ([[maybe_unused]] auto _ : state) {
     auto result = lancet::base::HasRepeat(absl::MakeConstSpan(kmers), max_mismatches);
+    benchmark::DoNotOptimize(result);
+  }
+
+  state.SetLabel(std::to_string(max_mismatches) + " mismatches");
+}
+
+// ── Former production: auto-vectorized full-distance HasRepeat ──────────────
+template <GeneratorFn generator>
+void BenchHasRepeatAutoVec(benchmark::State& state) {
+  auto const seq_len = static_cast<usize>(state.range(0));
+  auto const window = static_cast<usize>(state.range(1));
+  auto const max_mismatches = static_cast<usize>(state.range(2));
+  std::string const seq = generator(seq_len);
+  auto const kmers = lancet::base::SlidingView(seq, window);
+
+  // NOLINTNEXTLINE(readability-identifier-length)
+  for ([[maybe_unused]] auto _ : state) {
+    auto result = HasRepeatAutoVec(absl::MakeConstSpan(kmers), max_mismatches);
     benchmark::DoNotOptimize(result);
   }
 
@@ -270,10 +364,18 @@ void ApplyHasRepeatArgs(benchmark::Benchmark* bench) {
 // NOLINTBEGIN(cert-err58-cpp, cppcoreguidelines-owning-memory, readability-identifier-length, misc-use-anonymous-namespace)
 
 // ── Hamming distance: k-mer sized inputs (11–121 bp), all entropy levels ──
-BENCHMARK(BenchHammingDist<GenerateLowEntropySequence>)->DenseRange(11, 121, 10);
-BENCHMARK(BenchHammingDist<GenerateMediumEntropySequence>)->DenseRange(11, 121, 10);
-BENCHMARK(BenchHammingDist<GenerateHighEntropySequence>)->DenseRange(11, 121, 10);
 
+// Production: explicit SIMD intrinsics
+BENCHMARK(BenchHammingDistIntrinsics<GenerateLowEntropySequence>)->DenseRange(11, 121, 10);
+BENCHMARK(BenchHammingDistIntrinsics<GenerateMediumEntropySequence>)->DenseRange(11, 121, 10);
+BENCHMARK(BenchHammingDistIntrinsics<GenerateHighEntropySequence>)->DenseRange(11, 121, 10);
+
+// Former production: auto-vectorized u8 batch
+BENCHMARK(BenchHammingDistAutoVec<GenerateLowEntropySequence>)->DenseRange(11, 121, 10);
+BENCHMARK(BenchHammingDistAutoVec<GenerateMediumEntropySequence>)->DenseRange(11, 121, 10);
+BENCHMARK(BenchHammingDistAutoVec<GenerateHighEntropySequence>)->DenseRange(11, 121, 10);
+
+// Rejected baselines
 BENCHMARK(BenchHammingDistUsizeAccum<GenerateLowEntropySequence>)->DenseRange(11, 121, 10);
 BENCHMARK(BenchHammingDistUsizeAccum<GenerateMediumEntropySequence>)->DenseRange(11, 121, 10);
 BENCHMARK(BenchHammingDistUsizeAccum<GenerateHighEntropySequence>)->DenseRange(11, 121, 10);
@@ -287,14 +389,30 @@ BENCHMARK(BenchHammingDistSWAR<GenerateMediumEntropySequence>)->DenseRange(11, 1
 BENCHMARK(BenchHammingDistSWAR<GenerateHighEntropySequence>)->DenseRange(11, 121, 10);
 
 // ── Hamming distance: power-of-two stress test (8–2048 bytes) ─────────────
-BENCHMARK(BenchHammingDist<GenerateLowEntropySequence>)->RangeMultiplier(2)->Range(2 << 2, 2 << 10);
-BENCHMARK(BenchHammingDist<GenerateMediumEntropySequence>)
+
+// Production: explicit SIMD intrinsics
+BENCHMARK(BenchHammingDistIntrinsics<GenerateLowEntropySequence>)
     ->RangeMultiplier(2)
     ->Range(2 << 2, 2 << 10);
-BENCHMARK(BenchHammingDist<GenerateHighEntropySequence>)
+BENCHMARK(BenchHammingDistIntrinsics<GenerateMediumEntropySequence>)
+    ->RangeMultiplier(2)
+    ->Range(2 << 2, 2 << 10);
+BENCHMARK(BenchHammingDistIntrinsics<GenerateHighEntropySequence>)
     ->RangeMultiplier(2)
     ->Range(2 << 2, 2 << 10);
 
+// Former production: auto-vectorized u8 batch
+BENCHMARK(BenchHammingDistAutoVec<GenerateLowEntropySequence>)
+    ->RangeMultiplier(2)
+    ->Range(2 << 2, 2 << 10);
+BENCHMARK(BenchHammingDistAutoVec<GenerateMediumEntropySequence>)
+    ->RangeMultiplier(2)
+    ->Range(2 << 2, 2 << 10);
+BENCHMARK(BenchHammingDistAutoVec<GenerateHighEntropySequence>)
+    ->RangeMultiplier(2)
+    ->Range(2 << 2, 2 << 10);
+
+// Rejected baselines
 BENCHMARK(BenchHammingDistUsizeAccum<GenerateLowEntropySequence>)
     ->RangeMultiplier(2)
     ->Range(2 << 2, 2 << 10);
@@ -325,13 +443,14 @@ BENCHMARK(BenchHammingDistSWAR<GenerateHighEntropySequence>)
     ->RangeMultiplier(2)
     ->Range(2 << 2, 2 << 10);
 
-// ── HasRepeat: low entropy (homopolymer-rich, many repeats) ───────────────
-BENCHMARK(BenchHasRepeat<GenerateLowEntropySequence>)->Apply(ApplyHasRepeatArgs);
+// ── HasRepeat: production SIMD intrinsics with early exit ─────────────────
+BENCHMARK(BenchHasRepeatIntrinsics<GenerateLowEntropySequence>)->Apply(ApplyHasRepeatArgs);
+BENCHMARK(BenchHasRepeatIntrinsics<GenerateMediumEntropySequence>)->Apply(ApplyHasRepeatArgs);
+BENCHMARK(BenchHasRepeatIntrinsics<GenerateHighEntropySequence>)->Apply(ApplyHasRepeatArgs);
 
-// ── HasRepeat: medium entropy (random DNA, realistic) ─────────────────────
-BENCHMARK(BenchHasRepeat<GenerateMediumEntropySequence>)->Apply(ApplyHasRepeatArgs);
-
-// ── HasRepeat: high entropy (maximally diverse, few repeats) ──────────────
-BENCHMARK(BenchHasRepeat<GenerateHighEntropySequence>)->Apply(ApplyHasRepeatArgs);
+// ── HasRepeat: former auto-vectorized full-distance comparison ────────────
+BENCHMARK(BenchHasRepeatAutoVec<GenerateLowEntropySequence>)->Apply(ApplyHasRepeatArgs);
+BENCHMARK(BenchHasRepeatAutoVec<GenerateMediumEntropySequence>)->Apply(ApplyHasRepeatArgs);
+BENCHMARK(BenchHasRepeatAutoVec<GenerateHighEntropySequence>)->Apply(ApplyHasRepeatArgs);
 
 // NOLINTEND(cert-err58-cpp, cppcoreguidelines-owning-memory, readability-identifier-length, misc-use-anonymous-namespace)

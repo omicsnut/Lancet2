@@ -10,7 +10,9 @@
 namespace lancet::base {
 
 /// Byte-level Hamming distance: count of positions where two equal-length strings differ.
-/// Designed for auto-vectorization — the compiler emits vpcmpeqb + vpsadbw on AVX2.
+/// Uses explicit SIMD intrinsics (AVX2 cmpeq + movemask + POPCNT on x86, NEON BIC on ARM64)
+/// with overlapping-tail loads to avoid scalar cleanup.  Falls back to auto-vectorized u8
+/// batch accumulation on unsupported architectures.
 [[nodiscard]] auto HammingDist(std::string_view first, std::string_view second) -> usize;
 
 /// True if any two kmers in the span differ in at most `max_mismatches` positions.
