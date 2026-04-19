@@ -11,6 +11,23 @@
 
 namespace {
 
+// Compare seq against its reverse complement without allocating the full
+// RevComp string. Walks inward from both ends, complementing on the fly.
+// Only ⌈n/2⌉ iterations needed — position i and position n−1−i are symmetric
+// under the RevComp transform, so the second half is redundant.
+auto IsCanonicallyPlus(std::string_view seq) -> bool {
+  auto const len = seq.size();
+  auto const half = (len + 1) / 2;
+  for (usize idx = 0; idx < half; ++idx) {
+    char const fwd_base = seq[idx];
+    char const rc_base = lancet::base::DNA_COMPLEMENT_TABLE[static_cast<u8>(seq[len - 1 - idx])];
+    if (fwd_base < rc_base) return true;
+    if (fwd_base > rc_base) return false;
+  }
+  // Palindromic k-mer (seq == RevComp(seq)). Treat as PLUS by convention.
+  return true;
+}
+
 // Get overlapping prefix and suffix portions of adjacent kmers
 inline auto OvlPrefix(std::string_view data, usize const kval) {
   return data.substr(0, kval - 1);
@@ -97,8 +114,7 @@ void MergeCords(std::string& k1_dflt, std::string_view k2_dflt, lancet::cbdg::Ed
 namespace lancet::cbdg {
 
 Kmer::Kmer(std::string_view seq) {
-  auto rc_seq = lancet::base::RevComp(seq);
-  mDfltSign = seq < rc_seq ? Sign::PLUS : Sign::MINUS;
+  mDfltSign = IsCanonicallyPlus(seq) ? Sign::PLUS : Sign::MINUS;
 
   switch (mDfltSign) {
     case Sign::PLUS:
@@ -107,6 +123,7 @@ Kmer::Kmer(std::string_view seq) {
       break;
 
     case Sign::MINUS:
+      auto rc_seq = lancet::base::RevComp(seq);
       mIdentifier = lancet::base::HashStr64(rc_seq);
       mDfltSeq = std::move(rc_seq);
       break;
