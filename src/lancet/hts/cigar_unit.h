@@ -95,6 +95,10 @@ class CigarUnit {
       : mLength(bam_cigar_oplen(sam_cigop)),
         mCigOp(static_cast<CigarOp>(bam_cigar_opchr(sam_cigop))) {}
 
+  // Direct construction from operation + length. Used by ParseWfaTrace to
+  // build CIGAR blocks without roundtripping through BAM u32 encoding.
+  CigarUnit(CigarOp operation, u32 length) : mLength(length), mCigOp(operation) {}
+
   CigarUnit() = delete;
 
   [[nodiscard]] auto Operation() const noexcept -> CigarOp { return mCigOp; }
