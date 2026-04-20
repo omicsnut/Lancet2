@@ -219,11 +219,10 @@ add_library(lancet_caller STATIC
 		# ── VCF output: variant call assembly + genotyper orchestrator ────
 		src/lancet/caller/variant_call.cpp src/lancet/caller/variant_call.h
 		src/lancet/caller/genotyper.cpp src/lancet/caller/genotyper.h)
-add_dependencies(lancet_caller minimap2 wfa2)
+add_dependencies(lancet_caller minimap2)
 target_include_directories(lancet_caller PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_include_directories(lancet_caller SYSTEM PUBLIC "${MM2_ROOT_DIR}")
-target_include_directories(lancet_caller SYSTEM PUBLIC "${WFA2_ROOT_DIR}")
-target_link_libraries(lancet_caller PUBLIC lancet_cbdg spoa absl::btree ${LIB_MM2} ${LIB_WFA2CPP} PRIVATE zlibstatic)
+target_link_libraries(lancet_caller PUBLIC lancet_cbdg spoa absl::btree ${LIB_MM2} PRIVATE zlibstatic)
 set_target_properties(lancet_caller PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ═══════════════════════════════════════════════════════════════════════════════

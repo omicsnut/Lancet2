@@ -95,8 +95,8 @@ class CigarUnit {
       : mLength(bam_cigar_oplen(sam_cigop)),
         mCigOp(static_cast<CigarOp>(bam_cigar_opchr(sam_cigop))) {}
 
-  // Direct construction from operation + length. Used by ParseWfaTrace to
-  // build CIGAR blocks without roundtripping through BAM u32 encoding.
+  // Direct construction from operation + length. Used to inject soft-clip S operations
+  // from minimap2's qs/qe fields without roundtripping through BAM u32 encoding.
   CigarUnit(CigarOp operation, u32 length) : mLength(length), mCigOp(operation) {}
 
   CigarUnit() = delete;

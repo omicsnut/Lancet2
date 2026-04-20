@@ -39,69 +39,120 @@ inline void FreeMm2Alignment(mm_reg1_t* regs, int const num_regs) {
 }
 // NOLINTEND(cppcoreguidelines-no-malloc)
 
+// Build a CIGAR vector from a minimap2 alignment result, inserting leading and
+// trailing soft-clip (S) operations from qs/qe.  Even with end_bonus=INT_MAX,
+// ~0.1% of reads retain small clips.  Without explicit S operations the downstream
+// ComputeSoftClipPenalty() returns 0, failing to crush chimeric partial alignments.
+auto BuildCigar(mm_reg1_t const* hit, int qlen) -> std::vector<lancet::hts::CigarUnit> {
+  std::vector<lancet::hts::CigarUnit> cigar;
+  if (hit->p == nullptr || hit->p->n_cigar == 0) return cigar;
+
+  auto const nops = static_cast<int>(hit->p->n_cigar);
+  // Reserve: core ops + up to 2 soft-clip bookends
+  cigar.reserve(static_cast<usize>(nops) + 2);
+
+  // Leading soft-clip: query bases [0, qs) were not aligned
+  if (hit->qs > 0) {
+    cigar.emplace_back(lancet::hts::CigarOp::SOFT_CLIP, static_cast<u32>(hit->qs));
+  }
+
+  // Core CIGAR operations from minimap2
+  for (int i = 0; i < nops; ++i) {
+    cigar.emplace_back(hit->p->cigar[i]);
+  }
+
+  // Trailing soft-clip: query bases [qe, qlen) were not aligned
+  if (hit->qe < qlen) {
+    cigar.emplace_back(lancet::hts::CigarOp::SOFT_CLIP, static_cast<u32>(qlen - hit->qe));
+  }
+
+  return cigar;
+}
+
 }  // namespace
 
 namespace lancet::caller {
 
 // ============================================================================
-// Constructor: initialize minimap2 with custom Illumina scoring parameters.
+// Constructor: initialize minimap2 for read-to-haplotype allele classification.
 //
-// We do NOT use the 'sr' preset because its gap penalties are tuned for
-// whole-genome alignment where gaps represent biological variation. In local
-// assembly, biological variation is already in the haplotype sequences —
-// gaps here are machine errors and must be heavily penalized.
+// Parameter strategy: start from defaults, override 10 fields. We do NOT use
+// the 'sr' preset wholesale — its gap/scoring parameters target whole-genome
+// mapping where gaps are biology.  Here, biology is baked into the haplotype
+// sequences; read-haplotype divergence is sequencer noise and must be penalized
+// strictly.  However, we DO set MM_F_SR to activate the SR extension-region
+// code path (full-query boundaries + end_bonus reference expansion), which is
+// the correct model for 151 bp reads on short synthetic haplotypes.
 //
-// See the SCORING_* constants defined in local_scorer.h for the full
-// rationale.
+// See scoring_constants.h for the SCORING_* values and
+// docs/guides/variant_discovery_genotyping.md for the design rationale.
 // ============================================================================
 Genotyper::Genotyper() {
   // 0 -> no info, 1 -> error, 2 -> warning, 3 -> debug
   mm_verbose = 1;
 
-  // Start from the default parameter set, then override scoring
+  // Start from the default parameter set, then override
   mm_set_opt(nullptr, mIndexingOpts.get(), mMappingOpts.get());
 
   auto* mopts = mMappingOpts.get();
+
+  // ── Flags: CIGAR generation + SR extension boundaries ─────────────────
+  // MM_F_CIGAR: required for local scoring.
+  // MM_F_SR: activates full-query extension (qs0=0, qe0=qlen) and uses
+  //   end_bonus to expand the reference extraction region at read edges.
+  //   Also disables irrelevant long-read paths (inversion detection,
+  //   bw_long re-chain, strand error estimation).  All 10 SR code paths
+  //   are verified safe for single-segment haplotype alignment.
+  // NOTE: flag |= only sets bit flags — it does not invoke mm_set_opt("sr")
+  //   and therefore does not overwrite any parameters set below.
+  mopts->flag |= MM_F_CIGAR | MM_F_SR;
+  mopts->best_n = 1;  // single best hit per haplotype
+
+  // ── Scoring: single-affine, strict penalties ──────────────────────────
+  // Gaps/mismatches here are noise, not biology.  Setting q2=q, e2=e
+  // disables minimap2's dual-affine (convex) model — no "cheap extension"
+  // loophole for long gaps that might bleed reads to the wrong haplotype.
   mopts->a = SCORING_MATCH;
   mopts->b = SCORING_MISMATCH;
   mopts->q = SCORING_GAP_OPEN;
   mopts->e = SCORING_GAP_EXTEND;
-  // Use single-affine gap model: set the second model to the same parameters.
-  // This disables minimap2's dual-affine (convex) model.
   mopts->q2 = SCORING_GAP_OPEN;
   mopts->e2 = SCORING_GAP_EXTEND;
 
-  // 1. Z-Drop (zdrop / zdrop_inv)
-  // Minimap2 terminates DP alignment if the local Smith-Waterman score drops below
-  // (max_score - zdrop). If a tumor contains a massive 300bp somatic deletion,
-  // the affine gap penalty (e.g. O + 300*E) exceeds standard Z-drop thresholds
-  // (default 400). This causes minimap2 to silently truncate the alignment and report
-  // separate supplementary reads rather than a contiguous CIGAR spanning the deletion.
-  // Setting zdrop=100000 effectively disables alignment truncation, forcing the banded
-  // alignment to traverse any large intra-window structural variation.
+  // ── Z-Drop: effectively disabled ──────────────────────────────────────
+  // A 300 bp somatic deletion incurs gap penalty O + 300·E = 12 + 900 = 912,
+  // exceeding the default zdrop=400.  Setting to 100k prevents DP truncation
+  // across any intra-window structural variation up to ~5 kbp.
   mopts->zdrop = 100'000;
   mopts->zdrop_inv = 100'000;
 
-  // 2. Bandwidth (bw)
-  // Minimap2 only computes DP matrix bounds within `bw` distance from the main diagonal
-  // (O(N * bw) complexity). If an insertion is larger than `bw`, the alignment exceeds
-  // the banding boundary and produces truncated alignments or spurious mismatches. Lancet2's
-  // active regions can contain germline insertions exceeding 2kb, so we set bw=10000
-  // (up from the default 500). This guarantees
-  // massive germline and somatic insertions never exceed the matrix diagonal thresholds.
+  // ── Bandwidth: envelope insertions up to ~2 kbp ───────────────────────
+  // The DP band width constrains how far off-diagonal the SW matrix extends.
+  // A 50 bp insertion requires 50 off-diagonal cells.  bw=10k guarantees
+  // large germline and somatic insertions never exceed the band.
   mopts->bw = 10'000;
 
-  // 3. Seeding Sensitivity (k, w)
-  // Minimap2 uses (k, w)-minimizers to detect identical seed anchors before executing SW.
-  // In highly mutated sequences, STRs, or clustered hypermutation sites, the default
-  // initialization (k=15, w=10) drops anchors because a continuous 15bp exact match
-  // rarely exists. Setting k=11 and w=5 increases sensitivity by placing index anchors
-  // in densely mutated micro-windows where longer seeds cannot form.
+  // ── Chaining gap: cap search radius to read length ────────────────────
+  // max_gap controls the backward search in mg_lchain_dp.  Haplotypes are
+  // <1 kbp and reads are 151 bp — no valid chain spans a 200 bp gap.
+  // Reducing from the default 5000 eliminates wasted inner-loop iterations.
+  mopts->max_gap = 200;
+
+  // ── End bonus: force extension through edge variants ──────────────────
+  // Without this, KSW2's EXTZ_ONLY mode backtracks to the max-score cell
+  // and soft-clips the remaining query — hiding variants near read edges.
+  // end_bonus only redirects the backtrack endpoint; it does not inflate
+  // alignment scores (dp_score always uses ez->max, not mqe + end_bonus)
+  // and has zero performance cost.  INT_MAX guarantees the backtrack always
+  // reaches the query end, eliminating most of erroneous soft-clips.
+  mopts->end_bonus = std::numeric_limits<int>::max();
+
+  // ── Seeding: dense anchors for short, mutated haplotypes ──────────────
+  // k=11, w=5 places minimizer seeds in densely mutated micro-windows
+  // where the default k=15 would fail to produce a continuous exact match.
+  // Per-haplotype indexing makes k=11's higher false-positive rate harmless.
   mIndexingOpts->k = 11;
   mIndexingOpts->w = 5;
-
-  mopts->flag |= MM_F_CIGAR;  // Generate CIGAR (needed for local scoring)
-  mopts->best_n = 1;          // Only keep the best hit per haplotype
 }
 
 // ============================================================================
@@ -138,8 +189,8 @@ Genotyper::Genotyper() {
 auto Genotyper::Genotype(Haplotypes hap_seqs, Reads qry_reads, VariantSet const& variant_set)
     -> Result {
   ResetData(hap_seqs);
-
   Result out_vars_table;
+
   for (auto const& qry_read : qry_reads) {
     auto allele_assignments = AssignReadToAlleles(qry_read, variant_set);
     AddToTable(out_vars_table, qry_read, allele_assignments);
@@ -183,9 +234,7 @@ void Genotyper::ResetData(Haplotypes hap_seqs) {
 auto Genotyper::AssignReadToAlleles(cbdg::Read const& qry_read, VariantSet const& variant_set)
     -> PerVariantAssignment {
   auto all_alns = AlignToAllHaplotypes(qry_read);
-  if (all_alns.empty()) {
-    return {};
-  }
+  if (all_alns.empty()) return {};
 
   auto const qry_quals = qry_read.QualView();
   auto const qry_seq_encoded = EncodeSequence(qry_read.SeqView());
@@ -317,13 +366,7 @@ auto Genotyper::AlignToAllHaplotypes(cbdg::Read const& qry_read) -> std::vector<
     result.mRefEnd = top_hit->re;
     result.mIdentity = mm_event_identity(top_hit);
     result.mHapIdx = idx;
-
-    // Extract CIGAR from mm_extra_t. CigarUnit supports implicit u32 conversion,
-    // allowing direct span-based assign from the raw minimap2 cigar array.
-    if (top_hit->p != nullptr && top_hit->p->n_cigar > 0) {
-      auto const cigar_span = absl::MakeConstSpan(top_hit->p->cigar, top_hit->p->n_cigar);
-      result.mCigar.assign(cigar_span.begin(), cigar_span.end());
-    }
+    result.mCigar = BuildCigar(top_hit, read_len);
 
     results.push_back(std::move(result));
     FreeMm2Alignment(regs, nregs);

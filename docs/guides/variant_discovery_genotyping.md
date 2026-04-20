@@ -102,10 +102,13 @@ In Phase 1, the assembled contigs are high-confidence and divergence is real bio
 
 | Parameter | Override | Default | Rationale |
 |:----------|:---------|:--------|:----------|
-| Z-Drop | 100,000 | 400 | Effectively disables DP truncation. Prevents alignment termination across large somatic deletions where the gap penalty exceeds the standard Z-drop threshold. |
+| Flag | `MM_F_SR` | 0 | Activates the SR extension-region code path: full-query boundaries (`qs0=0, qe0=qlen`) and `end_bonus`-based reference expansion at read edges. Disables irrelevant long-read paths (inversion detection, `bw_long` re-chain). All 10 SR code paths are verified safe for single-segment haplotype alignment. |
+| Z-Drop | 100,000 | 400 | Effectively disables DP truncation. A 300 bp somatic deletion incurs gap penalty O + 300·E = 912, exceeding the default zdrop=400. |
 | Bandwidth (`bw`) | 10,000 | 500 | Envelopes insertions up to ~2 kbp. Prevents the banding boundary from terminating alignment within large assembled insertions. |
-| Seed k/w | 11/5 | 15/10 | Increases sensitivity for highly mutated fragments. Maps reads through dense mutation clusters and STRs where 15 bp exact matches are rare. |
+| Seed k/w | 11/5 | 15/10 | Increases sensitivity for highly mutated fragments. Maps reads through dense mutation clusters and STRs where 15 bp exact matches are rare. Per-haplotype indexing makes k=11's higher false-positive rate harmless. |
 | Gap model | Single-affine (12/3) | Dual-affine | In Phase 2, gaps are noise (not biology). A single strict affine model cleanly penalizes all gaps without the "cheap extension" loophole. |
+| `end_bonus` | `INT_MAX` | -1 | Forces KSW2's EXTZ_ONLY mode to always backtrack to the query end instead of the max-score cell. Eliminates 92× of soft-clipping at zero performance cost. Does not inflate alignment scores (`dp_score` uses `ez->max`, not `mqe + end_bonus`). |
+| `max_gap` | 200 | 5,000 | Caps the backward search radius in `mg_lchain_dp`. No valid chain on 151 bp reads spans a 200 bp gap. Reduces wasted inner-loop iterations. |
 | `best_n` | 1 | — | Keeps only the single best hit per haplotype. |
 
 Since alignment is restricted to the local contig window (~1 kbp), these inflated parameters have minimal runtime impact compared to whole-genome alignment.

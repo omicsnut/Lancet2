@@ -88,9 +88,11 @@ Reads are then re-aligned to each assembled haplotype using **minimap2** with cu
 
 | Parameter | Override | Rationale |
 |-----------|----------|-----------|
-| Z-Drop | 100,000 (effectively disabled) | Prevents alignment truncation across large somatic deletions |
-| Bandwidth (`bw`) | 10,000 | Envelopes insertions up to ~2 kbp within the local window |
-| Seed k/w | 11 / 5 | Maps highly mutated fragments that lack 15bp exact matches |
+| Flag | `MM_F_SR` | Activates full-query extension boundaries |
+| `end_bonus` | `INT_MAX` | Eliminates erroneous soft-clipping |
+| Z-Drop | 100,000 | Prevents DP truncation across large somatic deletions |
+| Bandwidth | 10,000 | Envelopes insertions up to ~2 kbp |
+| Seed k/w | 11 / 5 | Maps highly mutated fragments |
 
 Since alignment is restricted to the local contig window (~1 kbp), the inflated parameters have minimal runtime impact compared to whole-genome alignment. **`O(H × R × L)`** per window, where H = number of haplotypes, R = number of reads, and L = contig length.
 

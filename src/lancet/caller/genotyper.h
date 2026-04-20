@@ -147,7 +147,7 @@ struct ReadAlleleAssignment {
   f64 mFoldedReadPos = 0.0;  // Used for RPCD FORMAT field
 
   // ── 4B Align ────────────────────────────────────────────────────────────
-  i32 mGlobalScore = 0;                  // mm_map DP score of full read→haplotype alignment
+  i32 mGlobalScore = 0;                  // Adjusted score: mm_map DP − sc_penalty − local_raw_score
   u32 mRefNm = 0;                        // Edit distance (NM) against REF haplotype (for ASMD)
   u32 mOwnHapNm = 0;                     // Edit distance (NM) against assigned haplotype (for AHDD)
   u32 mAssignedHaplotypeId = 0;          // SPOA path index this read was assigned to (for HSE)
@@ -194,7 +194,7 @@ struct ReadAlleleAssignment {
 // Genotyper: minimap2-based read-to-haplotype alignment for genotyping
 //
 // Scoring parameters are custom for Illumina read-to-contig realignment,
-// NOT the standard 'sr' preset. See local_scorer.h for scoring constants.
+// NOT the standard 'sr' preset. See scoring_constants.h for scoring values.
 //
 // Isolation boundary: AssignReadToAlleles() encapsulates the alignment
 // engine. Everything downstream (AddToTable, VariantSupport) is decoupled.
