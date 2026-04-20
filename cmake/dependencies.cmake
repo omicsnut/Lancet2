@@ -131,7 +131,7 @@ FetchContent_MakeAvailable(spoa)
 
 # ExternalProject (not FetchContent) because WFA2's CMakeLists.txt and Makefile
 # both inject -march=native, which would pollute Lancet2's portable arch flags.
-set(WFA2_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/wfa2")
+set(WFA2_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/WFA2-lib")
 set(LIB_WFA2 "${WFA2_ROOT_DIR}/lib/libwfa.a")
 set(LIB_WFA2CPP "${WFA2_ROOT_DIR}/lib/libwfacpp.a")
 set(WFA2_BUILD_PARAMS ${WFA2_ROOT_DIR} ${CMAKE_C_COMPILER} ${CMAKE_CXX_COMPILER})
