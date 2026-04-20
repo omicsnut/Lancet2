@@ -95,7 +95,7 @@ set(WITH_BENCHMARKS OFF)
 set(BUILD_SHARED_LIBS OFF)
 set(WITH_NEW_STRATEGIES ON)
 set(WITH_OPTIM ON)
-set(WITH_NATIVE_INSTRUCTIONS LANCET_NATIVE_BUILD)
+set(WITH_NATIVE_INSTRUCTIONS ${LANCET_NATIVE_BUILD})
 FetchContent_Declare(zlib-ng GIT_REPOSITORY https://github.com/zlib-ng/zlib-ng.git GIT_TAG 2.3.3 SYSTEM)
 FetchContent_MakeAvailable(zlib-ng)
 
@@ -124,7 +124,7 @@ ExternalProject_Add(minimap2
 		USES_TERMINAL_DOWNLOAD OFF USES_TERMINAL_BUILD OFF USES_TERMINAL_INSTALL OFF)
 add_dependencies(minimap2 zlibstatic)
 
-set(spoa_optimize_for_native LANCET_NATIVE_BUILD)
+set(spoa_optimize_for_native ${LANCET_NATIVE_BUILD})
 FetchContent_Declare(spoa GIT_REPOSITORY https://github.com/rvaser/spoa GIT_TAG 4.1.5 SYSTEM)
 FetchContent_MakeAvailable(spoa)
 
