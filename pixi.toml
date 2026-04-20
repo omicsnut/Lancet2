@@ -45,7 +45,7 @@ build-debug = { cmd = "cmake --build cmake-build-debug", depends-on = [
 # so passing -DCMAKE_BUILD_TYPE explicitly here is redundant but explicit.
 configure-profile = { cmd = [
   "cmake", "-GNinja",
-  "-B", "cmake-build-profile-release",
+  "-B", "cmake-build-relwithdebinfo",
   "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
   "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
   "-DLANCET_PROFILE_MODE=ON",
@@ -53,7 +53,7 @@ configure-profile = { cmd = [
   "-DLANCET_ENABLE_CLOUD_IO=OFF",
 ], description = "Configure profiling build (RelWithDebInfo + gperftools)" }
 
-build-profile = { cmd = "cmake --build cmake-build-profile-release", depends-on = [
+build-profile = { cmd = "cmake --build cmake-build-relwithdebinfo", depends-on = [
   "configure-profile",
 ], description = "Build Lancet2 for profiling (RelWithDebInfo + gperftools)" }
 
