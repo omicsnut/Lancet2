@@ -466,6 +466,22 @@ void Graph::PruneComponent(usize const component_id) {
   WriteDotDevelop(GraphState::SHORT_TIP_REMOVAL, component_id);
 }
 
+// ============================================================================
+// CompressGraph — Unitig compaction on the bidirected de Bruijn graph.
+//
+// Merges maximal linear chains (unitigs) into single nodes, reducing graph
+// size without changing the walk space. A node is compressible when it has
+// exactly one edge in a given sign-direction and its neighbor satisfies the
+// buddy constraints (see IsPotentialBuddyEdge).
+//
+// Each node is compressed in both sign-directions (DEFAULT and OPPOSITE)
+// to capture unitigs that extend in either orientation of the bidirected
+// graph. Absorbed nodes are collected in `remove_nids` and deleted after
+// the full pass to avoid iterator invalidation.
+//
+// Reference: BCALM2 bidirected graph compaction model
+// https://github.com/GATB/bcalm/blob/v2.2.3/bidirected-graphs-in-bcalm2/bidirected-graphs-in-bcalm2.md
+// ============================================================================
 void Graph::CompressGraph(usize const component_id) {
   absl::flat_hash_set<NodeID> remove_nids;
   remove_nids.reserve(mNodes.size());
@@ -487,6 +503,28 @@ void Graph::CompressGraph(usize const component_id) {
   }
 }
 
+// ============================================================================
+// CompressNode — Extend a single node by absorbing unitig-interior neighbors.
+//
+// Starting from `nid`, repeatedly finds a compressible neighbor in the
+// given sign-direction (`ord`) and merges it into `nid`:
+//
+//    BEFORE:  nid ──e₁──▶ buddy ──e₂──▶ next
+//    AFTER:   nid′ ──────────────e₂′──▶ next    (buddy absorbed, edges rewired)
+//
+// Merge appends the buddy's unique suffix (or prefix, depending on edge
+// signs) to nid's sequence and sums their coverage. The absorbed buddy's
+// edges to its other neighbors are rewired to point directly to nid.
+//
+// Edge sign propagation during rewiring:
+//   When buddy is absorbed, each of buddy's outgoing edges (buddy→next)
+//   must be rewritten as (nid→next). The new edge's SrcSign depends on
+//   whether the buddy's internal sign-continuity was preserved or flipped:
+//     - If e₁.DstSign == e₂.SrcSign: signs are continuous → keep e₁.SrcSign
+//     - If e₁.DstSign != e₂.SrcSign: signs are flipped   → flip e₁.SrcSign
+//   This follows from the BCALM2 walk sign-continuity rule:
+//   e_i.toSign must equal e_{i+1}.fromSign for a valid walk.
+// ============================================================================
 void Graph::CompressNode(NodeID nid, Kmer::Ordering const ord, NodeIdSet& compressed_ids) const {
   auto const node_itr = mNodes.find(nid);
   LANCET_ASSERT(node_itr != mNodes.end())
@@ -503,9 +541,11 @@ void Graph::CompressNode(NodeID nid, Kmer::Ordering const ord, NodeIdSet& compre
     node_itr->second->Merge(*(obdy_itr->second), src2obdy.Kind(), mCurrK);
     node_itr->second->EraseEdge(src2obdy);  // src -->X--> old_buddy
 
+    // Rewire buddy's outgoing edges to point at src (the absorbing node).
+    // Sign propagation: if buddy's internal signs are continuous with the
+    // merge edge, keep the original SrcSign; if flipped, reverse it.
     auto const rev_src2obdy_src_sign = Kmer::RevSign(src2obdy.SrcSign());
     for (Edge const& obdy2nbdy : *(obdy_itr->second)) {
-      // Skip if this is old_buddy --> src edge before merging edges
       if (obdy2nbdy == src2obdy.MirrorEdge()) continue;
 
       LANCET_ASSERT(!obdy2nbdy.IsSelfLoop())
@@ -515,8 +555,6 @@ void Graph::CompressNode(NodeID nid, Kmer::Ordering const ord, NodeIdSet& compre
       LANCET_ASSERT(nbdy_itr != mNodes.end())
       LANCET_ASSERT(nbdy_itr->second != nullptr)
 
-      // src --> old_buddy --> new_buddy
-      // Create src --> new_buddy edge from src --> old_buddy and old_buddy --> new_buddy edges.
       auto const ne_src_sign =
           src2obdy.DstSign() != obdy2nbdy.SrcSign() ? rev_src2obdy_src_sign : src2obdy.SrcSign();
       auto const src2nbdy =
@@ -532,73 +570,124 @@ void Graph::CompressNode(NodeID nid, Kmer::Ordering const ord, NodeIdSet& compre
   }
 }
 
+// ============================================================================
+// FindCompressibleEdge — Find a unitig-interior neighbor to absorb.
+//
+// In the bidirected de Bruijn graph, each edge carries signs at both
+// endpoints: (src, buddy, SrcSign, DstSign). The `ord` parameter selects
+// which sign-direction to probe from `src`:
+//   DEFAULT  → edges where SrcSign == src.SignFor(DEFAULT)   (canonical)
+//   OPPOSITE → edges where SrcSign == src.SignFor(OPPOSITE)  (flipped)
+//
+// Returns the edge (src→buddy) suitable for merging, or std::nullopt.
+//
+//    Bidirected topology around src (probing in DEFAULT direction):
+//
+//      ┌───────────┐       merge edge       ┌───────┐
+//      │ opp_nbour │ ◄──(∓)── src ──(+)──►  │ buddy │
+//      └───────────┘   opposite   DEFAULT   └───────┘
+//                       arm       direction
+//
+//   UNITIG MERGE CONDITIONS:
+//
+//    (1) src has 1–2 out-edges and no self-loops.
+//    (2) Exactly one edge from src in the `ord` direction → merge candidate.
+//    (3) src is NOT the source or sink anchor.
+//    (4) buddy is NOT the source or sink anchor.
+//    (5) IsPotentialBuddyEdge(src, merge_edge) passes.
+//    (6) If an opposite-arm edge exists, it must also pass
+//        IsPotentialBuddyEdge — both arms must be well-formed.
+//
+//   ANCHOR PROTECTION ((3) and (4)):
+//
+//   Source and sink nodes define the reference coordinate boundaries.
+//   Neither may participate in compression in any direction:
+//
+//     ─ If src IS an anchor: absorbing neighbors extends the anchor's
+//       sequence past the reference boundary. MaxFlow walks terminate
+//       at the anchor but emit its full (inflated) sequence, producing
+//       false InDels in the MSA.
+//
+//     ─ If buddy IS an anchor: absorbing it destroys the walk
+//       termination point for MaxFlow's source→sink path discovery.
+// ============================================================================
 auto Graph::FindCompressibleEdge(Node const& src, Kmer::Ordering const ord) const
     -> std::optional<Edge> {
-  // abc_nbour --> abc_bdy --> src --> xyz_bdy --> xyz_nbour
-  // abc_nbour <-- abc_bdy <-- src <-- xyz_bdy --> xyz_nbour
-  //
-  // Pre-requisites:
-  // * Assume we are trying to merge contents of abc_bdy into src.
-  // * Then result will be src --> abc_bdy edge.
-  // * If ord == Default, then result src --> abc_bdy edge must have
-  //   SrcSign() same as src's default sign.
-  // * If ord == Opposite, then result src --> abc_bdy edge must have
-  //   SrcSign() same as src's opposite sign.
-  // * This expected SrcSign for the result src --> abc_bdy edge is named as `merge_sign`.
-  //
-  // In order for src to be compressible with abc_bdy node,
-  // we need to fulfill the following conditions:
-  // 1. src must have at most 2 and at least 1 outgoing edges and not contain any self loops.
-  // 2. src must only have only one out edge where SrcSign is same as merge_sign,
-  //    i.e. the src --> abc_bdy edge.
-  // 3. Another src out edge, if present, must be in opposite direction
-  //    of src --> abc_bdy to xyz_bdy.
-  // 4. Both src --> abc_bdy && src --> xyz_bdy must be buddy edges from src node.
-  //
-  // If all these conditions are satisfied, then src --> abc_bdy edge is returned.
-  // std::nullopt is returned otherwise.
-
   if (src.NumOutEdges() > 2 || src.NumOutEdges() == 0 || src.HasSelfLoop()) return std::nullopt;
+
+  // Anchor guard: prevent source/sink from absorbing any neighbors.
+  auto const [source_id, sink_id] = mSourceAndSinkIds;
+  if (src.Identifier() == source_id || src.Identifier() == sink_id) return std::nullopt;
 
   auto const mergeable_edges = src.FindEdgesInDirection(ord);
   if (mergeable_edges.size() != 1) return std::nullopt;
 
   auto const potential_result_edge = mergeable_edges[0];
-  auto const [source_id, sink_id] = mSourceAndSinkIds;
+
+  // Anchor guard: prevent any node from absorbing the source/sink.
   if (potential_result_edge.DstId() == source_id || potential_result_edge.DstId() == sink_id) {
     return std::nullopt;
   }
 
-  // Check if src --> abc_bdy is a potential buddy edge
   if (!IsPotentialBuddyEdge(src, potential_result_edge)) return std::nullopt;
 
+  // If src has a second edge in the opposite direction, verify its buddy
+  // constraints too — both arms of the unitig must be well-formed.
   auto const opp_dir_edges = src.FindEdgesInDirection(Kmer::RevOrdering(ord));
   if (opp_dir_edges.empty()) return potential_result_edge;
   if (opp_dir_edges.size() > 1) return std::nullopt;
 
-  // Check if src --> abc_bdy is a potential buddy edge
   if (!IsPotentialBuddyEdge(src, opp_dir_edges[0])) return std::nullopt;
 
   return potential_result_edge;
 }
 
+// ============================================================================
+// IsPotentialBuddyEdge — Verify that a neighbor qualifies as a unitig interior.
+//
+// Given the edge (src→nbour), checks whether `nbour` is a valid unitig-
+// interior node that can be absorbed into `src`.
+//
+// Topology being validated:
+//
+//     ┌─────┐  conn=(s₁,d₁)  ┌───────┐  (s₂,d₂)    ┌─────┐
+//     │ src │ ──────────────►│ nbour │ ──────────► │ nnb │
+//     └─────┘                └───────┘             └─────┘
+//                             ◄──────
+//                            mirror of conn
+//                            (d₁,s₁) = nbour→src
+//
+//   s₁,d₁ = SrcSign,DstSign of conn   (determines orientation at each end)
+//   s₂,d₂ = signs of nbour's onward edge to nnb (if it exists)
+//
+// UNITIG-INTERIOR CONDITIONS:
+//
+//   (1) nbour has 1–2 out-edges and no self-loops.
+//   (2) nbour has exactly one edge in the d₁ sign-direction, and it must
+//       be the mirror of conn (i.e., nbour→src). This confirms the
+//       BCALM2 bidirected mirror constraint.
+//   (3) If nbour has a second edge (in the opposite sign-direction), it
+//       continues the chain to a next neighbor `nnb`.
+//       - That edge must NOT loop back to src (cycle rejection).
+//       - nnb must have at most 2 out-edges (not a branch point).
+//
+// DEGENERATE PAIR REJECTION:
+//
+//     ┌─────┐                ┌───────┐
+//     │ src │ ◄───────────── │ nbour │
+//     │     │ ──────────────►│       │
+//     └─────┘  both degree-1 └───────┘
+//
+//   If src and nbour each have exactly one edge pointing at each other,
+//   merging would produce a degenerate zero-edge node. Rejected.
+// ============================================================================
 auto Graph::IsPotentialBuddyEdge(Node const& src, Edge const& conn) const -> bool {
-  // conn is an outgoing edge from src node.
-  // conn's dst node is called nbour for "neighbour" node.
-  // * nbour node has at most 2 and at least 1 outgoing edges and not contain any self loops.
-  // * One of nbour outgoing edges must be a mirror of src --> nbour, i.e. nbour --> src.
-  // * Another nbour outgoing edge, if present, must be in the opposite direction
-  //   of nbour --> src to nbour's nbour `nnb`.
-  // * Neighbour's neighbour `nnb`, if present, can at most have 2 outgoing edges.
-  //
-  // If all of these checks pass, then `conn` is a
-  // potential buddy edge from src --> neighbour.
   auto const nbour_itr = mNodes.find(conn.DstId());
   LANCET_ASSERT(nbour_itr != mNodes.end())
   LANCET_ASSERT(nbour_itr->second != nullptr)
   Node const& nbour = *nbour_itr->second;
 
-  // Check edge case where the only nodes between src and nbour are each other
+  // Degenerate pair: src ↔ nbour with both degree-1. Reject.
   if (src.NumOutEdges() == 1 && nbour.NumOutEdges() == 1) {
     auto const& edge_from_src = *src.cbegin();
     auto const& edge_from_nbour = *nbour.cbegin();
@@ -610,6 +699,8 @@ auto Graph::IsPotentialBuddyEdge(Node const& src, Edge const& conn) const -> boo
 
   if (nbour.NumOutEdges() > 2 || nbour.NumOutEdges() == 0 || nbour.HasSelfLoop()) return false;
 
+  // (2) Verify the mirror edge (nbour→src) exists and is the sole edge
+  //     in the d₁ sign-direction from nbour.
   auto const expected_nbour2src = conn.MirrorEdge();
   auto const start_sign_nbour2src = expected_nbour2src.SrcSign();
   auto const dir_nbour2src = start_sign_nbour2src == nbour.SignFor(Kmer::Ordering::DEFAULT)
@@ -620,8 +711,9 @@ auto Graph::IsPotentialBuddyEdge(Node const& src, Edge const& conn) const -> boo
     return false;
   }
 
+  // (3) Check the onward edge in the opposite sign-direction.
+  //     Must not loop back to src (cycle) and nnb must have degree ≤ 2.
   auto const nb_edges_in_opp_dir = nbour.FindEdgesInDirection(Kmer::RevOrdering(dir_nbour2src));
-  // Check if nbour loops back in a cycle to src node in opposite direction again
   if (nb_edges_in_opp_dir.size() != 1 || nb_edges_in_opp_dir[0].DstId() == conn.SrcId()) {
     return false;
   }
