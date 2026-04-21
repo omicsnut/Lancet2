@@ -207,10 +207,10 @@ void WriteU64(int file_desc, u64 val) {
 // ============================================================================
 
 struct alignas(64) CrashSlot {
-  int volatile mInUse;      // 4B — 0 = free, 1 = claimed by a thread
-  int volatile mActive;     // 4B — 0 = idle, 1 = processing a window
   u64 volatile mGenomeIdx;  // 8B — Window::GenomeIndex() being processed
   pthread_t mThreadId;      // 8B — owning thread ID for crash correlation
+  int volatile mInUse;      // 4B — 0 = free, 1 = claimed by a thread
+  int volatile mActive;     // 4B — 0 = idle, 1 = processing a window
   // NOLINTNEXTLINE(modernize-avoid-c-arrays) — fixed buffer, async-signal-safe
   char mRegion[lancet::base::MAX_REGION_LEN];  // 128B — e.g. "chr4:12345-67890"
 };

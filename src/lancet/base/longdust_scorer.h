@@ -404,10 +404,10 @@ class LongdustQScorer {
   ///                       uniform (no correction). For non-human genomes, set to
   ///                       the organism's genome-wide GC (e.g., 0.20 for P. falciparum).
   explicit LongdustQScorer(int kmer_len = 7, int max_len = 1024, f64 gc_frac = 0.41)
-      : mK(kmer_len),
+      : mGc(std::clamp(gc_frac, 0.0, 1.0)),
+        mK(kmer_len),
         mMask((1U << (2 * kmer_len)) - 1),
-        mNumKmers(1U << (2 * kmer_len)),
-        mGc(std::clamp(gc_frac, 0.0, 1.0)) {
+        mNumKmers(1U << (2 * kmer_len)) {
     PrecomputeF(max_len);
   }
 
@@ -523,11 +523,11 @@ class LongdustQScorer {
   }
 
  private:
+  std::vector<f64> mF;  // precomputed f(ℓ) table: mF[ℓ] = expected Σ log(c!) under null model
+  f64 mGc;              // global background GC fraction for bias correction
   int mK;               // k-mer size (e.g., 7 → 7-mers)
   u32 mMask;            // bitmask to extract a k-mer from the rolling integer: (1 << 2k) - 1
   u32 mNumKmers;        // total possible k-mers: 4^k (e.g., 16,384 for k=7)
-  f64 mGc;              // global background GC fraction for bias correction
-  std::vector<f64> mF;  // precomputed f(ℓ) table: mF[ℓ] = expected Σ log(c!) under null model
 
   // ============================================================================
   // ComputeFSingle: expected log-factorial per k-mer under Poisson(λ)

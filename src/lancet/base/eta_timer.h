@@ -18,10 +18,10 @@ class EtaTimer {
   [[nodiscard]] auto RatePerSecond() const -> f64;
 
  private:
+  OnlineStats mRunStats;
+  Timer mProgressTimer;
   usize mNumDone = 0;
   usize mNumTotal = 0;
-  Timer mProgressTimer;
-  OnlineStats mRunStats;
 };
 
 }  // namespace lancet::base

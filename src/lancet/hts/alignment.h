@@ -133,15 +133,16 @@ class Alignment {
   i64 mStart0 = -1;
   i64 mMateStart0 = -1;
   i64 mInsertSize = -1;
-  i32 mChromIdx = -1;
-  i32 mMateChromIdx = -1;
-  u16 mSamFlag = 0;
-  u8 mMapQual = 0;
 
   /// Non-owning pointer to the bam1_t block managed by the Iterator/Extractor.
   /// WARNING: This pointer is invalidated on the next iterator increment (++itr).
   /// See the class-level documentation for full lifetime semantics.
   bam1_t* mRawAln = nullptr;
+
+  i32 mChromIdx = -1;
+  i32 mMateChromIdx = -1;
+  u16 mSamFlag = 0;
+  u8 mMapQual = 0;
 
   friend class Iterator;
   using TagNamesSet = absl::flat_hash_set<std::string>;
