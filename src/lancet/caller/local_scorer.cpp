@@ -131,15 +131,27 @@ auto EncodeSequence(std::string_view const raw_seq) -> std::vector<u8> {
 // Given a read→haplotype CIGAR alignment, this function extracts specific metrics
 // for the sub-region of the haplotype that contains the variant:
 //
-//   1. mPbqScore:  PBQ-weighted DP score. Each position's substitution matrix
-//                  contribution is scaled by (1 - ε) where ε = 10^(-PBQ/10).
-//                  This down-weights low-confidence bases and up-weights
-//                  high-confidence ones, analogous to GATK's PairHMM which
-//                  bakes PBQ directly into the per-read log-likelihood.
+//   1. mRawScore:  Unweighted substitution-matrix score for M/=/X ops ONLY.
+//                  Gap operations (I/D) are excluded.  mRawScore is subtracted
+//                  from the global alignment score in combined_scorer.cpp to
+//                  remove the variant region's contribution before replacing
+//                  it with the PBQ-weighted score.  If gap penalties were
+//                  included, the subtraction would refund them:
+//                  global − (−penalty) = global + penalty.  For a 150bp
+//                  insertion this refund is +450, making a read with a large
+//                  gap score nearly as high as a perfect match and destroying
+//                  allele discrimination.
 //
-//   2. mIdentity:  fraction of aligned bases that are exact matches.
+//   2. mPbqScore:  PBQ-weighted DP score. Each M/=/X position's substitution
+//                  matrix contribution is scaled by (1 - ε) where ε =
+//                  10^(-PBQ/10). Gap operations also accumulate into
+//                  mPbqScore, but this is harmless: pure gap regions have
+//                  mIdentity=0, so the product (mPbqScore × mIdentity)
+//                  in the combined scoring formula evaluates to 0.
 //
-//   3. mBaseQual:  Minimum Phred base quality (weakest-link) or flanking boundary.
+//   3. mIdentity:  fraction of aligned bases that are exact matches.
+//
+//   4. mBaseQual:  Minimum Phred base quality (weakest-link) or flanking boundary.
 //
 // CRITICAL: tpos coordinates in the CIGAR are relative to the alignment start
 // (ref_start from mm_map), NOT position 0 of the haplotype. The caller must
@@ -203,11 +215,16 @@ auto ComputeLocalScore(std::vector<hts::CigarUnit> const& qry_aln_cigar,
       // ============================================================================
       // Insertion Geometry
       // ============================================================================
-      // Consumes query bases only. Penalizes alignment quality via gap extension
-      // weights because inserted bases have no reference counterpart.
+      // Consumes query bases only.  Inserted bases have no reference counterpart
+      // so they cannot produce a substitution matrix score.
+      //
+      // Gap penalties accumulate into mPbqScore (gated to zero by mIdentity
+      // for pure-gap regions) but are EXCLUDED from mRawScore.  Including
+      // them would cause the subtraction in combined_scorer.cpp to refund
+      // the penalty: global − (−penalty) = global + penalty.  For a 150bp
+      // insertion this is a +450 refund — making the read score nearly
+      // indistinguishable from a perfect match.
       case hts::CigarOp::INSERTION: {
-        // Inserted bases don't advance tpos, but if we're inside the variant
-        // region they count as aligned content and contribute PBQ.
         bool const in_region = acc.InRegion(tpos);
         for (u32 i = 0; i < len; ++i, ++qpos) {
           if (!in_region) {
@@ -215,7 +232,6 @@ auto ComputeLocalScore(std::vector<hts::CigarUnit> const& qry_aln_cigar,
           }
           ++acc.mAligned;
           acc.TrackBaseQual(qpos);
-          acc.mRawScore += static_cast<f64>(SCORING_GAP_EXTEND);
           acc.mPbqScore += static_cast<f64>(SCORING_GAP_EXTEND);
         }
         break;
@@ -224,13 +240,16 @@ auto ComputeLocalScore(std::vector<hts::CigarUnit> const& qry_aln_cigar,
       // ============================================================================
       // Deletion Geometry
       // ============================================================================
-      // Consumes target bases only. Penalizes via gap extensions. Deletions have no
-      // query bases, so the quality score borrows confidence from the flanking neighbors.
+      // Consumes target bases only.  Deletions have no query bases, so the
+      // quality score borrows confidence from the flanking neighbors.
+      //
+      // Gap penalties accumulate into mPbqScore (gated by mIdentity=0 for
+      // pure-gap regions) but are excluded from mRawScore for the same
+      // penalty-refund reason documented in the Insertion block above.
       case hts::CigarOp::DELETION: {
         for (u32 i = 0; i < len; ++i, ++tpos) {
           if (acc.InRegion(tpos)) {
             ++acc.mAligned;
-            acc.mRawScore += static_cast<f64>(SCORING_GAP_EXTEND);
             acc.mPbqScore += static_cast<f64>(SCORING_GAP_EXTEND);
           }
         }

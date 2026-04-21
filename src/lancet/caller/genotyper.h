@@ -156,10 +156,10 @@ struct ReadAlleleAssignment {
   f64 mFoldedReadPos = 0.0;  // Used for RPCD FORMAT field
 
   // ── 4B Align ────────────────────────────────────────────────────────────
-  i32 mGlobalScore = 0;                  // Adjusted score: mm_map DP − sc_penalty − local_raw_score
-  u32 mRefNm = 0;                        // Edit distance (NM) against REF haplotype (for ASMD)
-  u32 mOwnHapNm = 0;                     // Edit distance (NM) against assigned haplotype (for AHDD)
-  u32 mAssignedHaplotypeId = 0;          // SPOA path index this read was assigned to (for HSE)
+  i32 mGlobalScore = 0;          // mm_map DP − sc_penalty − local_raw_score (M/=/X only, no I/D)
+  u32 mRefNm = 0;                // Edit distance (NM) against REF haplotype (for ASMD)
+  u32 mOwnHapNm = 0;             // Edit distance (NM) against assigned haplotype (for AHDD)
+  u32 mAssignedHaplotypeId = 0;  // SPOA path index this read was assigned to (for HSE)
   AlleleIndex mAllele = REF_ALLELE_IDX;  // Allele enumerator, defaults to REF
 
   // ── 1B Align ────────────────────────────────────────────────────────────

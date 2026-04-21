@@ -42,12 +42,15 @@ namespace {
  * ============================================================================
  * Values: Match: 0, Mismatch: -6, Gap1: -6,-2, Gap2: -26,-1
  *
- * **SIMD Overflow Note**: All classical parameters (typically +2/-4) have
- * been shifted downwards by 2. Setting the Match score to 0 is mandatory because SPOA
- * employs 8-bit AVX2 SIMD vector lanes. A 1000bp
- * window accumulating +2 match scores would reach 2000, severely overflowing the
- * signed 8-bit integers (max 127). By anchoring the Match score to 0, all runtime
- * scores accumulate negatively, staying within the SIMD lane boundaries.
+ * **SIMD Lane Width Note**: All classical parameters (typically +2/-4) have
+ * been shifted downwards by 2.  Setting the Match score to 0 keeps all
+ * runtime scores non-positive, which keeps SPOA's WorstCaseAlignmentScore()
+ * above the int16 threshold — so the engine selects the faster int16 SIMD
+ * path (16 lanes per AVX2 register) instead of falling back to int32
+ * (8 lanes, half throughput).  SPOA 4.1.5 dynamically dispatches between
+ * int16 and int32 via WorstCaseAlignmentScore().
+ * With Match=0 and our gap parameters, the worst-case score for typical
+ * alignments (~-2300) is safely above int16 minimum (-32768).
  *
  * Unlike minimap2's `asm5` preset (which aggressively splits contigs at major
  * divergences for whole-genome synteny filtering), these parameters are tuned

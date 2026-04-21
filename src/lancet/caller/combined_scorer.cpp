@@ -46,8 +46,16 @@ auto ComputeHaplotypeEditDistance(std::vector<Mm2AlnResult> const& alns,
 //   2. Checking overlap (OverlapsAlignment)
 //   3. Compare-and-swap ranking (CombinedScore())
 //
-// This function only computes scoring:
-//   combined = (global_score - sc_penalty - local_raw_score) + (local_pbq * identity)
+// Scoring formula:
+//   combined = (global_score - sc_penalty - local_raw_score) + (local_pbq × identity)
+//
+// local_raw_score captures ONLY substitution-matrix scores (M/=/X ops) within
+// the variant boundary — gap penalties (I/D) are excluded.  Subtracting
+// local_raw_score removes the variant region's contribution from the global
+// score so the PBQ-weighted replacement does not double-count it.  If gap
+// penalties were included, the subtraction would refund them: for a 150bp
+// insertion, global − (−450) = global + 450 — inflating the score by 450
+// and making it indistinguishable from a perfect match.
 // ============================================================================
 auto ScoreReadAtVariant(Mm2AlnResult const& aln, absl::Span<u8 const> encoded_haplotype,
                         ReadAlnContext const& read_ctx, HapVariantBounds const& bounds)

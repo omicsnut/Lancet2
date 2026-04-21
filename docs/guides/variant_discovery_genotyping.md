@@ -21,18 +21,18 @@ The scoring parameters are **not** the standard SPOA defaults — they were spec
 
 | Parameter | Value | Standard Value | Rationale |
 |:----------|:------|:---------------|:----------|
-| Match | **0** | +2 | Prevents 8-bit AVX2 SIMD overflow (see below) |
+| Match | **0** | +2 | Keeps SPOA in the faster int16 SIMD path (see below) |
 | Mismatch | −6 | −4 | Moderate penalty keeps MSA intact through dense MNVs |
 | Gap Open 1 | −6 | — | Short-gap model: penalizes sequencer noise micro-indels |
 | Gap Extend 1 | −2 | — | Short-gap model: moderate extension cost |
 | Gap Open 2 | −26 | — | Long-gap model: high upfront cost, but... |
 | Gap Extend 2 | −1 | — | ...cheap per-base extension for large biological indels |
 
-#### Why Match = 0 (SIMD Overflow Prevention)
+#### Why Match = 0 (SIMD Lane Width)
 
-SPOA uses **8-bit signed integer AVX2 SIMD lanes** for the DP matrix computation. With the classical match score of +2, a 1,000 bp window accumulating match bonuses would reach a score of 2,000 — severely overflowing the signed 8-bit range (max 127). By anchoring the match score at 0, all runtime scores accumulate negatively, staying within the SIMD lane boundaries.
+SPOA 4.1.5 dynamically dispatches between **int16** and **int32** SIMD lanes based on `WorstCaseAlignmentScore()`. Setting Match=0 keeps all runtime scores non-positive, which keeps the worst-case score above the int16 threshold (−32768) — so the engine selects the faster int16 path (16 lanes per AVX2 register) instead of falling back to int32 (8 lanes, half throughput).
 
-All other parameters are mathematically shifted downward by −2 to compensate: a standard +2/−4 match/mismatch scheme becomes 0/−6.
+All other parameters are shifted downward by −2 to compensate: a standard +2/−4 match/mismatch scheme becomes 0/−6.
 
 #### Dual-Affine Gap Model: The 20 bp Crossover
 
@@ -106,12 +106,13 @@ In Phase 1, the assembled contigs are high-confidence and divergence is real bio
 | Z-Drop | 100,000 | 400 | Effectively disables DP truncation. A 300 bp somatic deletion incurs gap penalty O + 300·E = 912, exceeding the default zdrop=400. |
 | Bandwidth (`bw`) | 10,000 | 500 | Envelopes insertions up to ~2 kbp. Prevents the banding boundary from terminating alignment within large assembled insertions. |
 | Seed k/w | 11/5 | 15/10 | Increases sensitivity for highly mutated fragments. Maps reads through dense mutation clusters and STRs where 15 bp exact matches are rare. Per-haplotype indexing makes k=11's higher false-positive rate harmless. |
-| Gap model | Single-affine (12/3) | Dual-affine | In Phase 2, gaps are noise (not biology). A single strict affine model cleanly penalizes all gaps without the "cheap extension" loophole. |
-| `end_bonus` | `INT_MAX` | -1 | Forces KSW2's EXTZ_ONLY mode to always backtrack to the query end instead of the max-score cell. Eliminates 92× of soft-clipping at zero performance cost. Does not inflate alignment scores (`dp_score` uses `ez->max`, not `mqe + end_bonus`). |
-| `max_gap` | 200 | 5,000 | Caps the backward search radius in `mg_lchain_dp`. No valid chain on 151 bp reads spans a 200 bp gap. Reduces wasted inner-loop iterations. |
+| Gap model | Single-affine (12/3) | Dual-affine | In Phase 2, gaps are noise (not biology). A single strict affine model penalizes all gaps uniformly without a cheap-extension path. |
+| `end_bonus` | 10,000 | -1 | Forces KSW2's EXTZ_ONLY mode to always backtrack to the query end instead of the max-score cell. 10,000 is 66× the max theoretical alignment score (151), keeping `mqe + end_bonus` within int32 range. `INT_MAX` causes signed overflow (undefined behavior) at two call sites: `ksw2_extd2_sse.c:393` and `align.c:699-702`. |
+| `max_gap` | 200 | 5,000 | Caps the backward search radius in `mg_lchain_dp` on the **query** dimension. No valid chain on a 151 bp read spans a 200 bp query gap. |
+| `max_gap_ref` | 5,000 | −1 (defaults to `max_gap`) | Caps the chaining gap on the **reference (haplotype)** dimension. Must be set independently because minimap2 defaults it to `max_gap` when ≤0 (`map.c:271`). With `max_gap_ref=200`, seeds separated by >200 bp on the haplotype cannot chain, blocking alignments across insertions >200 bp. Since assembled haplotypes range 200–2000 bp and routinely contain large InDels, 5,000 (minimap2's own default) covers all cases. |
 | `best_n` | 1 | — | Keeps only the single best hit per haplotype. |
 
-Since alignment is restricted to the local contig window (~1 kbp), these inflated parameters have minimal runtime impact compared to whole-genome alignment.
+Since alignment is restricted to the local contig window, these inflated parameters have minimal runtime impact compared to whole-genome alignment.
 
 ### Exhaustive Haplotype Alignment
 
@@ -133,14 +134,16 @@ Each component captures a distinct signal:
 | Component | Definition | Purpose |
 |:----------|:-----------|:--------|
 | `global_score` | minimap2 DP score of the full read→haplotype alignment | How well the entire read fits this haplotype, including flanking context |
-| `local_raw_score` | Raw substitution matrix score within the variant's physical boundaries on the haplotype | **Subtracted** to carve an algebraic "hole" and prevent double-counting when the PBQ score is added |
+| `local_raw_score` | Raw substitution-matrix score (M/=/X ops only) within the variant's physical boundaries on the haplotype. Gap penalties (I/D) are excluded. | **Subtracted** to remove the variant region's contribution from the global score so the PBQ-weighted replacement does not double-count it. Excluding gap penalties prevents the subtraction from refunding them: for a 150bp insertion, `global − (−450) = global + 450` would inflate the score by 450, making it indistinguishable from a perfect match. |
 | `sc_penalty` | Soft-clip penalty (clipped bases × mismatch cost) | **Subtracted** to crush chimeric supplementary mappings that only partially align |
-| `local_pbq_score` | PBQ-weighted DP score within the variant region: each base's substitution matrix contribution is scaled by Phred confidence `(1 − 10^(−Q/10))` | High-confidence bases contribute more; Q5 bases are aggressively downweighted |
-| `local_identity` | Fraction of exact matches within the variant region from the CIGAR trace | **Gates** the PBQ score — a high PBQ score from a fragmented, low-identity alignment (e.g., STR artifact) is mathematically discounted |
+| `local_pbq_score` | PBQ-weighted DP score within the variant region: each base's substitution matrix contribution is scaled by Phred confidence `(1 − 10^(−Q/10))` | High-confidence bases contribute more; Q5 bases are down-weighted to near zero |
+| `local_identity` | Fraction of exact matches within the variant region from the CIGAR trace | **Gates** the PBQ score — a high PBQ score from a fragmented, low-identity alignment (e.g., STR artifact) is discounted toward zero |
 
 #### Why Subtract `local_raw_score`?
 
-The `global_score` from minimap2 already includes the raw alignment cost spanning the variant region. If `local_pbq_score` were naively added on top, the variant region would be **double-counted**. By subtracting `local_raw_score`, the formula carves an exact algebraic hole in the global alignment, allowing the higher-fidelity PBQ-weighted local score to replace it cleanly.
+The `global_score` from minimap2 already includes the raw alignment cost spanning the variant region. If `local_pbq_score` were added on top, the variant region would be **double-counted**. Subtracting `local_raw_score` removes the variant region's contribution from the global score, allowing the higher-fidelity PBQ-weighted local score to replace it.
+
+`local_raw_score` captures only substitution-matrix scores from M/=/X CIGAR operations — gap penalties (I/D) are excluded. If gap penalties were included, the subtraction would refund them: `global − (−gap_penalty) = global + gap_penalty`. For a 150bp insertion, this is a +450 refund that makes a read with a large gap score nearly as high as a perfect match, destroying allele discrimination for large InDels.
 
 #### Why Subtract `sc_penalty`?
 

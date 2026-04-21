@@ -114,7 +114,7 @@ Use tables for structured comparisons of 3+ items. Always left-align columns wit
 ```markdown
 | Parameter | Value | Standard Value | Rationale |
 |:----------|:------|:---------------|:----------|
-| Match | **0** | +2 | Prevents 8-bit AVX2 SIMD overflow |
+| Match | **0** | +2 | Keeps SPOA in the faster int16 SIMD path |
 ```
 
 **Comparison tables** (property | option A | option B):

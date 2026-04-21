@@ -80,7 +80,7 @@ The enumerator terminates when no walk with a new edge exists, yielding all dist
 
 ## 5. MSA & Read-to-Haplotype Alignment
 
-Assembled haplotype paths are aligned into a Multiple Sequence Alignment using **SPOA** (SIMD Partial Order Alignment) with convex dual-affine scoring. The two gap models intersect at ~20bp: Model 1 (`O=-6, E=-2`) penalizes short sequencer-noise gaps; Model 2 (`O=-26, E=-1`) allows cheap extension for large biological indels. Match is anchored at 0 (vs. typical +2) to prevent overflow in SPOA's 8-bit AVX2 SIMD lanes across ~1 kbp windows. **`O(N × L²)`** where N = number of haplotypes and L = contig length.
+Assembled haplotype paths are aligned into a Multiple Sequence Alignment using **SPOA** (SIMD Partial Order Alignment) with convex dual-affine scoring. The two gap models intersect at ~20bp: Model 1 (`O=-6, E=-2`) penalizes short sequencer-noise gaps; Model 2 (`O=-26, E=-1`) allows cheap extension for large biological indels. Match is anchored at 0 (vs. typical +2) to keep SPOA in the faster int16 SIMD path — SPOA dispatches between int16 and int32 based on `WorstCaseAlignmentScore()`, and Match=0 keeps scores non-positive, staying above the int16 threshold (−32768). **`O(N × L²)`** where N = number of haplotypes and L = contig length.
 
 Variants are extracted from the POA graph's column-aligned topology. Each raw variant records its coordinates on every haplotype for downstream genotyping.
 
@@ -89,12 +89,14 @@ Reads are then re-aligned to each assembled haplotype using **minimap2** with cu
 | Parameter | Override | Rationale |
 |-----------|----------|-----------|
 | Flag | `MM_F_SR` | Activates full-query extension boundaries |
-| `end_bonus` | `INT_MAX` | Eliminates erroneous soft-clipping |
+| `end_bonus` | 10,000 | Forces query-end backtrack; safe from signed int32 overflow (unlike `INT_MAX`) |
 | Z-Drop | 100,000 | Prevents DP truncation across large somatic deletions |
 | Bandwidth | 10,000 | Envelopes insertions up to ~2 kbp |
 | Seed k/w | 11 / 5 | Maps highly mutated fragments |
+| `max_gap` | 200 | Caps query-side chaining gap to read length |
+| `max_gap_ref` | 5,000 | Allows chaining across full haplotype length (200–2000 bp) |
 
-Since alignment is restricted to the local contig window (~1 kbp), the inflated parameters have minimal runtime impact compared to whole-genome alignment. **`O(H × R × L)`** per window, where H = number of haplotypes, R = number of reads, and L = contig length.
+Since alignment is restricted to the local contig window, the inflated parameters have minimal runtime impact compared to whole-genome alignment. **`O(H × R × L)`** per window, where H = number of haplotypes, R = number of reads, and L = contig length.
 
 * **Read more:** [Alignment-Derived Annotations](alignment_annotations.md)
 

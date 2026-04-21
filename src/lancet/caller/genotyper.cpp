@@ -20,7 +20,6 @@ extern "C" {
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 
-#include <limits>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -40,7 +39,7 @@ inline void FreeMm2Alignment(mm_reg1_t* regs, int const num_regs) {
 // NOLINTEND(cppcoreguidelines-no-malloc)
 
 // Build a CIGAR vector from a minimap2 alignment result, inserting leading and
-// trailing soft-clip (S) operations from qs/qe.  Even with end_bonus=INT_MAX,
+// trailing soft-clip (S) operations from qs/qe.  Even with end_bonus=10000,
 // ~0.1% of reads retain small clips.  Without explicit S operations the downstream
 // ComputeSoftClipPenalty() returns 0, failing to crush chimeric partial alignments.
 auto BuildCigar(mm_reg1_t const* hit, int qlen) -> std::vector<lancet::hts::CigarUnit> {
@@ -141,23 +140,45 @@ Genotyper::Genotyper() {
   mopts->bw = 10'000;
 
   // ============================================================================
-  // Chaining gap: cap search radius to read length
+  // Chaining gap: separate query and reference limits
   // ============================================================================
-  // max_gap controls the backward search in mg_lchain_dp.  Haplotypes are
-  // <1 kbp and reads are 151 bp — no valid chain spans a 200 bp gap.
-  // Reducing from the default 5000 eliminates wasted inner-loop iterations.
+  // max_gap controls the backward search in mg_lchain_dp.  For 151 bp reads,
+  // no valid query-side chain spans a 200 bp gap, so 200 caps wasted iterations.
+  //
+  // max_gap_ref must be set INDEPENDENTLY because minimap2 defaults it to
+  // max_gap when max_gap_ref <= 0 (map.c:271).  With max_gap_ref=200, seeds
+  // separated by >200 bp on the haplotype cannot chain — blocking alignments
+  // across any insertion >200 bp on the ALT haplotype.  Since assembled
+  // haplotypes range 200–2000 bp and routinely contain large InDels (germline,
+  // mosaic, somatic), this destroys cross-haplotype comparison for large
+  // variants.  5000 is minimap2's own whole-genome default for max_gap
+  // (options.c:27) and comfortably exceeds the maximum haplotype length.
+  // At 2000 bp haplotype length (~400 minimizers with k=11/w=5), the O(N²)
+  // chaining cost is ~160K operations — negligible vs. the DP alignment cost.
   mopts->max_gap = 200;
+  mopts->max_gap_ref = 5000;
 
   // ============================================================================
-  // End bonus: force extension through edge variants
+  // End bonus: force extension through edge variants (overflow-safe)
   // ============================================================================
-  // Without this, KSW2's EXTZ_ONLY mode backtracks to the max-score cell
+  // Without end_bonus, KSW2's EXTZ_ONLY mode backtracks to the max-score cell
   // and soft-clips the remaining query — hiding variants near read edges.
-  // end_bonus only redirects the backtrack endpoint; it does not inflate
-  // alignment scores (dp_score always uses ez->max, not mqe + end_bonus)
-  // and has zero performance cost.  INT_MAX guarantees the backtrack always
-  // reaches the query end, eliminating most of erroneous soft-clips.
-  mopts->end_bonus = std::numeric_limits<int>::max();
+  // A large end_bonus makes the condition (mqe + end_bonus > max) always true,
+  // redirecting the backtrack to the query end.
+  //
+  // CRITICAL: INT_MAX causes signed int32 overflow at two call sites:
+  //   1. ksw2_extd2_sse.c:393  — mqe + end_bonus overflows when mqe > 0
+  //   2. align.c:699-702       — reference expansion: l*a + end_bonus overflows
+  // Both are undefined behavior in C.  On x86 with wrapping, the overflow
+  // causes the EXTZ_ONLY condition to FAIL (wrapped negative > positive is
+  // false), reverting to soft-clip behavior — the exact opposite of intent.
+  //
+  // 10000 is 66× larger than any realistic alignment score
+  // (max theoretical = read_length × match = 151 × 1 = 151) while keeping
+  // mqe + end_bonus safely within int32_t range.  end_bonus does not inflate
+  // dp_score (dp_score always uses ez->max, not mqe + end_bonus) and has
+  // zero performance cost.
+  mopts->end_bonus = 10'000;
 
   // ============================================================================
   // Seeding: dense anchors for short, mutated haplotypes
