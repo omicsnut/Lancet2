@@ -124,6 +124,7 @@ class OnlineStats {
   auto operator!=(OnlineStats const& rhs) const -> bool { return !(*this == rhs); }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   usize mNum = 0;
   f64 mMoment1 = 0.0;
   f64 mMoment2 = 0.0;

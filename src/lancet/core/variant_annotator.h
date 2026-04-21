@@ -41,6 +41,7 @@ class VariantAnnotator {
                                       cbdg::GraphComplexity const& component_cx);
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   /// Sequence complexity scorer — produces 11-feature SequenceComplexity per variant.
   /// Owns its LongdustQScorer instances. Constructed once with gc_frac.
   base::SequenceComplexityScorer mSeqCxScorer;

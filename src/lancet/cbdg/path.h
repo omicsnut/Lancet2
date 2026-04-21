@@ -40,6 +40,7 @@ class Path {
   [[nodiscard]] auto TotalCoverage() const -> f64 { return mTotalCov; }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::string mSequence;
   absl::InlinedVector<u32, 256> mNodeCoverages;
   f64 mMeanCov = 0.0;

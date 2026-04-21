@@ -41,7 +41,9 @@ class BgzfStreambuf : public std::streambuf {
 
  private:
   static constexpr int SENTINEL_BUFFER_POSITION = -999;
+  // ── 8B Align ────────────────────────────────────────────────────────────
   BGZF* mFilePtr = nullptr;
+  // ── 4B Align ────────────────────────────────────────────────────────────
   int mCurrPos = 0;
 };
 
@@ -70,7 +72,9 @@ class BgzfOstream : public std::ostream {
   void Close();
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   detail::BgzfStreambuf mBgzfBuffer;
+  // ── 1B Align ────────────────────────────────────────────────────────────
   BgzfFormat mOutFmt = BgzfFormat::UNSPECIFIED;
 
   void BuildIndex();

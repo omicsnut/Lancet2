@@ -88,6 +88,7 @@ class Reference {
  private:
   using FastaIndex = std::unique_ptr<faidx_t, detail::FaidxDeleter>;
 
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::filesystem::path mFastaPath;
   FastaIndex mFastaIndex = nullptr;
   std::vector<Chrom> mChroms;
@@ -122,6 +123,7 @@ class Reference::Chrom {
   auto operator>=(Chrom const& rhs) const -> bool { return mIdx >= rhs.mIdx; }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   usize mIdx = -1;
   u64 mLength = 0;
   std::string mName;
@@ -170,6 +172,7 @@ class Reference::Region {
   }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   usize mChromIdx = -1;
   u64 mStart1 = 0;
   u64 mEnd1 = 0;

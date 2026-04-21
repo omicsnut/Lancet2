@@ -50,8 +50,10 @@ class Edge {
   auto operator!=(Edge const& rhs) const -> bool { return !(rhs == *this); }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   u64 mSrcId = 0;
   u64 mDstId = 0;
+  // ── 1B Align ────────────────────────────────────────────────────────────
   EdgeKind mEdgeKind = EdgeKind::PLUS_PLUS;
 };
 

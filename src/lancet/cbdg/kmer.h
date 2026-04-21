@@ -47,8 +47,11 @@ class Kmer {
   }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   u64 mIdentifier = 0;          // 8B
   std::string mDfltSeq;         // 32B (8B align)
+  
+  // ── 1B Align ────────────────────────────────────────────────────────────
   Sign mDfltSign = Sign::PLUS;  // 1B
 };
 

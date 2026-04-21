@@ -133,11 +133,14 @@ class Node {
   /// covers the standard 2-sample case. Spills to heap for >2 samples.
   using Counts = absl::InlinedVector<u32, 2>;
 
+  // ── 8B Align ────────────────────────────────────────────────────────────
   EdgeList mEdges;
   Kmer mKmer;
   usize mCompId = 0;
   Counts mCounts;                    // 8B (InlinedVector<u32, 2>)
   std::array<u32, 2> mRoleCounts{};  // 8B (2×4B, [0]=CTRL [1]=CASE)
+  
+  // ── 1B Align ────────────────────────────────────────────────────────────
   Label mLabel;                      // 1B
 };
 

@@ -61,6 +61,7 @@ class Window {
   }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   usize mGenIdx = 0;
   Chrom mChrom;
   RegSpec mSpec;

@@ -123,10 +123,12 @@ class SequenceComplexity {
   void MergeMax(SequenceComplexity const& other);
 
  private:
-  // Memory alignment: 8B → 4B → 4B (descending alignment convention)
+  // ── 8B Align ────────────────────────────────────────────────────────────
   f64 mContextFlankLQ = 0.0;      ///< log1p-squashed REF ±50bp LQ (k=4)
   f64 mContextHaplotypeLQ = 0.0;  ///< log1p-squashed REF full-haplotype LQ (k=7)
   f64 mDeltaFlankLQ = 0.0;        ///< log-space ALT−REF delta at ±50bp
+
+  // ── 4B Align ────────────────────────────────────────────────────────────
   f32 mContextEntropy = 0.0F;     ///< Shannon entropy in REF ±20bp
   f32 mDeltaEntropy = 0.0F;       ///< ALT−REF entropy delta at ±10bp
   f32 mTrAffinity = 0.0F;         ///< sentinel-safe [0,1]

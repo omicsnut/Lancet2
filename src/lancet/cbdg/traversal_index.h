@@ -82,17 +82,20 @@ class TraversalIndex {
  public:
   /// An outgoing edge in the flat adjacency list.
   struct OutEdge {
+    // ── 4B Align ────────────────────────────────────────────────────────────
     u32 mDstState;     ///< Destination state index (node_idx*2 + sign_offset)
     u32 mEdgeOrdinal;  ///< Index into mOrigEdges for edge identity/reconstruction
   };
 
   /// Range into mAdjList for one state. [mStart, mStart + mCount)
   struct AdjRange {
+    // ── 4B Align ────────────────────────────────────────────────────────────
     u32 mStart = 0;
     u32 mCount = 0;
   };
 
   // --- Core flat adjacency data ---
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::vector<AdjRange> mAdjRanges;  ///< Indexed by state_idx (size = 2 * num_nodes)
   std::vector<OutEdge> mAdjList;     ///< All outgoing edges, packed contiguously by state
 
@@ -104,6 +107,7 @@ class TraversalIndex {
   std::vector<NodeID> mNodeIds;     ///< Indexed by node_flat_idx (size = V)
 
   // --- Source and sink identifiers ---
+  // ── 4B Align ────────────────────────────────────────────────────────────
   u32 mSrcState = 0;    ///< State index of source node in its default sign
   u32 mSnkNodeIdx = 0;  ///< Flat node index of sink (reachable via either sign)
 

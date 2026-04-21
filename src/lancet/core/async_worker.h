@@ -44,6 +44,7 @@ class AsyncWorker {
   void Process(std::stop_token stop_token);
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   InQueuePtr mInPtr;
   OutQueuePtr mOutPtr;
   VariantStorePtr mStorePtr;

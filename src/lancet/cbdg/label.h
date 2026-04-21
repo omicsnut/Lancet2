@@ -30,6 +30,7 @@ class Label {
   auto operator!=(Tag const tag) const noexcept -> bool { return !(*this == tag); }
 
  private:
+  // ── 1B Align ────────────────────────────────────────────────────────────
   u8 mData = 0;
 };
 

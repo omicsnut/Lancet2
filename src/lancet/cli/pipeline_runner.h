@@ -15,6 +15,7 @@ class PipelineRunner {
   [[noreturn]] void Run();
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::shared_ptr<CliParams> mParamsPtr;
 
   // ---------------------------------------------------------------------------

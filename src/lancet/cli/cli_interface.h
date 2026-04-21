@@ -16,6 +16,7 @@ class CliInterface {
   [[nodiscard]] auto RunMain(int argc, char const** argv) -> int;
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   CLI::App mCliApp;
   std::shared_ptr<CliParams> mParamsPtr;
 

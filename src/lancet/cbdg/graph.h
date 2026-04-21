@@ -58,6 +58,7 @@ class Graph {
   [[nodiscard]] auto BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result;
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   usize mCurrK = 0;
   RegionPtr mRegion;
   ReadList mReads;
@@ -124,6 +125,7 @@ class Graph {
 
   /// Per-component metadata for sorting and filtering after BFS labeling.
   struct ComponentInfo {
+    // ── 8B Align ────────────────────────────────────────────────────────────
     f64 mPctNodes = 0.0;  // 8B
     usize mCompId = 0;    // 8B
     usize mNumNodes = 0;  // 8B
@@ -140,8 +142,10 @@ class Graph {
   /// A reference k-mer that anchors assembly: provides the start (source) or
   /// end (sink) of the reference path through the graph component.
   struct RefAnchor {
+    // ── 8B Align ────────────────────────────────────────────────────────────
     NodeID mAnchorId = 0;       // 8B
     usize mRefOffset = 0;       // 8B
+    // ── 1B Align ────────────────────────────────────────────────────────────
     bool mFoundAnchor = false;  // 1B
   };
 

@@ -59,6 +59,7 @@ class SampleMask {
   /// Each u64 word holds 64 bits. Word 0 covers bits 0–63, etc.
   /// InlinedVector<u64, 1> stores the first word inline (no heap)
   /// and spills to heap only when >63 samples are used.
+  // ── 8B Align ────────────────────────────────────────────────────────────
   absl::InlinedVector<u64, 1> mWords{0ULL};
 
   /// Ensure mWords has enough entries to hold `bit_index`.

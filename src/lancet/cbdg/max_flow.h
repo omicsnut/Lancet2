@@ -80,6 +80,7 @@ class MaxFlow {
   [[nodiscard]] auto NextPath() -> Result;
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   Graph::NodeTable const* mGraph = nullptr;
   TraversalIndex const* mIndex = nullptr;
   usize mCurrentK = 0;
@@ -98,6 +99,7 @@ class MaxFlow {
   ///   - mParentIdx: back-link in arena (NO_PARENT for root)
   ///   - mScore: accumulated count of un-traversed edges on this walk
   struct WalkTreeNode {
+    // ── 4B Align ────────────────────────────────────────────────────────────
     u32 mEdgeOrdinal;
     u32 mDstState;
     u32 mParentIdx;

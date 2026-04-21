@@ -44,6 +44,7 @@ class Iterator {
   // NOLINTEND(readability-identifier-naming)
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   Alignment mParsedAln;
   htsFile* mRawFilePtr = nullptr;
   sam_hdr_t* mRawHdrPtr = nullptr;

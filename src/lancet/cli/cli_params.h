@@ -20,10 +20,11 @@ class CliParams {
   std::filesystem::path mOutVcfGz;
   std::filesystem::path mBedFile;
   std::vector<std::string> mInRegions;
+  core::VariantBuilder::Params mVariantBuilder;
   usize mNumWorkerThreads = 2;
 
+  // ── 4B Align ────────────────────────────────────────────────────────────
   core::WindowBuilder::Params mWindowBuilder;
-  core::VariantBuilder::Params mVariantBuilder;
 
   // ── 1B Align ────────────────────────────────────────────────────────────
   bool mEnableVerboseLogging = false;
