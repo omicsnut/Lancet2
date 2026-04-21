@@ -235,6 +235,7 @@ data/*.tsv.gz
 data/*.txt
 data/chm13_giab_genome_stratifications
 data/chm13_repeat_annotations
+out_graphs/
 
 # profiling data
 profiling/*.bin
