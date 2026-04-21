@@ -199,5 +199,13 @@ args = [{ arg = "profile", default = "" }]
 depends-on = ["ensure-pprof"]
 description = "Analyze a gperftools CPU profile (use -- for additional flags)"
 
+[feature.hts-tools]
+channels = ["conda-forge", "bioconda"]
+
+[feature.hts-tools.dependencies]
+samtools = "==1.23.1"
+bcftools = "==1.23.1"
+
 [environments]
 profiling = { features = ["profiling"], solve-group = "default" }
+hts-tools = { features = ["hts-tools"], solve-group = "hts-tools", no-default-feature = true }
