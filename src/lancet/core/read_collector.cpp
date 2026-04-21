@@ -32,13 +32,13 @@
 
 namespace {
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // CompareReadsByPriority — 6-key composite comparator for deterministic
 // read ordering. Ensures identical output regardless of HTSlib iteration
 // order across runs.
 //
 // Priority: filter-pass status > sample tag > sample name > qname > chrom > position.
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto CompareReadsByPriority(lancet::cbdg::Read const& lhs, lancet::cbdg::Read const& rhs) -> bool {
   if (lhs.PassesAlnFilters() != rhs.PassesAlnFilters()) {
     return static_cast<int>(lhs.PassesAlnFilters()) > static_cast<int>(rhs.PassesAlnFilters());
@@ -56,16 +56,16 @@ auto CompareReadsByPriority(lancet::cbdg::Read const& lhs, lancet::cbdg::Read co
 
 namespace lancet::core {
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Qname hashing utility
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto ReadCollector::HashQname(std::string_view qname) -> u64 {
   return absl::HashOf(qname);
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Constructor
-// ---------------------------------------------------------------------------
+// ============================================================================
 ReadCollector::ReadCollector(Params params, absl::Span<SampleInfo const> sample_list)
     : mParams(std::move(params)), mSampleList(sample_list.begin(), sample_list.end()) {
   using hts::Extractor;
@@ -96,13 +96,13 @@ ReadCollector::ReadCollector(Params params, absl::Span<SampleInfo const> sample_
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // CollectRegionResult: orchestrator for three-pass paired downsampling.
 //
 // Pass 1 (Profile): zero-copy profiling + deterministic downsampling.
 // Pass 2 (Extract): deep-copy only kept reads into mSampledReads.
 // Pass 3 (Mates):   fetch out-of-region mates for kept reads.
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto ReadCollector::CollectRegionResult(Region const& region) -> Result {
   mSampledReads.clear();
   auto const max_sample_bases = mParams.mMaxSampleCov * static_cast<f64>(region.Length());
@@ -127,7 +127,7 @@ auto ReadCollector::CollectRegionResult(Region const& region) -> Result {
   return {.mSampleReads = std::move(mSampledReads), .mSampleList = mSampleList};
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Pass 1: Profile & Downsample Math (zero-copy, no string allocations)
 //
 // Iterates all alignments in the region for a single sample. Counts
@@ -135,7 +135,7 @@ auto ReadCollector::CollectRegionResult(Region const& region) -> Result {
 // mate locations. Then shuffles the qname hashes and keeps only enough
 // to satisfy the coverage cap. Both mates of a pair are symmetrically
 // accepted or rejected because downsampling operates on qname hashes.
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto ReadCollector::ProfileAndDownsample(hts::Extractor& extractor, std::string const& region_spec,
                                          f64 const max_sample_bases) const -> ProfileResult {
   u64 num_pass_reads = 0;
@@ -203,12 +203,12 @@ auto ReadCollector::ProfileAndDownsample(hts::Extractor& extractor, std::string 
           .mSampledReadCount = sampled_read_count};
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Pass 2: Deep Copy & Object Emplacement (only for kept reads)
 //
 // Re-iterates the region. Only reads whose qname hash is in keep_qnames
 // trigger deep extraction (BuildSequence, BuildQualities via Read ctor).
-// ---------------------------------------------------------------------------
+// ============================================================================
 void ReadCollector::ExtractKeptReads(hts::Extractor& extractor, std::string const& region_spec,
                                      absl::flat_hash_set<u64> const& keep_qnames,
                                      SampleInfo const& sinfo) {
@@ -227,13 +227,13 @@ void ReadCollector::ExtractKeptReads(hts::Extractor& extractor, std::string cons
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Pass 3: Recapture out-of-region mates for kept reads
 //
 // Walks mate locations in reverse-sorted genomic order for sequential
 // disk access. Removes mates whose qnames were not kept during downsampling
 // before querying, to avoid unnecessary HTSlib seeks.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void ReadCollector::RecaptureMates(hts::Extractor& extractor,
                                    absl::flat_hash_set<u64> const& keep_qnames,
                                    MateRegionsMap& expected_mates, SampleInfo const& sinfo) {
@@ -270,14 +270,14 @@ void ReadCollector::RecaptureMates(hts::Extractor& extractor,
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // ReverseSortMateRegions — descending-order sort for stack-based consumption
 //
 // Returns mate locations sorted by descending chrom index, then descending
 // start position. RecaptureMates consumes via pop_back(), which yields
 // ascending genomic order — matching BAM/CRAM coordinate sort for sequential
 // disk I/O. Using pop_back() is O(1), unlike front-erasure which is O(n).
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto ReadCollector::ReverseSortMateRegions(MateRegionsMap const& data)
     -> std::vector<MateHashAndLocation> {
   // Descending comparator: higher chrom index first,

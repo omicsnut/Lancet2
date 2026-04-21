@@ -49,9 +49,9 @@ auto HasMdTag(std::filesystem::path const& aln_path, std::filesystem::path const
 
 }  // namespace lancet::core
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Anonymous namespace: helpers used exclusively by IsActiveRegion below.
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 namespace {
 
@@ -108,11 +108,11 @@ inline auto ParseMd(std::string_view md_val, absl::Span<u8 const> quals, i64 con
   return false;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // IncrementHitCount — returns true when a genome position reaches ≥2 hits.
 // Active region detection uses a threshold of 2: a single read with a
 // mismatch/indel is noise; two reads at the same position is signal.
-// ---------------------------------------------------------------------------
+// ============================================================================
 inline auto IncrementHitCount(CountMap& counts, u32 const genome_pos) -> bool {
   return ++counts[genome_pos] == 2;
 }
@@ -131,6 +131,7 @@ inline auto IncrementHitCount(CountMap& counts, u32 const genome_pos) -> bool {
 // ============================================================================
 class MutationAccumulator {
  public:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   CountMap mMismatches;
   CountMap mInsertions;
   CountMap mDeletions;

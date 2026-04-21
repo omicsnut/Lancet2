@@ -28,24 +28,27 @@ namespace lancet::caller {
 
 class VariantSet;
 class RawVariant;
-// ──────────────────────────────────────────────────────────────────────────
+// ============================================================================
 // Alignment result from mm_map for a single read-to-haplotype alignment
-// ──────────────────────────────────────────────────────────────────────────
+// ============================================================================
 struct Mm2AlnResult {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::vector<hts::CigarUnit> mCigar;  // 24B — CIGAR operations
   f64 mIdentity = 0.0;                 // 8B  — gap-compressed identity
   usize mHapIdx = 0;                   // 8B  — index of haplotype this alignment maps to
-  i32 mScore = 0;                      // 4B  — DP alignment score
-  i32 mRefStart = 0;                   // 4B  — 0-based start on haplotype
-  i32 mRefEnd = 0;                     // 4B  — 0-based end on haplotype
+  // ── 4B Align ────────────────────────────────────────────────────────────
+  i32 mScore = 0;     // 4B  — DP alignment score
+  i32 mRefStart = 0;  // 4B  — 0-based start on haplotype
+  i32 mRefEnd = 0;    // 4B  — 0-based end on haplotype
 };
 
-// ──────────────────────────────────────────────────────────────────────────
+// ============================================================================
 // ReadAlleleAssignment: per-read allele assignment result.
 //
 // Produced by ScoreReadAtVariant, consumed by AddToTable → ReadEvidence.
-// ──────────────────────────────────────────────────────────────────────────
-// ── Scoring components for allele assignment ──
+// ============================================================================
+// Scoring components for allele assignment
+// ============================================================================
 //
 // Each read-haplotype pair produces multiple independent signals. The combined
 // score integrates them to assign the read to its best-matching allele:
@@ -98,7 +101,9 @@ struct Mm2AlnResult {
 //     fragmented, heavily-gapped alignments (e.g. identity < 0.7) are discounted,
 //     suppressing repeat-region artifacts and structural chimeras.
 //
-// ── Folded read position ──
+// ============================================================================
+// Folded read position
+// ============================================================================
 // Folded read position: min(p, 1−p) where p = variant_query_pos / read_length.
 // 0.0 = variant at read edge, 0.5 = variant at read center.
 //
@@ -110,7 +115,9 @@ struct Mm2AlnResult {
 // into a unidirectional signal: "Are ALT alleles systematically closer
 // to read edges than REF alleles?" Used for RPCD FORMAT field.
 //
-// ── Edit distance (NM) ──
+// ============================================================================
+// Edit distance (NM)
+// ============================================================================
 // Edit distance (NM) of this read against the REF haplotype (hap_idx=0).
 // Mismatches (under M ops, comparing query vs encoded REF) + insertion
 // bases + deletion bases. Soft clips, hard clips, N-skips excluded per
@@ -118,7 +125,9 @@ struct Mm2AlnResult {
 // of allele assignment so that ASMD = mean(ALT NM) − mean(REF NM)
 // cancels the variant's own contribution and isolates excess noise.
 //
-// ── Representative base quality ──
+// ============================================================================
+// Representative base quality
+// ============================================================================
 // Representative base quality at this variant for this read.
 //
 // For SNVs: the single base quality at the variant position.
@@ -211,9 +220,9 @@ class Genotyper {
       -> Result;
 
  private:
-  // ──────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   // Minimap2 RAII wrappers
-  // ──────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   struct MmIdxDeleter {
     void operator()(mm_idx_t* idx) noexcept { mm_idx_destroy(idx); }
   };
@@ -229,9 +238,10 @@ class Genotyper {
 
   static constexpr usize REF_HAP_IDX = 0;
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   // Outer Class Variables Block (Sorted by descending size: 24B -> 8B -> 4B)
-  // ──────────────────────────────────────────────────────────────────────────
+  // ============================================================================
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::vector<Minimap2Index> mIndices;  // 24B
   // numeric-encoded haplotypes for local scoring
   std::vector<std::vector<u8>> mEncodedHaplotypes;               // 24B

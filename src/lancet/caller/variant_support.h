@@ -62,19 +62,19 @@ class VariantSupport {
   VariantSupport() = default;
 
   struct ReadEvidence {
-    // ── 8B Alignment ──────────────────────────────────────────────────────
+    // ── 8B Align ────────────────────────────────────────────────────────────
     i64 mInsertSize;      // template length from original alignment (for FLD)
     i64 mAlignmentStart;  // fragment genomic start position (for FSSE)
     f64 mAlnScore;        // normalized alignment score to the assigned haplotype
     f64 mFoldedReadPos;   // 0.0=read edge, 0.5=read center (for RPCD)
 
-    // ── 4B Alignment ──────────────────────────────────────────────────────
+    // ── 4B Align ────────────────────────────────────────────────────────────
     u32 mRnameHash;            // hash of read name (for dedup)
     u32 mRefNm;                // edit distance to REF haplotype (for ASMD)
     u32 mOwnHapNm;             // edit distance to assigned haplotype (for AHDD)
     u32 mAssignedHaplotypeId;  // SPOA path index this read was assigned to (for HSE)
 
-    // ── 1B Alignment ──────────────────────────────────────────────────────
+    // ── 1B Align ────────────────────────────────────────────────────────────
     AlleleIndex mAllele;  // which allele this read supports
     Strand mStrand;       // forward or reverse strand
     u8 mBaseQual;         // representative PBQ (min across variant region for indels)

@@ -16,7 +16,7 @@ enum class AlleleState : i8 { NONE = -1, SHARED = 0, CTRL = 1, CASE = 2, UNKNOWN
 
 // ===========================================================================
 // DATA STRUCTURE CHOICE: `AltAllele` SUB-PAYLOAD
-// ---------------------------------------------------------------------------
+// ============================================================================
 // A single genomic locus can mutate into multiple alternative forms across
 // haplotypes or heterogeneous tumor populations (e.g., A→C on haplotype 1,
 // A→T on haplotype 2).
@@ -27,6 +27,7 @@ enum class AlleleState : i8 { NONE = -1, SHARED = 0, CTRL = 1, CASE = 2, UNKNOWN
 // trims later in the pipeline.
 // ===========================================================================
 struct AltAllele {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::string mSequence;
 
   // MULTI-ALLELIC LOCAL MATRIX MAP (ALTs):
@@ -47,6 +48,7 @@ struct AltAllele {
   absl::flat_hash_map<usize, usize> mLocalHapStart0Idxs;
 
   i64 mLength = -1;
+  // ── 1B Align ────────────────────────────────────────────────────────────
   AlleleType mType = AlleleType::REF;
 
   friend auto operator==(AltAllele const& lhs, AltAllele const& rhs) -> bool {

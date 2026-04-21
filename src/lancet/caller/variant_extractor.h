@@ -99,21 +99,20 @@ class VariantExtractor {
   void SearchAndExtractTo(absl::btree_set<RawVariant>& out_variants);
 
  private:
-  // ── 8B Alignment ──────────────────────────────────────────────────────
+  // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::vector<u32> mNodeToRank;                       // 8B (24B)
   std::vector<spoa::Graph::Node const*> mActivePtrs;  // 8B (24B)
   std::vector<usize> mCurrentHapPos;                  // 8B (24B)
-  // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
-  spoa::Graph const& mGraph;  // 8B
-  core::Window const& mWin;   // 8B
-  // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
-  usize mRefAnchorStart;  // 8B
-  usize mCurrentRefPos;   // 8B
-  usize mNumSeqs;         // 8B
+  spoa::Graph const& mGraph;                          // 8B
+  core::Window const& mWin;                           // 8B
+  usize mRefAnchorStart;                              // 8B
+  usize mCurrentRefPos;                               // 8B
+  usize mNumSeqs;                                     // 8B
 
-  // ── Pointer (8B) ──────────────────────────────────────────────────────
   // Last converged VCF anchor node (prepended to bubble sequences)
   spoa::Graph::Node const* mPrevMatchNode = nullptr;  // 8B
+  // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
 
   // True when all haplotype pointers point to the same DAG node.
   [[nodiscard]] auto AreAllPathsConverged() const -> bool;

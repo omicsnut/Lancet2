@@ -23,7 +23,7 @@ enum class Strand : bool { FWD, REV };
 // read's evidence is represented by a single conservative value.
 // ============================================================================
 struct PerAlleleData {
-  // ── 8B Alignment ──────────────────────────────────────────────────────
+  // ── 8B Align ────────────────────────────────────────────────────────────
   // All members are 8B-aligned (std::vector = {ptr, size, capacity} = 24B each,
   // flat_hash_map and usize are also 8B-aligned).
 

@@ -23,7 +23,7 @@ namespace lancet::caller {
 class SupportArray {
  public:
   struct NamedSupport {
-    // ── 8B Alignment ──────────────────────────────────────────────────────
+    // ── 8B Align ────────────────────────────────────────────────────────────
     std::string_view mSampleName;           // 8B (ptr) + 8B (size) = 16B
     std::unique_ptr<VariantSupport> mData;  // 8B
   };

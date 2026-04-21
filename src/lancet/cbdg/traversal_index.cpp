@@ -21,7 +21,7 @@ namespace lancet::cbdg {
 // all graph mutations (pruning, compression, tip removal) are complete.
 //
 // CONSTRUCTION PHASES
-// --------------------
+// ============================================================================
 //  Phase 1: Assign contiguous u32 indices to nodes in this component.
 //  Phase 2: Count outgoing edges per state (for CSR range sizing).
 //  Phase 3: Compute prefix-sum offsets for each state's edge range.

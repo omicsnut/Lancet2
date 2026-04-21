@@ -17,7 +17,9 @@
 
 namespace lancet::caller {
 
-// ── Graph complexity metrics (coverage-invariant features) ──────────────
+// ============================================================================
+// Graph complexity metrics (coverage-invariant features)
+// ============================================================================
 // Always populated. 3 fields matching the GRAPH_CX VCF INFO tag.
 //
 // Coverage stability: GEI uses CovCV (σ/μ, self-normalizing ratio),
@@ -29,6 +31,7 @@ namespace lancet::caller {
 // Color-based metrics (UnsharedColorRatio, ColorDiscordantBranches) are not
 // topological and are captured by other biologically relevant annotations.
 struct GraphMetrics {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   /// GEI: log₁₀(1 + CC×BP×CovCV / UnitigRatio)
   f64 mGraphEntanglementIndex = 0.0;
   /// assembly tearing: tip cov / unitig cov (ratio, self-normalizing)
@@ -49,7 +52,7 @@ class RawVariant {
 
   // ===========================================================================
   // STRICT SEQUENCE CORE CLASSIFICATION
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // Extracts the Mutation Core by squeezing matching 5' prefixes and 3' suffixes.
   // Decouples variant classification from VCF padding constraints.
   // Implementation and full rationale in raw_variant.cpp.
@@ -76,7 +79,9 @@ class RawVariant {
   // small multiallelic blocks (most sites have 1 or 2 alts max).
   std::vector<AltAllele> mAlts;
 
-  // ── Annotation fields (mutable — populated post-construction) ─────────
+  // ============================================================================
+  // Annotation fields (mutable — populated post-construction)
+  // ============================================================================
   // These do not participate in btree_set ordering and are annotated after
   // variant discovery, so they are mutable to allow modification through
   // const btree_set iterators without const_cast.

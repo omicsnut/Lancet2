@@ -17,7 +17,9 @@ namespace lancet::caller {
 
 namespace {
 
-// ── DM Model Constants ──────────────────────────────────────────────────
+// ============================================================================
+// DM Model Constants
+// ============================================================================
 // These are hardcoded defaults tuned for Illumina short-read sequencing.
 // Both values interact: raising ρ widens the overdispersion tail (absorbs
 // more correlated noise but reduces sensitivity to true low-VAF germline

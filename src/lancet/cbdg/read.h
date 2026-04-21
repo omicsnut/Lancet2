@@ -99,17 +99,17 @@ class Read {
 
  private:
   // ── 8B Align ────────────────────────────────────────────────────────────
-  i64 mStart0 = -1;               // 8B
-  i64 mInsertSize = 0;            // 8B
-  usize mSampleIndex = 0;         // 8B
-  std::string mQname;             // 32B (8B align)
-  std::string mSequence;          // 32B (8B align)
-  std::string mSampleName;        // 32B (8B align)
-  std::vector<u8> mQuality;       // 24B (8B align)
+  i64 mStart0 = -1;          // 8B
+  i64 mInsertSize = 0;       // 8B
+  usize mSampleIndex = 0;    // 8B
+  std::string mQname;        // 32B (8B align)
+  std::string mSequence;     // 32B (8B align)
+  std::string mSampleName;   // 32B (8B align)
+  std::vector<u8> mQuality;  // 24B (8B align)
   // ── 4B Align ────────────────────────────────────────────────────────────
-  i32 mChromIdx = -1;             // 4B
+  i32 mChromIdx = -1;  // 4B
   // ── 2B Align ────────────────────────────────────────────────────────────
-  u16 mSamFlag = 0;               // 2B
+  u16 mSamFlag = 0;  // 2B
   // ── 1B Align ────────────────────────────────────────────────────────────
   u8 mMapQual = 0;                // 1B
   bool mPassesAlnFilters = true;  // 1B

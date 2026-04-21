@@ -11,6 +11,7 @@ class Graph;  // forward declaration — avoids circular dependency with graph.h
 
 // ============================================================================
 // GraphComplexity — O(V+E) topology metrics for a single graph component
+// ============================================================================
 //
 // Characterizes the structural complexity of a local assembly graph component.
 // Used for two purposes:
@@ -165,6 +166,7 @@ class GraphComplexity {
   }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   usize mCyclomaticComplexity = 0;  ///< M = E - V + 1 (single component)
   usize mNumBranchPoints = 0;       ///< nodes with >= 2 edges in some direction
   usize mMaxSingleDirDegree = 0;    ///< max outgoing edges in any single sign direction

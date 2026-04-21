@@ -52,6 +52,7 @@ class Reference {
   static constexpr auto NULL_INTERVAL = OneBasedClosedOptional{std::nullopt, std::nullopt};
 
   struct ParseRegionResult {
+    // ── 8B Align ────────────────────────────────────────────────────────────
     std::string mChromName;
     OneBasedClosedOptional mRegionSpan = NULL_INTERVAL;
 

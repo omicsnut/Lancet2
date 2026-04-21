@@ -18,9 +18,9 @@ class PipelineRunner {
   // ── 8B Align ────────────────────────────────────────────────────────────
   std::shared_ptr<CliParams> mParamsPtr;
 
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // Modularized helpers extracted from the monolithic Run() method
-  // ---------------------------------------------------------------------------
+  // ============================================================================
 
   /// Validates BAM/CRAM inputs and populates derived params (e.g. MD tag check).
   void ValidateAndPopulateParams();

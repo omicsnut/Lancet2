@@ -53,7 +53,9 @@ enum class CigarOp : char {
   UNKNOWN_OP = '?'
 };
 
-// ── CIGAR consume-query/reference lookup tables ─────────────────────────────
+// ============================================================================
+//             CIGAR consume-query/reference lookup tables
+// ============================================================================
 // Branchless O(1) lookups indexed by the underlying CigarOp char value.
 // SAM spec §1.4.6: M/I/S/=/X consume query; M/D/N/=/X consume reference.
 //

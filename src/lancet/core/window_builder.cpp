@@ -80,9 +80,9 @@ auto WindowBuilder::StepSize(Params const& params) -> i64 {
   return static_cast<i64>(std::ceil(val / 100.0) * 100.0);
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // ExpectedTargetWindows: arithmetic estimate without allocations
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto WindowBuilder::ExpectedTargetWindows() const -> usize {
   if (mInputRegions.empty()) {
     return 0;
@@ -107,9 +107,9 @@ auto WindowBuilder::ExpectedTargetWindows() const -> usize {
   return total_expected;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // SortInputRegions: pre-sort for deterministic sequential batch emission
-// ---------------------------------------------------------------------------
+// ============================================================================
 void WindowBuilder::SortInputRegions() {
   // Deduplicate first
   std::ranges::sort(mInputRegions,
@@ -134,9 +134,9 @@ void WindowBuilder::SortInputRegions() {
   mInputRegions.erase(new_end, old_end);
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // BuildWindows: monolithic generation (for small region sets / targeted panels)
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto WindowBuilder::BuildWindows() const -> std::vector<WindowPtr> {
   if (mInputRegions.empty()) return {};
 
@@ -204,14 +204,14 @@ auto WindowBuilder::BuildWindows() const -> std::vector<WindowPtr> {
   return results;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // BuildWindowsBatch: pipelined emission for WGS memory control
 //
 // Requires SortInputRegions() to have been called first.
 // Uses explicit reference parameters (region_idx, window_start, global_idx)
 // to accurately track iteration state across repeated invocations, completely
 // dropping the older complex offset encoding scheme.
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 auto WindowBuilder::BuildWindowsBatch(usize& region_idx, i64& window_start, usize& global_idx) const
     -> std::vector<WindowPtr> {
@@ -283,9 +283,9 @@ auto WindowBuilder::BuildWindowsBatch(usize& region_idx, i64& window_start, usiz
   return batch;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // PadInputRegion
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 void WindowBuilder::PadInputRegion(ParseRegionResult& result) const {
   auto const contig_info = mRefPtr->FindChromByName(result.mChromName);

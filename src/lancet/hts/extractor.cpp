@@ -235,7 +235,7 @@ auto Extractor::ParseSampleName(sam_hdr_t* raw_hdr, std::string_view aln_path) -
   return result;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ============================================================================
 // EnsureValidBamOrCram — HTS file validation pipeline
 //
 //   hts_open → format.category check → format.format check → hts_check_EOF
@@ -244,7 +244,7 @@ auto Extractor::ParseSampleName(sam_hdr_t* raw_hdr, std::string_view aln_path) -
 // 1. category == sequence_data  →  reject non-alignment files (e.g. VCF)
 // 2. format == bam || cram      →  reject SAM, unknown, or unrecognized formats
 // 3. hts_check_EOF == 1         →  reject truncated files missing the BGZF EOF block
-// ──────────────────────────────────────────────────────────────────────────────
+// ============================================================================
 void Extractor::EnsureValidBamOrCram(htsFile* raw_fp, std::string_view aln_path) {
   if (raw_fp->format.category != sequence_data) {
     auto const err_msg = fmt::format("Cannot read alignment from non-sequence data: {}", aln_path);

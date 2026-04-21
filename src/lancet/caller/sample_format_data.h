@@ -47,7 +47,9 @@ class SampleFormatData {
     NUM_FIELDS = 9,
   };
 
-  // ── Setters ──────────────────────────────────────────────────────────
+  // ============================================================================
+  // Accessors
+  // ============================================================================
   // SetField bridges VariantSupport optional<f64> → compact f32 storage.
   // Narrows f64→f32 and sets the presence bit atomically.
   void SetField(FieldSlot slot, std::optional<f64> const& value) {

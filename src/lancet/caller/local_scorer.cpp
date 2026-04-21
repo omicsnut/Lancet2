@@ -30,6 +30,7 @@ inline auto PhredToConfidence(u8 const qual) -> f64 {
 // haplotypic mapping rather than relative offsets.
 // ============================================================================
 struct RegionAccumulator {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   // NOLINTBEGIN(cppcoreguidelines-avoid-const-or-ref-data-members)
   absl::Span<u8 const> const mQuery;         // 16B
   absl::Span<u8 const> const mTarget;        // 16B
@@ -39,10 +40,14 @@ struct RegionAccumulator {
   f64 mRawScore = 0.0;                       // 8B
   usize mMatches = 0;                        // 8B
   usize mAligned = 0;                        // 8B
-  i32 const mAlnRefStart;                    // 4B
-  i32 const mVarStartHap;                    // 4B
-  i32 const mVarEndHap;                      // 4B
-  u8 mMinBq = 255;                           // 1B
+
+  // ── 4B Align ────────────────────────────────────────────────────────────
+  i32 const mAlnRefStart;  // 4B
+  i32 const mVarStartHap;  // 4B
+  i32 const mVarEndHap;    // 4B
+
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  u8 mMinBq = 255;  // 1B
   // NOLINTEND(cppcoreguidelines-avoid-const-or-ref-data-members)
 
   // Checks if the current alignment position overlaps the variant being scored.
@@ -176,7 +181,9 @@ auto ComputeLocalScore(std::vector<hts::CigarUnit> const& qry_aln_cigar,
     u32 const len = unit.Length();
 
     switch (cigar_op) {
-      // ── Substitution Mappings ──
+      // ============================================================================
+      // Substitution Mappings
+      // ============================================================================
       // Consumes both query and target bases. Maps bases through the substitution
       // matrix to compute alignment identity and mismatch penalties within the
       // variant boundary (not the flanking context).
@@ -193,7 +200,9 @@ auto ComputeLocalScore(std::vector<hts::CigarUnit> const& qry_aln_cigar,
         break;
       }
 
-      // ── Insertion Geometry ──
+      // ============================================================================
+      // Insertion Geometry
+      // ============================================================================
       // Consumes query bases only. Penalizes alignment quality via gap extension
       // weights because inserted bases have no reference counterpart.
       case hts::CigarOp::INSERTION: {
@@ -212,7 +221,9 @@ auto ComputeLocalScore(std::vector<hts::CigarUnit> const& qry_aln_cigar,
         break;
       }
 
-      // ── Deletion Geometry ──
+      // ============================================================================
+      // Deletion Geometry
+      // ============================================================================
       // Consumes target bases only. Penalizes via gap extensions. Deletions have no
       // query bases, so the quality score borrows confidence from the flanking neighbors.
       case hts::CigarOp::DELETION: {
@@ -227,7 +238,9 @@ auto ComputeLocalScore(std::vector<hts::CigarUnit> const& qry_aln_cigar,
         break;
       }
 
-      // ── Unmapped Sequences ──
+      // ============================================================================
+      // Unmapped Sequences
+      // ============================================================================
       // Advances position counters without scoring.
       // Soft-clip penalty is handled in ComputeSoftClipPenalty.
       case hts::CigarOp::SOFT_CLIP: {

@@ -12,7 +12,7 @@ namespace lancet::cbdg {
 // ============================================================================
 //
 // ALGORITHM
-// ---------
+// ============================================================================
 // Standard directed-graph cycle detection using three colors:
 //   WHITE (0) = unvisited
 //    GRAY (1) = on the current DFS stack (ancestor in the current path)
@@ -23,14 +23,14 @@ namespace lancet::cbdg {
 // edge forms a cycle.
 //
 // WHY THIS REPLACES THE OLD APPROACH
-// ------------------------------------
+// ============================================================================
 // The old HasCycle used backtracking (erase from visited set on return),
 // which explored ALL paths from source — exponential in high-branching
 // graphs. Three-color DFS visits each state exactly once: O(V+E).
 // Profile data showed ~51.6s in the old HasCycle; this should be <1ms.
 //
 // BIDIRECTED SIGN CONTINUITY
-// ----------------------------
+// ============================================================================
 // In the BCALM2 bidirected model, walks must satisfy sign continuity:
 //   edge.DstSign must match the next edge.SrcSign
 //

@@ -8,7 +8,9 @@
 // coordinates (Radius, Angle) to separate biological identity from
 // sequencing depth so that neither depends on the other.
 //
-// ── Why Not DP and VAF? ─────────────────────────────────────────────────────
+// ============================================================================
+// Why Not DP and VAF?
+// ============================================================================
 //
 // Standard VCF already has DP = AD_Ref + AD_Alt (depth) and
 // VAF = AD_Alt / DP (allele fraction). Both degrade ML classification:
@@ -29,7 +31,9 @@
 //   the "fan" shape where VAF's meaning depends on DP — a hidden
 //   dependency that slows learning and hurts generalization.
 //
-// ── The Polar Transform ─────────────────────────────────────────────────────
+// ============================================================================
+// The Polar Transform
+// ============================================================================
 //
 //   PANG = atan2(AD_Alt, AD_Ref): isolates IDENTITY (the allele fraction)
 //     as an angle. A germline het at 20× and 2000× both get PANG=0.785
@@ -46,7 +50,9 @@
 //   These two questions are INDEPENDENT — the model learns each axis
 //   separately, converges faster, and generalizes across coverages.
 //
-// ── Biological Interpretation (Single-Sample) ───────────────────────────────
+// ============================================================================
+// Biological Interpretation (Single-Sample)
+// ============================================================================
 //
 //   Angle (PANG):
 //     ≈ π/2 (1.571 rad, 90°): Homozygous ALT — nearly all reads are ALT.
@@ -60,7 +66,9 @@
 //       Low angle + HIGH PRAD (>2) → true low-frequency variant (deep seq).
 //       Low angle + LOW PRAD  (<1) → stochastic noise (insufficient evidence).
 //
-// ── Case-Control "Four-Feature" Paradigm ────────────────────────────────────
+// ============================================================================
+// Case-Control "Four-Feature" Paradigm
+// ============================================================================
 //
 //   Each sample independently computes its own (PRAD, PANG) from its
 //   own allele depths. The downstream ML model receives:
@@ -77,7 +85,9 @@
 //     - Somatic:   PANG_Control ≈ 0    AND PANG_Case ≈ π/6..π/4
 //     - LOH:       PANG_Control ≈ π/4  AND PANG_Case ≈ π/2
 //
-// ── Performance Notes ───────────────────────────────────────────────────────
+// ============================================================================
+// Performance Notes
+// ============================================================================
 //
 //   PolarRadius avoids std::hypot() which includes expensive overflow/
 //   underflow checks. Since read counts are bounded well within f64 range
@@ -90,7 +100,9 @@
 //   The approximation avoids the complex polynomial expansion of std::atan2
 //   and compiles to a tight sequence of FP multiply-add instructions.
 //
-// ── References ──────────────────────────────────────────────────────────────
+// ============================================================================
+// References
+// ============================================================================
 //
 //   - Weisstein, E.W. "Polar Coordinates." MathWorld.
 //   - GATK AlleleDepth (AD) format field specification.
@@ -175,7 +187,9 @@ namespace lancet::base {
 ///
 /// Output range for non-negative inputs: [0, π/2] radians.
 [[nodiscard]] inline auto PolarAngle(f64 const alt_depth, f64 const ref_depth) -> f64 {
-  // ── Minimax polynomial coefficients ──────────────────────────────────────
+  // ============================================================================
+  // Minimax polynomial coefficients
+  // ============================================================================
   //
   // In plain terms: instead of computing the exact arctangent (which is
   // slow), we use a fast approximation accurate to within 0.086° — far
@@ -214,7 +228,7 @@ namespace lancet::base {
   //
   // Reference: Nvidia Cg 3.1 Toolkit Documentation, "Cg Standard Library
   // Functions", atan2 implementation notes.
-  // ───────────────────────────────────────────────────────────────────────────
+  // ============================================================================
 
   static constexpr f64 COEFF_A = 0.1963;   // Remez-optimized cubic coefficient
   static constexpr f64 COEFF_B = -0.9817;  // Remez-optimized linear coefficient

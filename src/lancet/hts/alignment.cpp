@@ -28,9 +28,9 @@ namespace lancet::hts {
 static constexpr auto SEQ_4BIT_TO_CHAR = std::array<char, 16>{
     'N', 'A', 'C', 'N', 'G', 'N', 'N', 'N', 'T', 'N', 'N', 'N', 'N', 'N', 'N', 'N'};
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Lifecycle management
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 void Alignment::ClearAllFields() {
   mStart0 = -1;
@@ -58,9 +58,9 @@ void Alignment::PopulateFromRaw(bam1_t* aln) {
   mRawAln = aln;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Zero-copy proxy methods
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 auto Alignment::QnameView() const noexcept -> std::string_view {
   if (mRawAln == nullptr) {
@@ -112,9 +112,9 @@ auto Alignment::CigarString() const -> std::string {
   return result;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // On-demand deep extraction methods
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 auto Alignment::BuildSequence() const -> std::string {
   if (mRawAln == nullptr) {
@@ -138,9 +138,9 @@ auto Alignment::BuildQualities() const -> std::vector<u8> {
   return {raw_qual, raw_qual + seq_len};
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Aux tag access: direct bam_aux_get routing
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 auto Alignment::FindRawTag(std::string_view tag_name) const noexcept -> u8 const* {
   if (mRawAln == nullptr || tag_name.size() != 2) {
@@ -190,9 +190,9 @@ auto Alignment::ExtractTagValue<std::string_view>(u8 const* raw_aux, std::string
   return std::string_view(val);
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Location and region helpers
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 auto Alignment::MateLocation() const noexcept -> MateInfo {
   return {.mMateStartPos0 = mMateStart0, .mChromIndex = mMateChromIdx};
@@ -221,9 +221,9 @@ auto Alignment::IsEmpty() const noexcept -> bool {
          mRawAln == nullptr;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // ToString (debug/diagnostic output)
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto Alignment::ToString(Reference const& ref) const -> std::string {
   auto const chrom = ref.FindChromByIndex(mChromIdx);
   auto const mate_chrom = ref.FindChromByIndex(mMateChromIdx);
@@ -259,9 +259,9 @@ auto Alignment::ToString(Reference const& ref) const -> std::string {
       fmt::arg("SEQ", seq), fmt::arg("QUAL", fastq_quality));
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Equality operators
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 auto Alignment::operator==(Alignment const& rhs) const -> bool {
   return mStart0 == rhs.mStart0 &&
@@ -277,9 +277,9 @@ auto Alignment::operator!=(Alignment const& rhs) const -> bool {
   return !(rhs == *this);
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Soft-clip detection (reads directly from bam1_t cigar)
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 auto Alignment::GetSoftClips(std::vector<u32>* clip_sizes, std::vector<u32>* read_positions,
                              std::vector<u32>* genome_positions, bool use_padded) const -> bool {

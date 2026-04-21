@@ -139,9 +139,9 @@ class Node {
   usize mCompId = 0;
   Counts mCounts;                    // 8B (InlinedVector<u32, 2>)
   std::array<u32, 2> mRoleCounts{};  // 8B (2×4B, [0]=CTRL [1]=CASE)
-  
+
   // ── 1B Align ────────────────────────────────────────────────────────────
-  Label mLabel;                      // 1B
+  Label mLabel;  // 1B
 };
 
 }  // namespace lancet::cbdg

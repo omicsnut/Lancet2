@@ -12,15 +12,21 @@
 
 namespace lancet::caller {
 
-// ── Result of ComputeLocalScore ──────────────────────────────────────────────
+// ============================================================================
+// Result of ComputeLocalScore
+// ============================================================================
 struct LocalScoreResult {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   f64 mPbqScore = 0.0;  // 8B — PBQ-weighted DP score within variant region
   f64 mRawScore = 0.0;  // 8B — Unweighted matrix score (same paths)
   f64 mIdentity = 0.0;  // 8B — Fraction of exact matches in variant region
-  u8 mBaseQual = 0;     // 1B — Minimum Phred base quality (weakest-link)
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  u8 mBaseQual = 0;  // 1B — Minimum Phred base quality (weakest-link)
 };
 
-// ── Public API ───────────────────────────────────────────────────────────────
+// ============================================================================
+// Public API
+// ============================================================================
 
 /// ASCII DNA → numeric (0-4) for local scoring.
 /// Single pass using the constexpr lookup table. O(n), no branches.

@@ -19,7 +19,7 @@ namespace lancet::cbdg {
 // ============================================================================
 //
 // MOTIVATION
-// ----------
+// ============================================================================
 // The graph's hash-map-based NodeTable (flat_hash_map<NodeID, NodePtr>) is
 // optimized for dynamic mutation (insertion, deletion, lookup by hash key).
 // However, traversal algorithms (cycle detection, max-flow path finding)
@@ -28,7 +28,7 @@ namespace lancet::cbdg {
 // it causes unpredictable cache misses and expensive hash computations.
 //
 // APPROACH
-// --------
+// ============================================================================
 // After all graph mutations are complete (pruning, compression, tip removal),
 // we build a read-only TraversalIndex that maps the graph into contiguous
 // integer-indexed arrays. All traversal state (DFS colors, BFS visited,
@@ -36,7 +36,7 @@ namespace lancet::cbdg {
 // friendly sequential access.
 //
 // NODE-STATE MODEL (Bidirected Graph)
-// ------------------------------------
+// ============================================================================
 // In the BCALM2 bidirected model, each node has two traversal states:
 // one for each sign direction (+ and -). A valid walk must satisfy sign
 // continuity: edge_i.DstSign == edge_{i+1}.SrcSign. This means the same
@@ -57,7 +57,7 @@ namespace lancet::cbdg {
 //   └──────────┴───────────────────────────────┘
 //
 // FLAT ADJACENCY LIST (CSR-like)
-// --------------------------------
+// ============================================================================
 // For each state, we store a contiguous range of outgoing edges in mAdjList:
 //
 //   mAdjRanges[state] = { start, count }
@@ -71,7 +71,7 @@ namespace lancet::cbdg {
 //   └──────────┘   └────────────────────────────────────────┘
 //
 // LIFECYCLE
-// ---------
+// ============================================================================
 // Built once per (component, k-value) after graph pruning completes.
 // Not maintained during graph mutations — discarded and rebuilt if k changes.
 // Consumed by HasCycle (3-color DFS) and MaxFlow (Edmonds-Karp BFS).

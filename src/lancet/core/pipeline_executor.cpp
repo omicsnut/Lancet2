@@ -61,9 +61,9 @@ namespace {
 
 }  // namespace
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Constructor
-// ---------------------------------------------------------------------------
+// ============================================================================
 PipelineExecutor::PipelineExecutor(WindowBuilder builder,
                                    std::shared_ptr<VariantBuilder::Params const> params,
                                    usize num_threads, u32 window_length)
@@ -72,9 +72,9 @@ PipelineExecutor::PipelineExecutor(WindowBuilder builder,
       mNumThreads(num_threads),
       mWindowLength(window_length) {}
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // LogWindowStats — static method for final window status breakdown
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineExecutor::LogWindowStats(WindowStats const& stats) {
   using CodeCounts = std::pair<VariantBuilder::StatusCode const, u64>;
   static auto const SUMMER = [](u64 const sum, CodeCounts const& item) -> u64 {
@@ -91,9 +91,9 @@ void PipelineExecutor::LogWindowStats(WindowStats const& stats) {
   });
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Execute — orchestrator: allocate → feed → launch → process → shutdown
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto PipelineExecutor::Execute(std::ostream& output) -> WindowStats {
   auto const num_total = mWindowBuilder.ExpectedTargetWindows();
 
@@ -126,13 +126,13 @@ auto PipelineExecutor::Execute(std::ostream& output) -> WindowStats {
   return stats;
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // FeedInitialWindows — seed the work queue before launching workers
 //
 // When total windows fit within 2×BATCH_SIZE, generate all windows upfront
 // to avoid batched emission overhead for smaller runs.  For larger genomes
 // (WGS), emit only the first batch and rely on FeedNextBatch() for the rest.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineExecutor::FeedInitialWindows(moodycamel::ProducerToken const& token, usize num_total) {
   static constexpr usize BATCH_THRESHOLD = 2 * WindowBuilder::BATCH_SIZE;
   bool const use_batching = num_total > BATCH_THRESHOLD;
@@ -148,13 +148,13 @@ void PipelineExecutor::FeedInitialWindows(moodycamel::ProducerToken const& token
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // FeedNextBatch — emit the next batch from the window builder
 //
 // Generates the next batch of windows from the builder, enqueues them for
 // workers, and appends them to the tracking vector. Callers are responsible
 // for checking whether more windows are needed before invoking.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineExecutor::FeedNextBatch(moodycamel::ProducerToken const& token) {
   auto next_batch = mWindowBuilder.BuildWindowsBatch(mRegionIdx, mWindowStart, mGlobalIdx);
   if (!next_batch.empty()) {
@@ -163,13 +163,13 @@ void PipelineExecutor::FeedNextBatch(moodycamel::ProducerToken const& token) {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // LaunchWorkers — spawn jthreads with cooperative cancellation
 //
 // Each worker owns a VariantBuilder and processes windows from the shared
 // input queue until stop is requested.  Absorbs the former PipelineWorker
 // anonymous function.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineExecutor::LaunchWorkers() {
   mWorkerThreads.reserve(mNumThreads);
   for (usize idx = 0; idx < mNumThreads; ++idx) {
@@ -186,9 +186,9 @@ void PipelineExecutor::LaunchWorkers() {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // ShutdownWorkers — cooperative stop + join + profiler cleanup
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineExecutor::ShutdownWorkers() {
   std::ranges::for_each(mWorkerThreads, std::mem_fn(&std::jthread::request_stop));
   std::ranges::for_each(mWorkerThreads, std::mem_fn(&std::jthread::join));
@@ -199,14 +199,14 @@ void PipelineExecutor::ShutdownWorkers() {
 #endif
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // FlushCompletedVariants — coordinate-sorted VCF output synchronization
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineExecutor::FlushCompletedVariants(std::ostream& output, usize num_total,
                                               absl::FixedArray<bool> const& done_windows) {
-  // -------------------------------------------------------------------------
+  // ============================================================================
   // VCF Output Synchronization & Bulk Flushing
-  // -------------------------------------------------------------------------
+  // ============================================================================
   // Worker threads finish windows out-of-order. We use `done_windows` to track
   // all completions, and `last_contiguous_done` traces the furthest unbroken
   // chain of sequentially finished windows starting from the beginning.
@@ -241,13 +241,13 @@ void PipelineExecutor::FlushCompletedVariants(std::ostream& output, usize num_to
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // ProcessAllResults — main event loop
 //
 // Dequeues worker results, tracks progress via ETA timer, dynamically feeds
 // new window batches when queue runs low, and flushes completed variants in
 // coordinate order.
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto PipelineExecutor::ProcessAllResults(std::ostream& output, usize num_total,
                                          moodycamel::ProducerToken const& token) -> WindowStats {
   auto stats = InitWindowStats();
@@ -262,9 +262,9 @@ auto PipelineExecutor::ProcessAllResults(std::ostream& output, usize num_total,
   base::Timer timer;
   EtaTimer eta_timer(num_total);
 
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // Main pipeline loop: process results and dynamically feed new window batches
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // NOTE: The feed_next_batch check operates unconditionally at the top of the loop.
   // This guarantees that worker queues are consistently supplied regardless of
   // whether the subsequent queue read succeeds or times out.

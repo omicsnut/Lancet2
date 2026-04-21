@@ -33,7 +33,7 @@ VariantExtractor::VariantExtractor(spoa::Graph const& graph, core::Window const&
 
   // ===========================================================================
   // RANK LOOKUP INITIALIZATION:  O(N) Inverse Topological Indexing
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // WHY? In SPOA, a node's physical `id` is assigned based on
   // insertion order. A downstream reference base might be Node #5,
   // while an upstream variant inserted later could be Node #500.

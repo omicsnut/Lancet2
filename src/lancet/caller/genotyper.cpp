@@ -96,7 +96,9 @@ Genotyper::Genotyper() {
 
   auto* mopts = mMappingOpts.get();
 
-  // ── Flags: CIGAR generation + SR extension boundaries ─────────────────
+  // ============================================================================
+  // Flags: CIGAR generation + SR extension boundaries
+  // ============================================================================
   // MM_F_CIGAR: required for local scoring.
   // MM_F_SR: activates full-query extension (qs0=0, qe0=qlen) and uses
   //   end_bonus to expand the reference extraction region at read edges.
@@ -108,7 +110,9 @@ Genotyper::Genotyper() {
   mopts->flag |= MM_F_CIGAR | MM_F_SR;
   mopts->best_n = 1;  // single best hit per haplotype
 
-  // ── Scoring: single-affine, strict penalties ──────────────────────────
+  // ============================================================================
+  // Scoring: single-affine, strict penalties
+  // ============================================================================
   // Gaps/mismatches here are noise, not biology.  Setting q2=q, e2=e
   // disables minimap2's dual-affine (convex) model — no "cheap extension"
   // loophole for long gaps that might bleed reads to the wrong haplotype.
@@ -119,26 +123,34 @@ Genotyper::Genotyper() {
   mopts->q2 = SCORING_GAP_OPEN;
   mopts->e2 = SCORING_GAP_EXTEND;
 
-  // ── Z-Drop: effectively disabled ──────────────────────────────────────
+  // ============================================================================
+  // Z-Drop: effectively disabled
+  // ============================================================================
   // A 300 bp somatic deletion incurs gap penalty O + 300·E = 12 + 900 = 912,
   // exceeding the default zdrop=400.  Setting to 100k prevents DP truncation
   // across any intra-window structural variation up to ~5 kbp.
   mopts->zdrop = 100'000;
   mopts->zdrop_inv = 100'000;
 
-  // ── Bandwidth: envelope insertions up to ~2 kbp ───────────────────────
+  // ============================================================================
+  // Bandwidth: envelope insertions up to ~2 kbp
+  // ============================================================================
   // The DP band width constrains how far off-diagonal the SW matrix extends.
   // A 50 bp insertion requires 50 off-diagonal cells.  bw=10k guarantees
   // large germline and somatic insertions never exceed the band.
   mopts->bw = 10'000;
 
-  // ── Chaining gap: cap search radius to read length ────────────────────
+  // ============================================================================
+  // Chaining gap: cap search radius to read length
+  // ============================================================================
   // max_gap controls the backward search in mg_lchain_dp.  Haplotypes are
   // <1 kbp and reads are 151 bp — no valid chain spans a 200 bp gap.
   // Reducing from the default 5000 eliminates wasted inner-loop iterations.
   mopts->max_gap = 200;
 
-  // ── End bonus: force extension through edge variants ──────────────────
+  // ============================================================================
+  // End bonus: force extension through edge variants
+  // ============================================================================
   // Without this, KSW2's EXTZ_ONLY mode backtracks to the max-score cell
   // and soft-clips the remaining query — hiding variants near read edges.
   // end_bonus only redirects the backtrack endpoint; it does not inflate
@@ -147,7 +159,9 @@ Genotyper::Genotyper() {
   // reaches the query end, eliminating most of erroneous soft-clips.
   mopts->end_bonus = std::numeric_limits<int>::max();
 
-  // ── Seeding: dense anchors for short, mutated haplotypes ──────────────
+  // ============================================================================
+  // Seeding: dense anchors for short, mutated haplotypes
+  // ============================================================================
   // k=11, w=5 places minimizer seeds in densely mutated micro-windows
   // where the default k=15 would fail to produce a continuous exact match.
   // Per-haplotype indexing makes k=11's higher false-positive rate harmless.

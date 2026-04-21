@@ -72,7 +72,9 @@ class CliNonexistentUriOrPath : public CLI::Validator {
   }
 };
 
-// ── CLI option groups ─────────────────────────────────────────────────────
+// ============================================================================
+// CLI option groups
+// ============================================================================
 constexpr auto GRP_DATASETS = "Datasets";
 constexpr auto GRP_REQUIRED = "Required";
 constexpr auto GRP_REGIONS = "Regions";
@@ -178,7 +180,9 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
 
   static int const MAX_THREADS = static_cast<int>(std::thread::hardware_concurrency());
 
-  // ── Datasets ────────────────────────────────────────────────────────────
+  // ============================================================================
+  // Datasets
+  // ============================================================================
   AddOpt(sub, "-n,--normal", rc_params.mCtrlPaths,
          "Path to one (or) more control (normal) BAM/CRAM file(s)", GRP_DATASETS, true);
   AddOpt(sub, "-t,--tumor", rc_params.mCasePaths,
@@ -186,7 +190,9 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
   AddOpt(sub, "-s,--sample", rc_params.mSampleSpecs,
          "Sample input as <path>:<role> (roles: control, case)", GRP_DATASETS);
 
-  // ── Required ────────────────────────────────────────────────────────────
+  // ============================================================================
+  // Required
+  // ============================================================================
   AddOpt(sub, "-r,--reference", rc_params.mRefPath, "Path to the reference FASTA file",
          GRP_REQUIRED, true)
       ->check(CliExistingUriOrFile{});
@@ -194,7 +200,9 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
          GRP_REQUIRED, true)
       ->check(CliExistingUriOrFile{} | CliNonexistentUriOrPath{});
 
-  // ── Regions ─────────────────────────────────────────────────────────────
+  // ============================================================================
+  // Regions
+  // ============================================================================
   AddOpt(sub, "-R,--region", params->mInRegions, "One (or) more regions (1-based both inclusive)",
          GRP_REGIONS)
       ->type_name("REF:[:START[-END]]");
@@ -213,7 +221,9 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
       ->check(CLI::Range(core::WindowBuilder::MIN_ALLOWED_WINDOW_LEN,
                          core::WindowBuilder::MAX_ALLOWED_WINDOW_LEN));
 
-  // ── Parameters ──────────────────────────────────────────────────────────
+  // ============================================================================
+  // Parameters
+  // ============================================================================
   AddOpt(sub, "-T,--num-threads", params->mNumWorkerThreads,
          "Number of additional async worker threads", GRP_PARAMETERS)
       ->check(CLI::Range(0, MAX_THREADS));
@@ -236,7 +246,9 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
          "Max. per sample coverage before downsampling", GRP_PARAMETERS)
       ->check(CLI::Range(u32{0}, std::numeric_limits<u32>::max()));
 
-  // ── Flags ───────────────────────────────────────────────────────────────
+  // ============================================================================
+  // Flags
+  // ============================================================================
   AddFlag(sub, "--verbose", params->mEnableVerboseLogging, "Turn on verbose logging", GRP_FLAGS);
   AddFlag(sub, "--extract-pairs", rc_params.mExtractPairs, "Extract all useful read pairs",
           GRP_FLAGS);
@@ -245,7 +257,9 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
   AddFlag(sub, "--no-contig-check", rc_params.mNoCtgCheck, "Skip contig check with reference",
           GRP_FLAGS);
 
-  // ── Optional ────────────────────────────────────────────────────────────
+  // ============================================================================
+  // Optional
+  // ============================================================================
   AddOpt(sub, "--graphs-dir", var_params.mOutGraphsDir,
          "Output directory to write per window graphs", GRP_OPTIONAL)
       ->check(CLI::NonexistentPath | CLI::ExistingDirectory);
@@ -256,7 +270,9 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
          GRP_OPTIONAL)
       ->check(CLI::Range(0.0, 1.0));
 
-  // ── Subcommand callback ─────────────────────────────────────────────────
+  // ============================================================================
+  // Subcommand callback
+  // ============================================================================
   sub->callback([params]() -> void {
     if (static_cast<bool>(isatty(fileno(stderr)))) fmt::print(std::cerr, FIGLET_LANCET_LOGO);
     if (params->mEnableVerboseLogging) SetLancetLoggerLevel(spdlog::level::trace);

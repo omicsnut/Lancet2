@@ -23,10 +23,10 @@ using namespace std::string_view_literals;
 
 // clang-format off
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // VCF v4.5 header format template — named placeholders filled by fmt::format.
 // Kept as a constexpr raw string to avoid line-by-line StrAppend noise.
-// ---------------------------------------------------------------------------
+// ============================================================================
 constexpr auto FORMAT_STR_HEADER = R"raw(##fileformat=VCFv4.5
 ##fileDate={RUN_TIMESTAMP}
 ##source=Lancet_{FULL_VERSION_TAG}
@@ -78,13 +78,13 @@ constexpr auto CONTIG_HDR_LINE_FORMAT = "##contig=<ID={},length={}>\n"sv;
 
 namespace lancet::cli {
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // BuildVcfHeader — assembles the complete VCF v4.5 header string
 //
 // Opens the reference FASTA to enumerate contigs.  Conditionally emits
 // SHARED/CTRL/CASE INFO lines when case-control mode is active.
 // Zero coupling to PipelineRunner instance state.
-// ---------------------------------------------------------------------------
+// ============================================================================
 auto BuildVcfHeader(CliParams const& params) -> std::string {
   // --- Contig lines ---
   std::string contig_hdr_lines;

@@ -18,6 +18,7 @@ class Timer {
   void Reset() { mStartTime = absl::Now(); }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   absl::Time mStartTime;
 };
 

@@ -65,7 +65,9 @@ namespace {
   usize idx = 0;
 
 #ifdef __AVX2__
-  // ── AVX2: 32-byte chunks with early exit ─────────────────────────────
+  // ============================================================================
+  // AVX2: 32-byte chunks with early exit
+  // ============================================================================
   if (length >= 32) {
     for (; idx + 32 <= length; idx += 32) {
       // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
@@ -102,7 +104,9 @@ namespace {
     return dist <= max_mismatches;
   }
 
-  // ── SSE: 16-byte path for lengths 16–31 ──────────────────────────────
+  // ============================================================================
+  // SSE: 16-byte path for lengths 16–31
+  // ============================================================================
   if (length >= 16) {
     // NOLINTBEGIN(cppcoreguidelines-pro-type-reinterpret-cast)
     auto const vec1 = _mm_loadu_si128(reinterpret_cast<__m128i const*>(ptr1));
@@ -134,7 +138,9 @@ namespace {
   }
 
 #elif defined(__aarch64__) || defined(_M_ARM64)
-  // ── NEON: 16-byte chunks with early exit ─────────────────────────────
+  // ============================================================================
+  // NEON: 16-byte chunks with early exit
+  // ============================================================================
   if (length >= 16) {
     auto const ones = vdupq_n_u8(1);
     for (; idx + 16 <= length; idx += 16) {
@@ -180,7 +186,9 @@ namespace {
   }
 #endif
 
-  // ── Portable scalar fallback for short sequences or unknown ISA ──────
+  // ============================================================================
+  // Portable scalar fallback for short sequences or unknown ISA
+  // ============================================================================
   for (; idx < length; ++idx) {
     dist += static_cast<usize>(ptr1[idx] != ptr2[idx]);
     if (dist > max_mismatches) return false;

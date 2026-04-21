@@ -22,7 +22,7 @@ namespace lancet::cbdg {
 // ============================================================================
 //
 // ALGORITHM OVERVIEW
-// -------------------
+// ============================================================================
 // Finds all distinct source-to-sink walks in the bidirected de Bruijn graph
 // by iteratively calling NextPath(). Each call performs a BFS from source
 // that scores candidate walks by the number of NOT-YET-TRAVERSED edges they
@@ -50,7 +50,7 @@ namespace lancet::cbdg {
 //   └──────────────────────────────────────────────────────┘
 //
 // WALK TREE ARENA (perf improvement over original)
-// -------------------------------------------------
+// ============================================================================
 // Instead of BFS that copies entire walk vectors at each extension level
 // (the bottleneck in the original code), each BFS node in the arena stores
 // only an edge ordinal (4B) + parent index (4B) + accumulated score (4B).

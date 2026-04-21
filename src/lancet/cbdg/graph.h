@@ -78,9 +78,11 @@ class Graph {
   // De-duplicate read support: a kmer should receive at most one increment per
   // (read_name, sample_tag, kmer_hash) triple. MateMer keys this dedup set.
   struct MateMer {
+    // ── 8B Align ────────────────────────────────────────────────────────────
     std::string_view mQname;  // 16B
     u64 mKmerHash;            // 8B
-    Label::Tag mTagKind;      // 1B
+    // ── 1B Align ────────────────────────────────────────────────────────────
+    Label::Tag mTagKind;  // 1B
 
     auto operator==(MateMer const& rhs) const -> bool {
       return mQname == rhs.mQname && mTagKind == rhs.mTagKind && mKmerHash == rhs.mKmerHash;
@@ -143,8 +145,8 @@ class Graph {
   /// end (sink) of the reference path through the graph component.
   struct RefAnchor {
     // ── 8B Align ────────────────────────────────────────────────────────────
-    NodeID mAnchorId = 0;       // 8B
-    usize mRefOffset = 0;       // 8B
+    NodeID mAnchorId = 0;  // 8B
+    usize mRefOffset = 0;  // 8B
     // ── 1B Align ────────────────────────────────────────────────────────────
     bool mFoundAnchor = false;  // 1B
   };

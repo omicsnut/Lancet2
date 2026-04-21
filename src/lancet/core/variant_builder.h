@@ -25,7 +25,7 @@ class VariantBuilder {
   static constexpr u32 MAX_PHRED_SCORE = 255;
 
   struct Params {
-    // ── 8B Align ──────────────────────────────────────────────────────────
+    // ── 8B Align ────────────────────────────────────────────────────────────
     std::filesystem::path mOutGraphsDir;
 
     /// Global genome GC fraction for LongdustQ bias correction.
@@ -42,7 +42,7 @@ class VariantBuilder {
     /// Shared across all threads via shared_ptr<Params const>.
     std::vector<SampleInfo> mSampleList;
 
-    // ── 1B Align ──────────────────────────────────────────────────────────
+    // ── 1B Align ────────────────────────────────────────────────────────────
     bool mSkipActiveRegion = false;
   };
 

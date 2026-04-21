@@ -82,7 +82,9 @@ auto ScoreReadAtVariant(Mm2AlnResult const& aln, absl::Span<u8 const> encoded_ha
   // apples baseline: mean(ALT NM vs own hap) − mean(REF NM vs own hap).
   result.mOwnHapNm = hts::ComputeEditDistance(aln.mCigar, read_ctx.mSeqEncoded, target);
 
-  // ── Folded read position ──────────────────────────────────
+  // ============================================================================
+  // Folded read position
+  // ============================================================================
   usize var_start_in_aln = 0;
   if (bounds.mVarStart > aln.mRefStart) {
     var_start_in_aln = static_cast<usize>(bounds.mVarStart - aln.mRefStart);

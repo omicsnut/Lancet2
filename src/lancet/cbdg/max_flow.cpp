@@ -116,7 +116,7 @@ auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
 // exponential walk-vector copying that was the original bottleneck.
 //
 // ALGORITHM
-// ----------
+// ============================================================================
 // 1. BFS from source, building a walk tree in an arena.
 // 2. Each arena node tracks its accumulated "score" — the count of edges
 //    on its walk that are NOT in mTraversedOrdinals.
@@ -147,7 +147,7 @@ auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
 //   └──────────────────────────────────────────────────────┘
 //
 // WHY SCORE > 0 IS REQUIRED
-// ---------------------------
+// ============================================================================
 // Without the score check, the algorithm would keep returning the same
 // walk (or walks with only already-traversed edges) indefinitely.
 // The score ensures monotonic progress: each call returns a walk with

@@ -51,12 +51,12 @@ PipelineRunner::PipelineRunner(std::shared_ptr<CliParams> params) : mParamsPtr(s
 #endif
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // Run: primary pipeline entry point
 //
 // Validates params → sets up output → constructs VCF header → delegates
 // the full batch-fed execution loop to PipelineExecutor.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineRunner::Run() {
   base::Timer timer;
   ValidateAndPopulateParams();
@@ -97,9 +97,9 @@ void PipelineRunner::Run() {
   std::exit(EXIT_SUCCESS);
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // SetupGraphOutputDir — propagate and recreate graph debug output directory
-// ---------------------------------------------------------------------------
+// ============================================================================
 
 void PipelineRunner::SetupGraphOutputDir() {
   if (!mParamsPtr->mVariantBuilder.mOutGraphsDir.empty()) {
@@ -110,14 +110,14 @@ void PipelineRunner::SetupGraphOutputDir() {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // OpenOutputVcf — resolve path, validate cloud credentials, open BGZF stream
 //
 // Local paths are made absolute and parent directories are created.
 // Cloud URIs (gs://, s3://) trigger an immediate zero-byte HTTP PUT via
 // hopen("w") to validate credentials upfront rather than discovering auth
 // failures after a 40-hour pipeline run.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineRunner::OpenOutputVcf(hts::BgzfOstream& output_vcf) {
   // Resolve local paths to absolute and ensure parent directories exist.
   // Cloud URIs (gs://, s3://) bypass local path resolution entirely.
@@ -149,7 +149,7 @@ void PipelineRunner::OpenOutputVcf(hts::BgzfOstream& output_vcf) {
   }
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // ValidateAndPopulateParams — pre-flight checks before pipeline execution
 //
 // 1. Determines case-control mode from parsed sample specs. This must happen
@@ -157,7 +157,7 @@ void PipelineRunner::OpenOutputVcf(hts::BgzfOstream& output_vcf) {
 //    headers are emitted correctly regardless of --no-active-region.
 // 2. Validates that all input BAM/CRAM files contain MD tags. If any file
 //    lacks MD tags, active region detection is disabled with a warning.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void PipelineRunner::ValidateAndPopulateParams() {
   auto const& rdcoll = mParamsPtr->mVariantBuilder.mRdCollParams;
   auto const all_specs =

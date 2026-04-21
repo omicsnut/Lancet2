@@ -23,11 +23,11 @@ namespace lancet::caller {
 //   Haplotype 2 (ALT): [ ... var at pos 119, len=4 (ALT allele) ... ]
 // ============================================================================
 struct HapVariantBounds {
-  // ── 4B Align ──────────────────────────────────────────────────────────
+  // ── 4B Align ────────────────────────────────────────────────────────────
   i32 mVarStart = 0;  // variant start position on this haplotype
   i32 mVarLen = 0;    // variant allele length on this haplotype
 
-  // ── 1B Align ──────────────────────────────────────────────────────────
+  // ── 1B Align ────────────────────────────────────────────────────────────
   AlleleIndex mAllele = REF_ALLELE_IDX;  // which allele this haplotype maps to
 };
 
@@ -43,7 +43,7 @@ struct ReadAlnContext {
   absl::Span<u8 const> mSeqEncoded;  // numeric-encoded read sequence
   absl::Span<u8 const> mBaseQuals;   // per-base Phred quality scores
 
-  // ── 8B Align ──────────────────────────────────────────────────────────
+  // ── 8B Align ────────────────────────────────────────────────────────────
   usize mReadLength = 0;  // original read length (for folded position)
 };
 

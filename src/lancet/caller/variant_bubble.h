@@ -32,7 +32,7 @@ namespace lancet::caller {
 // ============================================================================
 class VariantBubble {
  public:
-  // ── 8B Alignment ──────────────────────────────────────────────────────
+  // ── 8B Align ────────────────────────────────────────────────────────────
   // Maps each distinct ALT allele string to the haplotype IDs that produced it.
   // O(1) lookup per allele via Abseil flat hash map.
   absl::flat_hash_map<std::string, std::vector<usize>> mAltAllelesToHaps;  // 8B (heap)

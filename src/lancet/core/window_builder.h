@@ -32,9 +32,10 @@ class WindowBuilder {
   static constexpr usize BATCH_SIZE = 65'536;
 
   struct Params {
-    u32 mWindowLength = DEFAULT_WINDOW_LENGTH;
-    u32 mRegionPadding = DEFAULT_REGION_PADDING;
-    u32 mPercentOverlap = DEFAULT_PCT_OVERLAP;
+    // ── 4B Align ────────────────────────────────────────────────────────────
+    u32 mWindowLength = DEFAULT_WINDOW_LENGTH;    // 4B
+    u32 mRegionPadding = DEFAULT_REGION_PADDING;  // 4B
+    u32 mPercentOverlap = DEFAULT_PCT_OVERLAP;    // 4B
   };
 
   WindowBuilder() = delete;

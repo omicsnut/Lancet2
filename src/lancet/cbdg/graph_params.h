@@ -29,7 +29,7 @@ static constexpr u16 DEFAULT_KMER_STEP_LEN = 6;
 /// Parameters controlling de Bruijn graph construction and pruning.
 struct GraphParams {
   // ── 8B Align ────────────────────────────────────────────────────────────
-  std::filesystem::path mOutGraphsDir;  // 8B+
+  std::filesystem::path mOutGraphsDir;       // 8B+
   usize mMinKmerLen = DEFAULT_MIN_KMER_LEN;  // 8B
   usize mMaxKmerLen = DEFAULT_MAX_KMER_LEN;  // 8B
 

@@ -24,7 +24,7 @@ namespace lancet::base {
 // LongdustQScorer — k-mer complexity scorer for DNA sequences
 //
 // PROVENANCE
-// ----------
+// ============================================================================
 // This scorer implements the Q(x) complexity formula from:
 //
 //   Li, H. "Finding low-complexity filter with longdust" (2025)
@@ -40,7 +40,7 @@ namespace lancet::base {
 // (see tests/base/longdust_scorer_test.cpp).
 //
 // GC-BIAS CORRECTION
-// ------------------
+// ============================================================================
 // The scorer supports an optional GC-bias correction via the gc_frac
 // constructor parameter. By default, gc_frac=0.41 (human genome-wide
 // average GC content, confirmed by Lander et al. 2001, Piovesan et al.
@@ -104,7 +104,7 @@ namespace lancet::base {
 //   4^k     = total possible distinct k-mers
 //
 // Step 1: Measure k-mer concentration
-// ------------------------------------
+// ============================================================================
 // Compute the sum of log-factorials of all k-mer counts:
 //
 //   Σ_t log(c_x(t)!)
@@ -121,7 +121,7 @@ namespace lancet::base {
 //               Σ log(c!) = log(10!) = 15.1
 //
 // Step 2: Subtract the expected value under the null model
-// ---------------------------------------------------------
+// ============================================================================
 // Under a random (Poisson) model, each k-mer has expected count λ = ℓ/4^k.
 // The expected value of Σ log(c!) under this model is f(ℓ):
 //
@@ -142,7 +142,7 @@ namespace lancet::base {
 // Q(x) > 0 means k-mers are more concentrated than expected (repetitive).
 //
 // Step 3: Normalize
-// ------------------
+// ============================================================================
 // We report the per-k-mer score:
 //
 //   q(x) = max(0, Q(x) / ℓ)
@@ -523,11 +523,13 @@ class LongdustQScorer {
   }
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::vector<f64> mF;  // precomputed f(ℓ) table: mF[ℓ] = expected Σ log(c!) under null model
   f64 mGc;              // global background GC fraction for bias correction
-  int mK;               // k-mer size (e.g., 7 → 7-mers)
-  u32 mMask;            // bitmask to extract a k-mer from the rolling integer: (1 << 2k) - 1
-  u32 mNumKmers;        // total possible k-mers: 4^k (e.g., 16,384 for k=7)
+  // ── 4B Align ────────────────────────────────────────────────────────────
+  int mK;         // k-mer size (e.g., 7 → 7-mers)
+  u32 mMask;      // bitmask to extract a k-mer from the rolling integer: (1 << 2k) - 1
+  u32 mNumKmers;  // total possible k-mers: 4^k (e.g., 16,384 for k=7)
 
   // ============================================================================
   // ComputeFSingle: expected log-factorial per k-mer under Poisson(λ)

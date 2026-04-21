@@ -51,6 +51,7 @@ class SamFlag {
   auto operator!=(SamFlag const& rhs) const -> bool { return !(rhs == *this); }
 
  private:
+  // ── 2B Align ────────────────────────────────────────────────────────────
   u16 mFlag = 0;
 };
 

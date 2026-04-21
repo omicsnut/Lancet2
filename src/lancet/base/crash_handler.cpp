@@ -218,10 +218,10 @@ struct alignas(64) CrashSlot {
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables) — mutable by design
 std::array<CrashSlot, lancet::base::MAX_CRASH_SLOTS> g_crash_slots = {};
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // DumpAllThreadContexts: print each worker's state at crash time.
 // Called from the signal handler — must be async-signal-safe.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void DumpAllThreadContexts(int file_desc) {
   WriteStr(file_desc, "\n── Worker Thread Contexts ──────────────────────\n");
 
@@ -290,9 +290,9 @@ struct linux_dirent64 {
   char mName[1];  // NUL-terminated filename
 };
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // DumpOneThreadIP: read and print the syscall state for a single thread.
-// ---------------------------------------------------------------------------
+// ============================================================================
 void DumpOneThreadIP(int file_desc, char const* tid_str) {
   // Build the path: /proc/self/task/<tid>/syscall
   // NOLINTNEXTLINE(modernize-avoid-c-arrays) — stack buffer for path, no heap
@@ -328,10 +328,10 @@ void DumpOneThreadIP(int file_desc, char const* tid_str) {
   WriteStr(file_desc, "\n");
 }
 
-// ---------------------------------------------------------------------------
+// ============================================================================
 // DumpAllThreadIPs: enumerate all OS threads and print their instruction pointers.
 // Uses the raw getdents64 syscall to avoid malloc (opendir is not signal-safe).
-// ---------------------------------------------------------------------------
+// ============================================================================
 void DumpAllThreadIPs(int file_desc) {
   WriteStr(file_desc, "\n── All Thread IPs (via /proc/self/task) ────────\n");
 
@@ -383,7 +383,9 @@ void CrashHandler(int sig, siginfo_t* info, void* ctx) {
   WriteStr(file_desc, "\n============================================\n");
   WriteStr(file_desc, sig == SIGSEGV ? "*** SIGSEGV ***\n" : "*** SIGABRT ***\n");
 
-  // ── Faulting address ───────────────────────────────────────────────
+  // ============================================================================
+  // Faulting address
+  // ============================================================================
   // Shows WHERE the invalid memory access occurred.
   //   0x0               → null pointer dereference
   //   0x7f...           → likely heap corruption (address looks like valid heap)
@@ -394,21 +396,27 @@ void CrashHandler(int sig, siginfo_t* info, void* ctx) {
   WriteHex(file_desc, reinterpret_cast<u64>(info->si_addr));
   WriteStr(file_desc, "\n");
 
-  // ── Signal code ────────────────────────────────────────────────────
+  // ============================================================================
+  // Signal code
+  // ============================================================================
   // SEGV_MAPERR (1) = address not mapped (null deref, wild pointer)
   // SEGV_ACCERR (2) = address mapped but no permission (read-only page)
   WriteStr(file_desc, "Signal code    (si_code):  ");
   WriteInt(file_desc, info->si_code);
   WriteStr(file_desc, "\n");
 
-  // ── Thread ID ──────────────────────────────────────────────────────
+  // ============================================================================
+  // Thread ID
+  // ============================================================================
   // Match this against the crash slot thread IDs to identify the worker.
   WriteStr(file_desc, "Thread ID:                 ");
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast) — pthread_t is a pointer on macOS
   WriteHex(file_desc, reinterpret_cast<u64>(pthread_self()));
   WriteStr(file_desc, "\n");
 
-  // ── Instruction pointer ────────────────────────────────────────────
+  // ============================================================================
+  // Instruction pointer
+  // ============================================================================
   // The exact machine instruction that caused the crash.
   // Resolve with: addr2line -e ./Lancet2 -f <address>
 #if defined(__linux__) && defined(__x86_64__)
@@ -440,7 +448,9 @@ void CrashHandler(int sig, siginfo_t* info, void* ctx) {
   WriteStr(file_desc, "Instruction ptr:           (unavailable on this arch)\n");
 #endif
 
-  // ── Backtrace ──────────────────────────────────────────────────────
+  // ============================================================================
+  // Backtrace
+  // ============================================================================
   // Best-effort stack trace.  May produce 0 frames if the stack is
   // too corrupted to walk.  The instruction pointer above is always
   // available regardless.
@@ -453,10 +463,14 @@ void CrashHandler(int sig, siginfo_t* info, void* ctx) {
     WriteStr(file_desc, "  (no frames — stack may be corrupted)\n");
   }
 
-  // ── Per-thread crash context (§2) ──────────────────────────────────
+  // ============================================================================
+  // Per-thread crash context (§2)
+  // ============================================================================
   DumpAllThreadContexts(file_desc);
 
-  // ── All-thread IPs (§3, Linux only) ────────────────────────────────
+  // ============================================================================
+  // All-thread IPs (§3, Linux only)
+  // ============================================================================
 #ifdef __linux__
   DumpAllThreadIPs(file_desc);
 #endif

@@ -98,7 +98,9 @@ class VariantCall {
 
   [[nodiscard]] auto AsVcfRecord() const -> std::string;
 
-  // ── VARIANT STORE EXTENSIONS (* ALLELE OVERLAPS) ──────────────────────
+  // ============================================================================
+  // VARIANT STORE EXTENSIONS (* ALLELE OVERLAPS)
+  // ============================================================================
   [[nodiscard]] auto IsDeletion() const -> bool {
     return std::ranges::any_of(mCategories,
                                [](AlleleType type) { return type == AlleleType::DEL; });
@@ -119,8 +121,9 @@ class VariantCall {
 
   [[nodiscard]] auto RefLength() const -> usize { return mRefAllele.length(); }
 
-  // ──────────────────────────────────────────────────────────────────────
-  // ── VARIANT IDENTITY & ORDERING DESIGN ──────────────────────────────────
+  // ============================================================================
+  // VARIANT IDENTITY & ORDERING DESIGN
+  // ============================================================================
   // Identity (operator==) and ordering (operator<) both use the same
   // conceptual key: CHROM + POS + REF (locus-level, ALTs excluded).
   //
@@ -145,7 +148,7 @@ class VariantCall {
   //   used by operator== / operator< without updating VariantStore's dedup
   //   logic. Mismatched identity semantics will produce duplicate VCF records
   //   and break tabix indexing.
-  // ────────────────────────────────────────────────────────────────────────
+  // ============================================================================
   friend auto operator==(VariantCall const& lhs, VariantCall const& rhs) -> bool {
     return lhs.mVariantId == rhs.mVariantId;
   }
@@ -163,7 +166,7 @@ class VariantCall {
   }
 
  private:
-  // ── 8B Alignment ────────────────────────────────────────────────────────
+  // ── 8B Align ────────────────────────────────────────────────────────────
   u64 mVariantId;
   usize mChromIndex;
   usize mStartPos1;
@@ -186,15 +189,17 @@ class VariantCall {
   std::vector<AlleleType> mCategories;
   std::vector<SampleFormatData> mSampleGenotypes;
 
-  // ── Sequence complexity (11 coverage-invariant features, from RawVariant) ─
-  // ── Graph complexity metrics (from RawVariant, transcribed) ────────────
+  // ============================================================================
+  // Sequence complexity (11 coverage-invariant features, from RawVariant)
+  // ============================================================================
+  // ============================================================================
+  // Graph complexity metrics (from RawVariant, transcribed)
+  // ============================================================================
   base::SequenceComplexity mSeqCx;
   GraphMetrics mGraphCx;
 
-  // ── 4B/2B Alignment ─────────────────────────────────────────────────────
+  // ── 1B Align ────────────────────────────────────────────────────────────
   AlleleState mState = AlleleState::NONE;
-
-  // ── 1B Alignment ────────────────────────────────────────────────────────
   bool mIsMultiallelic = false;
   bool mHasAltSupport = false;
 
@@ -207,13 +212,18 @@ class VariantCall {
     return static_cast<f64>(sample_dp) / iter->second;
   }
 
-  // ── Evidence collection (shared by both constructors) ──────────────────
+  // ============================================================================
+  // Evidence collection (shared by both constructors)
+  // ============================================================================
 
   /// Common finalization after evidence is assembled: builds FORMAT, state, and INFO fields.
   void Finalize(SupportArray const& evidence, Samples samps);
 
-  // ── Modular field builders ─────────────────────────────────────────────
+  // ============================================================================
+  // Modular field builders
+  // ============================================================================
   struct PerAlleleMetrics {
+    // ── 8B Align ────────────────────────────────────────────────────────────
     std::string mAd;
     std::string mAdf;
     std::string mAdr;

@@ -39,28 +39,28 @@ class PipelineExecutor {
   static void LogWindowStats(WindowStats const& stats);
 
  private:
-  // ── 8B Align (construction-time state) ──────────────────────────────────
+  // ── 8B Align (construction-time state) ───────────────────────────────────────────────────────
   WindowBuilder mWindowBuilder;                           // 8B+ — owns region → window partitioning
   std::shared_ptr<VariantBuilder::Params const> mParams;  // 8B  — shared immutable build params
   usize mNumThreads;                                      // 8B  — number of worker jthreads
 
-  // ── 8B Align (per-execution state, initialized in Execute) ──────────────
+  // ── 8B Align (per-execution state, initialized in Execute) ───────────────────────────────────
   std::vector<WindowPtr> mWindows;                       // 8B+ — all windows emitted so far
   std::shared_ptr<AsyncWorker::InputQueue> mSendQueue;   // 8B  — lock-free producer → consumer
   std::shared_ptr<AsyncWorker::OutputQueue> mRecvQueue;  // 8B  — lock-free consumer → producer
   std::shared_ptr<VariantStore> mVariantStore;           // 8B  — thread-safe variant dedup store
   std::vector<std::jthread> mWorkerThreads;              // 8B+ — C++20 cooperative cancellation
 
-  // ── 8B Align (batch feeding state) ──────────────────────────────────────
+  // ── 8B Align (batch feeding state) ───────────────────────────────────────────────────────────
   usize mRegionIdx = 0;   // 8B  — current region in builder
   i64 mWindowStart = -1;  // 8B  — current window start offset
   usize mGlobalIdx = 0;   // 8B  — next global window index
 
-  // ── 8B Align (contiguous flush tracking) ────────────────────────────────
+  // ── 8B Align (contiguous flush tracking) ─────────────────────────────────────────────────────
   usize mLastContiguousDone = 0;  // 8B  — watermark of contiguously done
   usize mIdxToFlush = 0;          // 8B  — last flushed window index
 
-  // ── 4B Align ────────────────────────────────────────────────────────────
+  // ── 4B Align ─────────────────────────────────────────────────────────────────────────────────
   u32 mWindowLength;  // 4B  — cached from params for workers
 
   /// Enqueue the next batch of windows from the window builder.

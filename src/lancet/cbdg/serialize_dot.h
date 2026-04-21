@@ -14,10 +14,13 @@
 
 namespace lancet::cbdg {
 
-// ── Overlay sets for debug highlighting ─────────────────────────────────
+// ============================================================================
+// Overlay sets for debug highlighting
+// ============================================================================
 // Bundles node and edge sets used to color-code DOT graph nodes/edges.
 // Highlight sets are shown in accent colors; background sets are dimmed.
 struct DotOverlaySets {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   absl::flat_hash_set<NodeID> mNodes;
   absl::flat_hash_set<Edge> mEdges;
 };

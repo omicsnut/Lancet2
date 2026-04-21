@@ -18,10 +18,10 @@ namespace lancet::core {
 class AsyncWorker {
  public:
   struct Result {
-    // ── 8B Align ──────────────────────────────────────────────────────────
+    // ── 8B Align ────────────────────────────────────────────────────────────
     usize mGenomeIdx = 0;
     absl::Duration mRuntime = absl::ZeroDuration();
-    // ── 1B Align ──────────────────────────────────────────────────────────
+    // ── 1B Align ────────────────────────────────────────────────────────────
     VariantBuilder::StatusCode mStatus = VariantBuilder::StatusCode::UNKNOWN;
   };
 

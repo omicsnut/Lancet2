@@ -16,10 +16,10 @@ namespace lancet::hts {
 // to store mate locations without including the full Alignment header.
 // ============================================================================
 struct MateInfo {
-  // ── 8B Alignment ──────────────────────────────────────────────────────
+  // ── 8B Align ────────────────────────────────────────────────────────────
   i64 mMateStartPos0 = -1;  // 0-based mate start position
 
-  // ── 4B Alignment ──────────────────────────────────────────────────────
+  // ── 4B Align ────────────────────────────────────────────────────────────
   i32 mChromIndex = -1;  // reference sequence index (tid) of the mate
 };
 

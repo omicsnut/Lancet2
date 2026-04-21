@@ -48,9 +48,9 @@ class Alignment {
     AUX_RGAUX = CIGAR_SEQ_QUAL | SAM_AUX | SAM_RGAUX,
   };
 
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // Core fields: these read directly from cached scalar fields (always populated)
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   [[nodiscard]] auto StartPos0() const noexcept -> i64 { return mStart0; }
   [[nodiscard]] auto MateStartPos0() const noexcept -> i64 { return mMateStart0; }
   [[nodiscard]] auto InsertSize() const noexcept -> i64 { return mInsertSize; }
@@ -60,11 +60,11 @@ class Alignment {
   [[nodiscard]] auto FlagRaw() const noexcept -> u16 { return mSamFlag; }
   [[nodiscard]] auto MapQual() const noexcept -> u8 { return mMapQual; }
 
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // Zero-copy proxies: route directly through the underlying bam1_t* payload.
   // The returned views are only valid while this Alignment (and its backing
   // iterator) remain at the current position.
-  // ---------------------------------------------------------------------------
+  // ============================================================================
 
   /// Zero-copy view of the query name directly from the bam1_t record.
   [[nodiscard]] auto QnameView() const noexcept -> std::string_view;
@@ -77,10 +77,10 @@ class Alignment {
 
   [[nodiscard]] auto CigarString() const -> std::string;
 
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // On-demand deep extraction: these perform allocations and must be used when
   // the data needs to outlive the current iterator position.
-  // ---------------------------------------------------------------------------
+  // ============================================================================
 
   /// Decodes the 4-bit packed BAM sequence into a full ASCII string.
   /// This allocates a new std::string on every call.
@@ -97,10 +97,10 @@ class Alignment {
 
   [[nodiscard]] auto IsEmpty() const noexcept -> bool;
 
-  // ---------------------------------------------------------------------------
+  // ============================================================================
   // Aux tag access: routes directly through bam_aux_get() on the raw record,
   // bypassing the old cached vector of AuxTag objects.
-  // ---------------------------------------------------------------------------
+  // ============================================================================
 
   /// Check if a two-character auxiliary tag exists in this alignment's raw data.
   [[nodiscard]] auto HasTag(std::string_view tag_name) const noexcept -> bool;
@@ -129,7 +129,7 @@ class Alignment {
   auto operator!=(Alignment const& rhs) const -> bool;
 
  private:
-  // Cached scalar fields from bam1_t::core (always populated, cheap to copy)
+  // ── 8B Align ────────────────────────────────────────────────────────────
   i64 mStart0 = -1;
   i64 mMateStart0 = -1;
   i64 mInsertSize = -1;
@@ -139,9 +139,12 @@ class Alignment {
   /// See the class-level documentation for full lifetime semantics.
   bam1_t* mRawAln = nullptr;
 
+  // ── 4B Align ────────────────────────────────────────────────────────────
   i32 mChromIdx = -1;
   i32 mMateChromIdx = -1;
+  // ── 2B Align ────────────────────────────────────────────────────────────
   u16 mSamFlag = 0;
+  // ── 1B Align ────────────────────────────────────────────────────────────
   u8 mMapQual = 0;
 
   friend class Iterator;

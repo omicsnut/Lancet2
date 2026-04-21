@@ -55,7 +55,9 @@ edge [color=gray,fontsize=8,fontcolor=floralwhite,len=3,fixedsize=false,headclip
 
 constexpr auto DOT_FOOTER = "}\n}\n"sv;
 
-// ── Node Colors ─────────────────────────────────────────────────────────
+// ============================================================================
+// Node Colors
+// ============================================================================
 constexpr auto COLOR_BACKGROUND = "darkgray"sv;
 constexpr auto COLOR_HIGHLIGHT = "orchid"sv;
 constexpr auto COLOR_SHARED = "steelblue"sv;
@@ -63,7 +65,9 @@ constexpr auto COLOR_CASE_ONLY = "indianred"sv;
 constexpr auto COLOR_CTRL_ONLY = "mediumseagreen"sv;
 constexpr auto COLOR_DEFAULT = "lightblue"sv;
 
-// ── Edge Styles ─────────────────────────────────────────────────────────
+// ============================================================================
+// Edge Styles
+// ============================================================================
 constexpr auto STYLE_DOTTED = "dotted"sv;
 constexpr auto STYLE_SOLID = "solid"sv;
 constexpr auto ATTR_HIGHLIGHT_COLOR = R"raw( color="goldenrod")raw"sv;

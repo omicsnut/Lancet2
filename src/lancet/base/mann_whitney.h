@@ -27,7 +27,9 @@
 // bias produces the same value regardless of sequencing depth. This makes
 // it suitable for ML models that must generalize across coverage regimes.
 //
-// ── Mathematical Foundation ─────────────────────────────────────────────────
+// ============================================================================
+// Mathematical Foundation
+// ============================================================================
 //
 // Given two samples X = {x_1, ..., x_m} (REF) and Y = {y_1, ..., y_n} (ALT):
 //
@@ -56,7 +58,9 @@
 //      dividing by √N recovers δ — the standardized effect size
 //      (analogous to Cohen's d for parametric tests).
 //
-// ── Coverage Stability ──────────────────────────────────────────────────────
+// ============================================================================
+// Coverage Stability
+// ============================================================================
 //
 // For a constant mild bias (e.g., ALT MAPQ 2 units lower than REF):
 //
@@ -68,7 +72,9 @@
 //
 // The effect size varies < 3% across 20×–2000× for any fixed bias level.
 //
-// ── Edge Cases ──────────────────────────────────────────────────────────────
+// ============================================================================
+// Edge Cases
+// ============================================================================
 //
 // Empty group (one or both samples missing): returns std::nullopt.
 // This means the test CANNOT be run — semantically distinct from "test ran,
@@ -86,7 +92,9 @@
 // Common biological scenarios producing 0.0 (genuine zero):
 //   - Identical values: all reads have the same MAPQ/BQ/position
 //
-// ── References ──────────────────────────────────────────────────────────────
+// ============================================================================
+// References
+// ============================================================================
 //
 //   - Mann, H.B. & Whitney, D.R. (1947). Annals of Math. Statistics, 18(1).
 //   - Lehmann, E.L. (2006). Nonparametrics: Statistical Methods Based on Ranks.
@@ -128,7 +136,9 @@ template <typename T>
   auto const n_alt = static_cast<f64>(alt_vals.size());
   auto const total = ref_vals.size() + alt_vals.size();
 
-  // ── Step 1: Pool and sort ────────────────────────────────────────────────
+  // ============================================================================
+  // Step 1: Pool and sort
+  // ============================================================================
   // Tag each value with its group membership for rank assignment.
   struct TaggedValue {
     f64 mValue;
@@ -149,7 +159,9 @@ template <typename T>
               return lhs.mValue < rhs.mValue;
             });
 
-  // ── Step 2: Assign mid-ranks and accumulate ALT rank sum + tie term ──────
+  // ============================================================================
+  // Step 2: Assign mid-ranks and accumulate ALT rank sum + tie term
+  // ============================================================================
   // Tied values receive the average of the ranks they would span.
   // Example: values [3, 5, 5, 7] get ranks [1, 2.5, 2.5, 4].
   f64 alt_rank_sum = 0.0;
@@ -179,12 +191,16 @@ template <typename T>
     i = jdx;
   }
 
-  // ── Step 3: Compute U statistic ──────────────────────────────────────────
+  // ============================================================================
+  // Step 3: Compute U statistic
+  // ============================================================================
   // U_alt = R_alt - n_alt*(n_alt+1)/2
   // Counts the number of (ref, alt) pairs where ref value > alt value.
   auto const u_stat = alt_rank_sum - ((n_alt * (n_alt + 1.0)) / 2.0);
 
-  // ── Step 4: Expected value and variance under H₀ ─────────────────────────
+  // ============================================================================
+  // Step 4: Expected value and variance under H₀
+  // ============================================================================
   auto const mean_u = (n_ref * n_alt) / 2.0;
   auto const n_total = static_cast<f64>(total);
 
@@ -199,7 +215,9 @@ template <typename T>
     return 0.0;
   }
 
-  // ── Step 5: Effect size = Z / √N ─────────────────────────────────────────
+  // ============================================================================
+  // Step 5: Effect size = Z / √N
+  // ============================================================================
   // Raw Z-score divided by √N to remove √N power amplification.
   // This recovers the standardized effect size (Cohen's d analog).
   auto const z_score = (u_stat - mean_u) / std::sqrt(var_u);

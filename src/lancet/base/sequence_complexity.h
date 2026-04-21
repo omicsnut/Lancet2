@@ -14,6 +14,7 @@ namespace lancet::base {
 /// SequenceComplexityScorer to identify variant coordinates within
 /// assembled haplotype strings.
 struct HapRegion {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::string_view mHaplotype;  // 16B — full assembled haplotype sequence
   usize mPos = 0;               //  8B — 0-based variant start position
   usize mLen = 0;               //  8B — variant allele length
@@ -25,11 +26,13 @@ struct HapRegion {
 
 /// Result of detecting a single tandem repeat within a sequence window.
 struct TandemRepeatResult {
-  i32 mPeriod = 0;        ///< motif length (1=homopolymer, 2=dinucleotide, ...)
-  f32 mCopies = 0.0F;     ///< fractional copy count (span / period)
-  i32 mStartPos = 0;      ///< 0-based start within scored window
-  i32 mSpanLength = 0;    ///< total bp covered by the repeat
-  i32 mTotalErrors = 0;   ///< edit distance sum (approximate only, 0 for exact)
+  // ── 4B Align ────────────────────────────────────────────────────────────
+  i32 mPeriod = 0;       ///< motif length (1=homopolymer, 2=dinucleotide, ...)
+  f32 mCopies = 0.0F;    ///< fractional copy count (span / period)
+  i32 mStartPos = 0;     ///< 0-based start within scored window
+  i32 mSpanLength = 0;   ///< total bp covered by the repeat
+  i32 mTotalErrors = 0;  ///< edit distance sum (approximate only, 0 for exact)
+  // ── 1B Align ────────────────────────────────────────────────────────────
   bool mIsExact = false;  ///< true if found by exact matching
 
   /// Fraction of span that is error-free.
@@ -46,6 +49,7 @@ struct TandemRepeatResult {
 /// Used internally by SequenceComplexityScorer during motif detection.
 /// Only the fields consumed by the SequenceComplexity distiller are retained.
 struct VariantTRFeatures {
+  // ── 4B Align ────────────────────────────────────────────────────────────
   i32 mDistToNearestTr = -1;    ///< bp distance to nearest TR (-1 = no TR found)
   i32 mNearestTrPeriod = 0;     ///< period of nearest TR
   f32 mNearestTrPurity = 0.0F;  ///< purity of nearest TR
@@ -67,7 +71,9 @@ struct VariantTRFeatures {
 //
 // Three conceptual groups:
 //
-// ── Context (4 features, strictly REF) ──────────────────────────────
+// ============================================================================
+// Context (4 features, strictly REF)
+// ============================================================================
 //   "How brittle is the genome here, regardless of the variant?"
 //
 //   ContextHRun:        Max homopolymer run in REF ±20bp.
@@ -75,7 +81,9 @@ struct VariantTRFeatures {
 //   ContextFlankLQ:     log1p-squashed LongdustQ (k=4) in REF ±50bp.
 //   ContextHaplotypeLQ: log1p-squashed LongdustQ (k=7) on full REF haplotype.
 //
-// ── Deltas (3 features, ALT minus REF) ──────────────────────────────
+// ============================================================================
+// Deltas (3 features, ALT minus REF)
+// ============================================================================
 //   "How did the variant alter the local sequence complexity?"
 //
 //   DeltaHRun:    ALT ±5bp HRun − REF ±5bp HRun.
@@ -86,7 +94,9 @@ struct VariantTRFeatures {
 //   DeltaFlankLQ: log1p(ALT ±50bp LQ) − log1p(REF ±50bp LQ).
 //                 Positive = variant exacerbated microsatellite repetitiveness.
 //
-// ── TR Motif (4 features, strictly ALT ±50bp) ───────────────────────
+// ============================================================================
+// TR Motif (4 features, strictly ALT ±50bp)
+// ============================================================================
 //   "What is the tandem repeat environment of the final allele?"
 //
 //   TrAffinity:     1/(1+dist) where dist = distance to nearest TR.
@@ -98,18 +108,24 @@ struct VariantTRFeatures {
 // ============================================================================
 class SequenceComplexity {
  public:
-  // ── Context accessors ──────────────────────────────────────────────
+  // ============================================================================
+  // Context accessors
+  // ============================================================================
   [[nodiscard]] auto ContextHRun() const noexcept -> i32 { return mContextHRun; }
   [[nodiscard]] auto ContextEntropy() const noexcept -> f32 { return mContextEntropy; }
   [[nodiscard]] auto ContextFlankLQ() const noexcept -> f64 { return mContextFlankLQ; }
   [[nodiscard]] auto ContextHaplotypeLQ() const noexcept -> f64 { return mContextHaplotypeLQ; }
 
-  // ── Delta accessors ────────────────────────────────────────────────
+  // ============================================================================
+  // Delta accessors
+  // ============================================================================
   [[nodiscard]] auto DeltaHRun() const noexcept -> i32 { return mDeltaHRun; }
   [[nodiscard]] auto DeltaEntropy() const noexcept -> f32 { return mDeltaEntropy; }
   [[nodiscard]] auto DeltaFlankLQ() const noexcept -> f64 { return mDeltaFlankLQ; }
 
-  // ── TR Motif accessors ─────────────────────────────────────────────
+  // ============================================================================
+  // TR Motif accessors
+  // ============================================================================
   [[nodiscard]] auto TrAffinity() const noexcept -> f32 { return mTrAffinity; }
   [[nodiscard]] auto TrPurity() const noexcept -> f32 { return mTrPurity; }
   [[nodiscard]] auto TrPeriod() const noexcept -> i32 { return mTrPeriod; }
@@ -129,14 +145,14 @@ class SequenceComplexity {
   f64 mDeltaFlankLQ = 0.0;        ///< log-space ALT−REF delta at ±50bp
 
   // ── 4B Align ────────────────────────────────────────────────────────────
-  f32 mContextEntropy = 0.0F;     ///< Shannon entropy in REF ±20bp
-  f32 mDeltaEntropy = 0.0F;       ///< ALT−REF entropy delta at ±10bp
-  f32 mTrAffinity = 0.0F;         ///< sentinel-safe [0,1]
-  f32 mTrPurity = 0.0F;           ///< sentinel-safe [0,1]
-  i32 mContextHRun = 0;           ///< max homopolymer run in REF ±20bp
-  i32 mDeltaHRun = 0;             ///< ALT−REF HRun delta at ±5bp
-  i32 mTrPeriod = 0;              ///< sentinel-safe (0 = no TR)
-  i32 mIsStutterIndel = 0;        ///< binary stutter flag
+  f32 mContextEntropy = 0.0F;  ///< Shannon entropy in REF ±20bp
+  f32 mDeltaEntropy = 0.0F;    ///< ALT−REF entropy delta at ±10bp
+  f32 mTrAffinity = 0.0F;      ///< sentinel-safe [0,1]
+  f32 mTrPurity = 0.0F;        ///< sentinel-safe [0,1]
+  i32 mContextHRun = 0;        ///< max homopolymer run in REF ±20bp
+  i32 mDeltaHRun = 0;          ///< ALT−REF HRun delta at ±5bp
+  i32 mTrPeriod = 0;           ///< sentinel-safe (0 = no TR)
+  i32 mIsStutterIndel = 0;     ///< binary stutter flag
 
   friend class SequenceComplexityScorer;  // populates private fields
 };
@@ -186,7 +202,9 @@ class SequenceComplexityScorer {
   /// @param alt  ALT haplotype region (haplotype string, variant pos, allele length)
   [[nodiscard]] auto Score(HapRegion const& ref, HapRegion const& alt) const -> SequenceComplexity;
 
-  // ── Component methods (public for unit testing) ───────────────────────
+  // ============================================================================
+  // Component methods (public for unit testing)
+  // ============================================================================
 
   /// Maximum homopolymer run length in a sequence.
   /// Returns 0 for empty sequences.
@@ -204,7 +222,9 @@ class SequenceComplexityScorer {
   /// Returns 0.0 for sequences with only one base type.
   [[nodiscard]] static auto LocalShannonEntropy(std::string_view seq) -> f32;
 
-  // ── Motif detection ───────────────────────────────────────────────────
+  // ============================================================================
+  // Motif detection
+  // ============================================================================
 
   /// Find exact tandem repeats by checking if any motif of period 1..max_period
   /// repeats ≥ min_copies times starting at each position.
@@ -220,7 +240,9 @@ class SequenceComplexityScorer {
                                               f32 min_copies = 3.0F, i32 max_edits_per_unit = 1)
       -> std::vector<TandemRepeatResult>;
 
-  // ── Feature flattening ────────────────────────────────────────────────
+  // ============================================================================
+  // Feature flattening
+  // ============================================================================
 
   /// Flatten a list of TR hits into VariantTRFeatures relative to a variant
   /// at (variant_pos, variant_length) within a window of total size window_size.
@@ -229,6 +251,7 @@ class SequenceComplexityScorer {
       -> VariantTRFeatures;
 
  private:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   // Owned LongdustQ scorers — constructed once, used across all windows.
   LongdustQScorer mFlankScorer;      ///< k=4 for ±50bp flanks
   LongdustQScorer mHaplotypeScorer;  ///< k=7 for full haplotype
@@ -237,14 +260,18 @@ class SequenceComplexityScorer {
   static constexpr int FLANK_K = 4;
   static constexpr int HAPLOTYPE_K = 7;
 
-  // ── Flank sizes organized by feature group ────────────────────────────
+  // ============================================================================
+  // Flank sizes organized by feature group
+  // ============================================================================
   static constexpr i64 CONTEXT_FLANK = 20;        ///< HRun + Entropy context
   static constexpr i64 DELTA_HRUN_FLANK = 5;      ///< HRun delta
   static constexpr i64 DELTA_ENTROPY_FLANK = 10;  ///< Entropy delta
   static constexpr i64 LQ_FLANK = 50;             ///< LongdustQ (context + delta)
   static constexpr i64 TR_MOTIF_FLANK = 50;       ///< TR motif detection
 
-  // ── Private scoring helpers (one per feature group) ───────────────────
+  // ============================================================================
+  // Private scoring helpers (one per feature group)
+  // ============================================================================
 
   /// Populate context features from REF haplotype.
   void ScoreContext(SequenceComplexity& cplx, HapRegion const& ref) const;
@@ -255,7 +282,9 @@ class SequenceComplexityScorer {
   /// Populate TR motif features from ALT haplotype.
   static void ScoreTrMotif(SequenceComplexity& cplx, HapRegion const& alt);
 
-  // ── Internal helpers ──────────────────────────────────────────────────
+  // ============================================================================
+  // Internal helpers
+  // ============================================================================
 
   /// Returns true if the motif is a simple repeat of a shorter primitive.
   [[nodiscard]] static auto IsPrimitiveMotif(std::string_view motif) -> bool;

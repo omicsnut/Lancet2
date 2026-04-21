@@ -31,7 +31,7 @@ class ReadCollector {
       absl::flat_hash_map<SampleInfo, ExtractorPtr, SampleInfo::Hash, SampleInfo::Equal>;
 
   struct Params {
-    // ── 8B Align ──────────────────────────────────────────────────────────
+    // ── 8B Align ────────────────────────────────────────────────────────────
     std::filesystem::path mRefPath;                 // 8B+
     std::vector<std::filesystem::path> mCtrlPaths;  // 8B+
     std::vector<std::filesystem::path> mCasePaths;  // 8B+
@@ -39,7 +39,7 @@ class ReadCollector {
     /// where role is control or case. If role is omitted, defaults to control.
     std::vector<std::string> mSampleSpecs;            // 8B+
     f64 mMaxSampleCov = DEFAULT_MAX_WINDOW_COVERAGE;  // 8B
-    // ── 1B Align ──────────────────────────────────────────────────────────
+    // ── 1B Align ────────────────────────────────────────────────────────────
     bool mNoCtgCheck = false;    // 1B
     bool mExtractPairs = false;  // 1B
 
@@ -57,8 +57,9 @@ class ReadCollector {
   ReadCollector(Params params, absl::Span<SampleInfo const> sample_list);
 
   struct Result {
-    std::vector<Read> mSampleReads;
-    std::vector<SampleInfo> mSampleList;
+    // ── 8B Align ────────────────────────────────────────────────────────────
+    std::vector<Read> mSampleReads;       // 8B+
+    std::vector<SampleInfo> mSampleList;  // 8B+
   };
 
   [[nodiscard]] auto CollectRegionResult(Region const& region) -> Result;
@@ -82,7 +83,7 @@ class ReadCollector {
 
   /// Pass 1 output: downsampling decisions + mate locations.
   struct ProfileResult {
-    // ── 8B Align ──────────────────────────────────────────────────────────
+    // ── 8B Align ────────────────────────────────────────────────────────────
     absl::flat_hash_set<u64> mKeepQnames;  // 8B+ — qname hashes kept after downsampling
     MateRegionsMap mExpectedMates;         // 8B+ — mate locations for out-of-region retrieval
     u64 mSampledReadCount = 0;             // 8B  — number of reads kept

@@ -197,7 +197,9 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     absl::InlinedVector<f64, 4> cmlod_vec(cmlod_scores.cbegin(), cmlod_scores.cend());
     sample.SetContinuousMixtureLods(std::move(cmlod_vec));
 
-    // ── Artifact detection metrics ─────────────────────────────────────
+    // ============================================================================
+    // Artifact detection metrics
+    // ============================================================================
     sample.SetField(SampleFormatData::FRAG_START_ENTROPY, support->ComputeFSSE());
     sample.SetField(SampleFormatData::ALT_HAP_DISCORD_DELTA, support->ComputeAHDD());
 

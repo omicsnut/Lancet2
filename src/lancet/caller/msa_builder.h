@@ -13,6 +13,7 @@ namespace lancet::caller {
 
 class MsaBuilder {
  public:
+  // ── 8B Align ────────────────────────────────────────────────────────────
   std::unique_ptr<spoa::AlignmentEngine> mEngine;
   spoa::Graph mGraph;
 

@@ -7,7 +7,9 @@
 
 namespace lancet::caller {
 
-// ── Scoring constants for Illumina read-to-contig realignment ────────────────
+// ============================================================================
+// Scoring constants for Illumina read-to-contig realignment
+// ============================================================================
 //
 // These are intentionally STRICT: biological variation is already baked into
 // the assembled haplotype sequences, so divergence here is sequencer noise.

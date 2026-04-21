@@ -54,6 +54,7 @@ namespace lancet::caller {
 /// Per-allele strand-split base qualities needed by the mixture LOD engine.
 /// Caller must provide one entry per allele (REF at index 0, ALTs at 1..K-1).
 struct AlleleBaseQuals {
+  // ── 8B Align ────────────────────────────────────────────────────────────
   absl::Span<u8 const> mFwdBaseQuals;  // 16B
   absl::Span<u8 const> mRevBaseQuals;  // 16B
 };
