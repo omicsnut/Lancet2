@@ -479,7 +479,7 @@ def render_variants(variants: list[dict]) -> None:
                   "101–150", "151–200", "201–500", ">500"]
 
     for vtype in ("INS", "DEL"):
-        lens = [v["len"] for v in variants if v["type"] == vtype]
+        lens = [abs(v["len"]) for v in variants if v["type"] == vtype]
         if not lens:
             continue
         lt = Table(title=f"{vtype} Length Distribution", title_style="bold",
