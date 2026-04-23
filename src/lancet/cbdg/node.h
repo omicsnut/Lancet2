@@ -96,6 +96,26 @@ class Node {
 
   [[nodiscard]] auto TotalReadSupport() const noexcept -> u32;
 
+  /// Coverage-bounded confidence score for walk enumeration and SPOA weighting.
+  ///
+  /// confidence = floor(TotalReadSupport × concordance) + (REFERENCE ? 1 : 0)
+  ///   concordance = confirming_samples / num_samples  ∈ (0, 1]
+  ///
+  /// @param num_samples Authoritative total sample count from GraphParams.
+  ///   Cannot be derived from mCounts.size() because IncrementReadSupport
+  ///   grows the vector lazily — nodes only touched by low-index samples
+  ///   have an undersized mCounts, which would inflate concordance to 1.0.
+  ///
+  /// Result ∈ [0, TotalReadSupport + 1]:
+  ///   - Maximum (TotalReadSupport + 1) when all samples confirm AND k-mer is in the reference.
+  ///   - Zero when TotalReadSupport is zero.
+  ///   - One for singleton nodes (every sample has ≤1 read).
+  ///
+  /// The +1 reference bonus is additive, not multiplicative — it gives
+  /// reference-confirmed k-mers a tiebreaker without distorting the coverage
+  /// scale. This keeps REF and ALT path weights directly comparable.
+  [[nodiscard]] auto Confidence(usize num_samples) const noexcept -> u32;
+
   /// True if every sample with non-zero coverage has exactly 1 read.
   /// N-sample generalization of the 2-sample (ctrl==1 && case==1) check.
   [[nodiscard]] auto IsAllSingletons() const noexcept -> bool;

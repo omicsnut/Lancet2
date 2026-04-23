@@ -133,6 +133,18 @@ auto CollectPathSequences(absl::Span<cbdg::Path const> paths) -> std::vector<std
 }
 
 // ============================================================================
+// CollectHapWeights: extract per-base SPOA weights from graph paths.
+// ============================================================================
+auto CollectHapWeights(absl::Span<cbdg::Path const> paths) -> cbdg::Path::HapWeights {
+  cbdg::Path::HapWeights path_weights;
+  path_weights.reserve(paths.size());
+  std::ranges::transform(
+      paths, std::back_inserter(path_weights),
+      [](auto const& path) -> cbdg::Path::BaseWeights { return path.PerBaseWeights(); });
+  return path_weights;
+}
+
+// ============================================================================
 // BuildPerSampleCov: compute per-sample window coverage for SDFC normalization.
 // ============================================================================
 auto BuildPerSampleCov(absl::Span<SampleInfo const> samples, usize win_len)
@@ -240,12 +252,12 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     std::vector<cbdg::Path> const& comp_paths = component_haplotypes[idx];
 
     auto const comp_haps = CollectPathSequences(comp_paths);
+    auto const comp_weights = CollectHapWeights(comp_paths);
 
     LOG_DEBUG("Building MSA for graph component {} from window {} with {} haplotypes", idx, reg_str,
               nhaps)
 
-    absl::Span<std::string const> const ref_and_alt_haps = absl::MakeConstSpan(comp_haps);
-    mSpoaState.UpdateSpoaState(ref_and_alt_haps);
+    mSpoaState.UpdateSpoaState(absl::MakeConstSpan(comp_haps), absl::MakeConstSpan(comp_weights));
     // SerializeGraph is a no-op when MakeGfaPath returns an empty path
     // (i.e., --out-graphs-dir was not specified on the CLI).
     mSpoaState.SerializeGraph(MakeGfaPath(*window, idx));
@@ -265,7 +277,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
 
     LOG_DEBUG("Found variant(s) in graph component {} for window {} with {} haplotypes", idx,
               reg_str, nhaps)
-    auto genotyped = mGenotyper.Genotype(ref_and_alt_haps, reads, vset);
+    auto genotyped = mGenotyper.Genotype(absl::MakeConstSpan(comp_haps), reads, vset);
 
     std::ranges::for_each(vset, [&](auto const& var) -> void {
       auto iter = genotyped.find(&var);

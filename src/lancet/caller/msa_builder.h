@@ -1,6 +1,8 @@
 #ifndef SRC_LANCET_CALLER_MSA_BUILDER_H_
 #define SRC_LANCET_CALLER_MSA_BUILDER_H_
 
+#include "lancet/cbdg/path.h"
+
 #include "absl/types/span.h"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/graph.hpp"
@@ -19,7 +21,9 @@ class MsaBuilder {
 
   using FsPath = std::filesystem::path;
 
-  void UpdateSpoaState(absl::Span<std::string const> sequences);
+  void UpdateSpoaState(absl::Span<std::string const> sequences,
+                       absl::Span<cbdg::Path::BaseWeights const> weights);
+
   void SerializeGraph(FsPath const& out_gfa_path);
 
  private:

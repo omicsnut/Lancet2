@@ -293,8 +293,8 @@ auto SequenceComplexityScorer::FindApproxRepeats(std::string_view seq, i32 const
 // ============================================================================
 
 auto SequenceComplexityScorer::FlattenTRFeatures(std::vector<TandemRepeatResult> const& results,
-                                                 i32 const variant_pos, i32 const variant_length,
-                                                 i32 const /*window_size*/) -> VariantTRFeatures {
+                                                 i32 const variant_pos, i32 const variant_length)
+    -> VariantTRFeatures {
   VariantTRFeatures feat;
   if (results.empty()) {
     return feat;
@@ -340,7 +340,7 @@ auto SequenceComplexityScorer::FlattenTRFeatures(std::vector<TandemRepeatResult>
 void SequenceComplexityScorer::AccumulateTRFeatures(VariantTRFeatures& features,
                                                     std::string_view window,
                                                     i32 const var_pos_in_window,
-                                                    i32 const var_length, i32 const window_size) {
+                                                    i32 const var_length) {
   auto exact = FindExactRepeats(window);
   auto approx = FindApproxRepeats(window);
 
@@ -350,7 +350,7 @@ void SequenceComplexityScorer::AccumulateTRFeatures(VariantTRFeatures& features,
   all_results.insert(all_results.end(), exact.begin(), exact.end());
   all_results.insert(all_results.end(), approx.begin(), approx.end());
 
-  auto new_feat = FlattenTRFeatures(all_results, var_pos_in_window, var_length, window_size);
+  auto new_feat = FlattenTRFeatures(all_results, var_pos_in_window, var_length);
 
   // Take the closest TR (minimum distance)
   if (new_feat.mDistToNearestTr >= 0 &&
@@ -439,8 +439,7 @@ void SequenceComplexityScorer::ScoreTrMotif(SequenceComplexity& cplx, HapRegion 
   auto const var_pos_in_window = static_cast<i32>(static_cast<i64>(alt.mPos) - start);
 
   VariantTRFeatures trep;
-  AccumulateTRFeatures(trep, window, var_pos_in_window, static_cast<i32>(alt.mLen),
-                       static_cast<i32>(window.size()));
+  AccumulateTRFeatures(trep, window, var_pos_in_window, static_cast<i32>(alt.mLen));
 
   // Sentinel-safe transforms: dist < 0 means no TR found → all zeros
   if (trep.mDistToNearestTr < 0) {

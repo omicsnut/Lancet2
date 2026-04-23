@@ -211,10 +211,16 @@ class Graph {
   }
 
   /// Enumerate all source→sink walks via MaxFlow BFS, sort ALT haplotypes by
-  /// descending mean coverage, deduplicate, and prepend the reference path.
+  /// descending MinWeight (weakest-link confidence), deduplicate, and prepend
+  /// a confidence-weighted reference path.
   [[nodiscard]] auto EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
                                                 std::string_view ref_anchor_seq) const
       -> std::vector<Path>;
+
+  /// Build a reference haplotype Path weighted by the median Confidence of
+  /// surviving REFERENCE-tagged nodes in the given component.
+  [[nodiscard]] auto BuildRefHaplotypePath(usize comp_id, std::string_view ref_anchor_seq) const
+      -> Path;
 
   // ============================================================================
   // Debug DOT Visualization

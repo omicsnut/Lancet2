@@ -245,9 +245,9 @@ class SequenceComplexityScorer {
   // ============================================================================
 
   /// Flatten a list of TR hits into VariantTRFeatures relative to a variant
-  /// at (variant_pos, variant_length) within a window of total size window_size.
+  /// at (variant_pos, variant_length).
   [[nodiscard]] static auto FlattenTRFeatures(std::vector<TandemRepeatResult> const& results,
-                                              i32 variant_pos, i32 variant_length, i32 window_size)
+                                              i32 variant_pos, i32 variant_length)
       -> VariantTRFeatures;
 
  private:
@@ -296,7 +296,7 @@ class SequenceComplexityScorer {
   /// Run motif detection (both exact + approx) on a flanking window and
   /// take element-wise max into existing VariantTRFeatures.
   static void AccumulateTRFeatures(VariantTRFeatures& features, std::string_view window,
-                                   i32 var_pos_in_window, i32 var_length, i32 window_size);
+                                   i32 var_pos_in_window, i32 var_length);
 };
 
 }  // namespace lancet::base

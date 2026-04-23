@@ -7,7 +7,6 @@
 #include "spoa/alignment_engine.hpp"
 #include "spoa/graph.hpp"
 
-#include <algorithm>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -25,12 +24,13 @@
 
 namespace lancet::caller {
 
-void MsaBuilder::UpdateSpoaState(absl::Span<std::string const> sequences) {
+void MsaBuilder::UpdateSpoaState(absl::Span<std::string const> sequences,
+                                 absl::Span<cbdg::Path::BaseWeights const> weights) {
   mGraph.Clear();
-  std::ranges::for_each(sequences, [this](std::string const& haplotype) -> void {
-    auto const alignment = mEngine->Align(haplotype, mGraph);
-    mGraph.AddAlignment(alignment, haplotype);
-  });
+  for (usize idx = 0; idx < sequences.size(); ++idx) {
+    auto const alignment = mEngine->Align(sequences[idx], mGraph);
+    mGraph.AddAlignment(alignment, sequences[idx], weights[idx]);
+  }
 }
 
 void MsaBuilder::SerializeGraph(FsPath const& out_gfa_path) {

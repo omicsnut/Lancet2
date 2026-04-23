@@ -4,7 +4,6 @@
 #include "lancet/base/types.h"
 #include "lancet/cbdg/edge.h"
 #include "lancet/cbdg/graph.h"
-#include "lancet/cbdg/node.h"
 #include "lancet/cbdg/path.h"
 #include "lancet/cbdg/traversal_index.h"
 
@@ -69,8 +68,8 @@ class MaxFlow {
   // 2^20 — caps BFS walk-tree expansion
   static constexpr u32 DEFAULT_GRAPH_TRAVERSAL_LIMIT = 1'048'576;
 
-  explicit MaxFlow(Graph::NodeTable const* graph, NodeIDPair const& src_and_snk, usize currk,
-                   TraversalIndex const* trav_idx);
+  explicit MaxFlow(Graph::NodeTable const* graph, usize currk, TraversalIndex const* trav_idx,
+                   usize num_samples);
 
   using Result = std::optional<Path>;
 
@@ -84,6 +83,7 @@ class MaxFlow {
   Graph::NodeTable const* mGraph = nullptr;
   TraversalIndex const* mIndex = nullptr;
   usize mCurrentK = 0;
+  usize mNumSamples = 0;
 
   /// Set of edge ordinals already traversed by previous walks.
   /// Edges in this set get score 0; walks must have at least one

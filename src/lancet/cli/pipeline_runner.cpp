@@ -7,6 +7,7 @@
 #include "lancet/base/logging.h"
 #include "lancet/base/memory.h"
 #include "lancet/base/timer.h"
+#include "lancet/base/types.h"
 #include "lancet/cbdg/graph_params.h"
 #include "lancet/cbdg/label.h"
 #include "lancet/cli/cli_params.h"
@@ -177,6 +178,8 @@ void PipelineRunner::ValidateAndPopulateParams() {
   // instead of calling MakeSampleList() per-thread or per-window.
   mParamsPtr->mVariantBuilder.mSampleList =
       core::MakeSampleList(mParamsPtr->mVariantBuilder.mRdCollParams);
+  mParamsPtr->mVariantBuilder.mGraphParams.mNumSamples =
+      static_cast<u32>(mParamsPtr->mVariantBuilder.mSampleList.size());
 
   if (mParamsPtr->mVariantBuilder.mSkipActiveRegion) return;
 

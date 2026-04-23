@@ -20,9 +20,9 @@
 
 namespace lancet::cbdg {
 
-MaxFlow::MaxFlow(Graph::NodeTable const* graph, NodeIDPair const& /*src_and_snk*/,
-                 usize const currk, TraversalIndex const* trav_idx)
-    : mGraph(graph), mIndex(trav_idx), mCurrentK(currk) {
+MaxFlow::MaxFlow(Graph::NodeTable const* graph, usize const currk, TraversalIndex const* trav_idx,
+                 usize const num_samples)
+    : mGraph(graph), mIndex(trav_idx), mCurrentK(currk), mNumSamples(num_samples) {
   LANCET_ASSERT(mGraph != nullptr)
   LANCET_ASSERT(mIndex != nullptr)
 }
@@ -78,8 +78,10 @@ auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
       LANCET_ASSERT(src_itr != mGraph->end())
       LANCET_ASSERT(src_itr->second != nullptr)
       uniq_seqs.emplace_back(src_itr->second->SequenceFor(ordering));
-      total_seq_len += uniq_seqs.back().length();
+      auto const src_uniq_len = static_cast<u32>(uniq_seqs.back().length());
+      total_seq_len += src_uniq_len;
       path.AddNodeCoverage(src_itr->second->TotalReadSupport());
+      path.AddNodeWeight(src_itr->second->Confidence(mNumSamples), src_uniq_len);
     }
 
     auto const dst_itr = mGraph->find(conn.DstId());
@@ -88,10 +90,11 @@ auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
 
     ordering = conn.DstSign() == Kmer::Sign::PLUS ? DEFAULT_ORDER : OPPOSITE_ORDER;
     auto const dst_seq = dst_itr->second->SequenceFor(ordering);
-    auto const uniq_seq_len = dst_seq.size() - mCurrentK + 1;
-    uniq_seqs.emplace_back(dst_seq.substr(mCurrentK - 1, uniq_seq_len));
-    total_seq_len += uniq_seqs.back().length();
+    auto const dst_uniq_len = static_cast<u32>(dst_seq.size() - mCurrentK + 1);
+    uniq_seqs.emplace_back(dst_seq.substr(mCurrentK - 1, dst_uniq_len));
+    total_seq_len += dst_uniq_len;
     path.AddNodeCoverage(dst_itr->second->TotalReadSupport());
+    path.AddNodeWeight(dst_itr->second->Confidence(mNumSamples), dst_uniq_len);
   }
 
   if (uniq_seqs.empty()) return std::nullopt;
@@ -241,12 +244,12 @@ void MaxFlow::EnqueueOutgoingEdges(u32 const state_idx, u32 const parent_ai, u32
                         TraversalIndex::OutEdge const& rhs) -> bool {
     auto const lhs_dst_nidx = TraversalIndex::NodeIdxOf(lhs.mDstState);
     auto const rhs_dst_nidx = TraversalIndex::NodeIdxOf(rhs.mDstState);
-    auto const lhs_cov = this->mIndex->mNodes[lhs_dst_nidx]->TotalReadSupport();
-    auto const rhs_cov = this->mIndex->mNodes[rhs_dst_nidx]->TotalReadSupport();
-    return lhs_cov > rhs_cov;
+    auto const lhs_conf = this->mIndex->mNodes[lhs_dst_nidx]->Confidence(this->mNumSamples);
+    auto const rhs_conf = this->mIndex->mNodes[rhs_dst_nidx]->Confidence(this->mNumSamples);
+    return lhs_conf > rhs_conf;
   };
 
-  // Sort edges descending by the destination node's TotalReadSupport
+  // Sort edges descending by the destination node's Confidence
   // to traverse high-confidence paths first
   std::ranges::sort(out_edges, pred);
 

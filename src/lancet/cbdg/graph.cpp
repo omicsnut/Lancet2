@@ -1,6 +1,7 @@
 #include "lancet/cbdg/graph.h"
 
 #include "lancet/base/assert.h"
+#include "lancet/base/compute_stats.h"
 #include "lancet/base/logging.h"
 #include "lancet/base/timer.h"
 #include "lancet/base/types.h"
@@ -15,6 +16,7 @@
 #include "absl/container/chunked_queue.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/container/inlined_vector.h"
 #include "absl/hash/hash.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
@@ -776,7 +778,7 @@ auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav
   LOG_TRACE("Starting walk enumeration for {} with k={}, num_nodes={}", reg_str, mCurrK,
             mNodes.size())
 
-  MaxFlow max_flow(&mNodes, mSourceAndSinkIds, mCurrK, &trav_idx);
+  MaxFlow max_flow(&mNodes, mCurrK, &trav_idx, mParams.mNumSamples);
   auto path_seq = max_flow.NextPath();
 
   while (path_seq) {
@@ -787,26 +789,52 @@ auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav
   }
 
   if (!haplotypes.empty()) {
-    // Sort non-reference ALT haplotypes strictly by descending mean coverage.
-    // This ensures downstream Greedy Insertion Bias in SPOA prioritizes dominant somatic signals.
+    // Sort ALT haplotypes by descending MinWeight (weakest-link confidence).
+    // A path is only as trustworthy as its least-supported node.
     std::ranges::sort(haplotypes, [](Path const& lhs, Path const& rhs) -> bool {
-      return lhs.MeanCoverage() > rhs.MeanCoverage();
+      return lhs.MinWeight() > rhs.MinWeight();
     });
 
-    // Deduplicate Sequence matches in O(N). Because the array is already sorted
-    // by coverage, this retains the highest-coverage path for any duplicate sequence.
+    // Deduplicate by sequence. Because the array is sorted by MinWeight,
+    // this retains the highest-MinWeight copy for any duplicate sequence.
     absl::flat_hash_set<std::string_view> seen_seqs;
     std::erase_if(haplotypes, [&seen_seqs](Path const& path) -> bool {
       auto [_unused, inserted] = seen_seqs.insert(path.Sequence());
       return !inserted;
     });
 
-    Path ref_path;
-    ref_path.AppendSequence(ref_anchor_seq);
-    haplotypes.emplace(haplotypes.begin(), std::move(ref_path));
+    haplotypes.emplace(haplotypes.begin(), BuildRefHaplotypePath(comp_id, ref_anchor_seq));
   }
 
   return haplotypes;
+}
+
+// ============================================================================
+// BuildRefHaplotypePath: construct a reference path weighted by the median
+// Confidence of surviving REFERENCE-tagged nodes in the component.
+//
+// This keeps the REF backbone on the same coverage-based scale as the ALT
+// per-node weights, preventing SPOA from ignoring the reference anchor.
+// ============================================================================
+auto Graph::BuildRefHaplotypePath(usize const comp_id, std::string_view ref_anchor_seq) const
+    -> Path {
+  absl::InlinedVector<u32, 256> ref_confidences;
+  for (auto const& [nid, node_ptr] : mNodes) {
+    if (node_ptr->GetComponentId() != comp_id) continue;
+    if (!node_ptr->HasTag(Label::REFERENCE)) continue;
+    ref_confidences.push_back(node_ptr->Confidence(mParams.mNumSamples));
+  }
+
+  // Fallback to 1 if no REFERENCE nodes survive pruning.
+  u32 const median_conf = lancet::base::Median(absl::MakeConstSpan(ref_confidences));
+  u32 const ref_weight = ref_confidences.empty() ? u32{1} : median_conf;
+
+  Path ref_path;
+  ref_path.ReserveSequence(ref_anchor_seq.length());
+  ref_path.AppendSequence(ref_anchor_seq);
+  ref_path.AddNodeWeight(ref_weight, static_cast<u32>(ref_anchor_seq.length()));
+  ref_path.Finalize();
+  return ref_path;
 }
 
 // ============================================================================

@@ -41,6 +41,43 @@ auto Node::IsAllSingletons() const noexcept -> bool {
          std::ranges::all_of(mCounts, [](u32 const cnt) { return cnt <= 1; });
 }
 
+// ============================================================================
+// Confidence: coverage-bounded trustworthiness score for walk enumeration.
+//
+// Two independent signals discount from the maximum (TotalReadSupport):
+//   1. Sample concordance — k-mers confirmed by fewer independent samples
+//      retain a proportionally smaller fraction of their total coverage.
+//   2. Reference confirmation — additive +1 for k-mers present in the
+//      reference genome, providing a tiebreaker without scale distortion.
+//
+// Examples (2-sample tumor-normal, 30× WGS):
+//   Backbone (CTRL=20, CASE=18, REF): floor(38 × 2/2) + 1 = 39
+//   Somatic  (CTRL=0,  CASE=15, no REF): floor(15 × 1/2) + 0 = 7
+//   Singleton: 1 (override)
+//   Zero support: 0
+// ============================================================================
+auto Node::Confidence(usize const num_samples) const noexcept -> u32 {
+  if (IsAllSingletons()) return 1;
+
+  auto const total = TotalReadSupport();
+  if (total == 0) return 0;
+
+  // Concordance: fraction of samples with non-zero coverage for this k-mer.
+  // Uses the authoritative num_samples from GraphParams, not mCounts.size(),
+  // because mCounts grows lazily and may be undersized for nodes that only
+  // receive reads from low-index samples.
+  auto const num_confirming =
+      std::ranges::count_if(mCounts, [](u32 const count) -> bool { return count > 0; });
+  auto const denom = static_cast<f64>(std::max(num_samples, usize{1}));
+  auto const concordance = static_cast<f64>(num_confirming) / denom;
+
+  // Additive reference bonus: +1 for k-mers independently confirmed by
+  // the reference assembly. Breaks ties without inflating the coverage scale.
+  auto const ref_bonus = HasTag(Label::REFERENCE) ? u32{1} : u32{0};
+
+  return static_cast<u32>(static_cast<f64>(total) * concordance) + ref_bonus;
+}
+
 void Node::Merge(Node const& other, EdgeKind const conn_kind, usize const currk) {
   mKmer.Merge(other.mKmer, conn_kind, currk);
   mLabel.Merge(other.mLabel);

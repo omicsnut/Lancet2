@@ -8,6 +8,8 @@
 #include "absl/types/span.h"
 
 #include <algorithm>
+#include <functional>
+#include <ranges>
 #include <string_view>
 
 namespace lancet::cbdg {
@@ -16,8 +18,32 @@ void Path::AppendSequence(std::string_view seq) {
   absl::StrAppend(&mSequence, seq);
 }
 
-void Path::AddNodeCoverage(u32 cov) {
+void Path::ReserveSequence(usize const len) {
+  mSequence.reserve(len);
+  mNodeCoverages.reserve(len);
+  mNodeWeights.reserve(len);
+}
+
+void Path::AddNodeCoverage(u32 const cov) {
   mNodeCoverages.push_back(cov);
+}
+
+void Path::AddNodeWeight(u32 const weight, u32 const num_bases) {
+  mNodeWeights.push_back({.mWeight = weight, .mNumBases = num_bases});
+}
+
+auto Path::PerBaseWeights() const -> BaseWeights {
+  BaseWeights per_base;
+  per_base.reserve(mSequence.size());
+  for (auto const& [weight, num_bases] : mNodeWeights) {
+    per_base.insert(per_base.end(), num_bases, weight);
+  }
+  return per_base;
+}
+
+auto Path::MinWeight() const -> u32 {
+  if (mNodeWeights.empty()) return 0;
+  return std::ranges::min(mNodeWeights, {}, &NodeWeightEntry::mWeight).mWeight;
 }
 
 void Path::Finalize() {

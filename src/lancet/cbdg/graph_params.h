@@ -37,6 +37,12 @@ struct GraphParams {
   u32 mMinNodeCov = DEFAULT_MIN_NODE_COV;      // 4B
   u32 mMinAnchorCov = DEFAULT_MIN_ANCHOR_COV;  // 4B
 
+  /// Authoritative total number of samples in the run. Set once at pipeline
+  /// startup from mSampleList.size(). Required by Node::Confidence() because
+  /// per-node mCounts vectors grow lazily and may be undersized for nodes
+  /// that only receive reads from low-index samples.
+  u32 mNumSamples = 0;  // 4B
+
   // ── 2B Align ────────────────────────────────────────────────────────────
   u16 mKmerStepLen = DEFAULT_KMER_STEP_LEN;  // 2B
 };

@@ -13,19 +13,40 @@ namespace lancet::cbdg {
 
 class Path {
  public:
+  /// Per-base SPOA weight vector. Each element is the confidence weight for
+  /// one base position in the haplotype sequence string.
+  using BaseWeights = std::vector<u32>;
+  /// Collection of per-base weight vectors, one per haplotype path.
+  using HapWeights = std::vector<BaseWeights>;
+
   Path() = default;
 
   /// Concatenate a sequence fragment (k-mer or overlap extension) to the path.
   void AppendSequence(std::string_view seq);
   /// Pre-allocate storage for the expected total sequence length.
-  void ReserveSequence(usize len) { mSequence.reserve(len); }
+  void ReserveSequence(usize len);
   /// Record one node's total read coverage for downstream statistics.
   void AddNodeCoverage(u32 cov);
+
+  /// Record a node's confidence weight and the number of sequence bases it
+  /// contributed to the haplotype string. Called alongside AddNodeCoverage
+  /// during walk construction — one call per node in the walk.
+  void AddNodeWeight(u32 weight, u32 num_bases);
+
   /// Compute summary statistics (mean, median, CV, QCV) from accumulated node coverages.
   void Finalize();
 
   [[nodiscard]] auto IsEmpty() const -> bool { return mSequence.empty(); }
   [[nodiscard]] auto Sequence() const -> std::string_view { return mSequence; }
+
+  /// Expand per-node weights into per-base weights for SPOA.
+  /// Returns a vector of size == Sequence().size().
+  [[nodiscard]] auto PerBaseWeights() const -> BaseWeights;
+
+  /// Weakest-link: minimum node confidence across the entire path.
+  /// A path is only as trustworthy as its least-supported node.
+  [[nodiscard]] auto MinWeight() const -> u32;
+
   /// Average read coverage across all nodes constituting this path
   [[nodiscard]] auto MeanCoverage() const -> f64 { return mMeanCov; }
   /// Median read coverage across all nodes constituting this path
@@ -40,9 +61,18 @@ class Path {
   [[nodiscard]] auto TotalCoverage() const -> f64 { return mTotalCov; }
 
  private:
+  /// Per-node confidence weight entry. Stored during walk construction,
+  /// expanded lazily into per-base weights when SPOA needs them.
+  struct NodeWeightEntry {
+    // ── 4B Align ──────────────────────────────────────────────────────────
+    u32 mWeight;    // 4B — Node::Confidence() value
+    u32 mNumBases;  // 4B — sequence bases this node contributed
+  };
+
   // ── 8B Align ────────────────────────────────────────────────────────────
   std::string mSequence;
   absl::InlinedVector<u32, 256> mNodeCoverages;
+  absl::InlinedVector<NodeWeightEntry, 256> mNodeWeights;
   f64 mMeanCov = 0.0;
   f64 mMedianCov = 0.0;
   f64 mStdDevCov = 0.0;
@@ -52,7 +82,8 @@ class Path {
 };
 
 // First is always ref hap. Subsequent ALT haplotypes are sorted by descending
-// MeanCoverage, establishing Greedy Insertion Bias in downstream SPOA MSA.
+// MinWeight (weakest-link confidence), establishing structural priority in
+// downstream SPOA MSA.
 using CompHaps = std::vector<Path>;
 using GraphHaps = std::vector<CompHaps>;
 
