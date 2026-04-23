@@ -1711,23 +1711,54 @@ def write_specificity_report(
     console.print(summary)
     console.print()
 
-    # Per-type × size for UNSUPPORTED
-    unsup = [v for _, (v, cls, _) in classifications.items() if cls == "UNSUPPORTED"]
+    # Size × Type cross-tab for UNSUPPORTED variants
+    unsup = [(v, alt) for _, (v, cls, alt) in classifications.items() if cls == "UNSUPPORTED"]
     if unsup:
-        for vtype in ["SNV", "INS", "DEL", "MNP", "CPX"]:
-            vt_list = [v for v in unsup if v.vtype == vtype]
-            if not vt_list:
+        tbl = Table(title=f"UNSUPPORTED by Size × Type ({len(unsup)} variants)")
+        tbl.add_column("Size")
+        for vt in types:
+            tbl.add_column(vt, justify="right")
+        tbl.add_column("Total", justify="right")
+
+        for tier_name, lo, hi in SIZE_TIERS:
+            tier = [(v, a) for v, a in unsup if lo <= abs(v.variant_length) <= hi]
+            if not tier:
                 continue
-            tbl = Table(title=f"UNSUPPORTED: {vtype} ({len(vt_list)} variants)")
-            tbl.add_column("Size")
-            tbl.add_column("Count", justify="right")
-            for tier_name, lo, hi in SIZE_TIERS:
-                tier = [v for v in vt_list if lo <= abs(v.variant_length) <= hi]
-                if tier:
-                    tbl.add_row(tier_name, str(len(tier)))
-            tbl.add_row("TOTAL", str(len(vt_list)), style="bold")
-            console.print(tbl)
-            console.print()
+            row = [tier_name]
+            for vt in types:
+                row.append(str(sum(1 for v, _ in tier if v.vtype == vt)))
+            row.append(str(len(tier)))
+            tbl.add_row(*row)
+
+        row = ["TOTAL"]
+        for vt in types:
+            row.append(str(sum(1 for v, _ in unsup if v.vtype == vt)))
+        row.append(str(len(unsup)))
+        tbl.add_row(*row, style="bold")
+        console.print(tbl)
+        console.print()
+
+    # Top 20 potential artifacts (largest UNSUPPORTED variants)
+    if unsup:
+        ranked = sorted(unsup, key=lambda x: abs(x[0].variant_length), reverse=True)
+        top_n = ranked[:20]
+        tbl = Table(title=f"Top {len(top_n)} Potential Artifacts (largest UNSUPPORTED)")
+        tbl.add_column("#", justify="right")
+        tbl.add_column("Chrom")
+        tbl.add_column("Pos", justify="right")
+        tbl.add_column("Type")
+        tbl.add_column("Size", justify="right")
+        tbl.add_column("REF/ALT")
+
+        for i, (v, _) in enumerate(top_n, 1):
+            ref_alt = f"{(v.ref_seq or '.')[:20]}/{(v.alt_seq or '.')[:20]}"
+            tbl.add_row(
+                str(i), v.chrom, f"{v.pos:,}", v.vtype,
+                str(abs(v.variant_length)), ref_alt,
+            )
+
+        console.print(tbl)
+        console.print()
 
     # Write lancet_unmatched_details.txt
     tsv_path = output_dir / "lancet_unmatched_details.txt"
@@ -2449,25 +2480,43 @@ def write_forensics_report(
         console.print(ed_tbl)
         console.print()
 
-    # Per-stage × size breakdown for stages with enough variants
-    for stage in sorted(stage_counts.keys(), key=lambda s: _STAGE_ORDER.index(s)):
-        stage_vars = [v for v, s, _, _, _ in classifications if s == stage]
-        if len(stage_vars) < 5:
+    # Size × Stage cross-tab per variant type
+    # One table per type showing where in the pipeline each size tier fails.
+    active_stages = sorted(stage_counts.keys(), key=lambda s: _STAGE_ORDER.index(s))
+    for vtype in ["SNV", "INS", "DEL"]:
+        vt_class = [(v, s) for v, s, _, _, _ in classifications if v.vtype == vtype]
+        if len(vt_class) < 5:
             continue
-        for vtype in ["SNV", "INS", "DEL"]:
-            vt_list = [v for v in stage_vars if v.vtype == vtype]
-            if not vt_list:
+
+        # Only show stages that have at least one variant of this type
+        vt_stages = [s for s in active_stages if any(st == s for _, st in vt_class)]
+        if not vt_stages:
+            continue
+
+        tbl = Table(title=f"Failure Stage × Size: {vtype} ({len(vt_class)} variants)")
+        tbl.add_column("Size")
+        for s in vt_stages:
+            tbl.add_column(s, justify="right")
+        tbl.add_column("Total", justify="right")
+
+        for tier_name, lo, hi in SIZE_TIERS:
+            tier = [(v, s) for v, s in vt_class if lo <= abs(v.variant_length) <= hi]
+            if not tier:
                 continue
-            tbl = Table(title=f"{stage}: {vtype} ({len(vt_list)} variants)")
-            tbl.add_column("Size")
-            tbl.add_column("Count", justify="right")
-            for tier_name, lo, hi in SIZE_TIERS:
-                tier = [v for v in vt_list if lo <= abs(v.variant_length) <= hi]
-                if tier:
-                    tbl.add_row(tier_name, str(len(tier)))
-            tbl.add_row("TOTAL", str(len(vt_list)), style="bold")
-            console.print(tbl)
-            console.print()
+            row = [tier_name]
+            for s in vt_stages:
+                n = sum(1 for _, st in tier if st == s)
+                row.append(str(n) if n else "·")
+            row.append(str(len(tier)))
+            tbl.add_row(*row)
+
+        row = ["TOTAL"]
+        for s in vt_stages:
+            row.append(str(sum(1 for _, st in vt_class if st == s)))
+        row.append(str(len(vt_class)))
+        tbl.add_row(*row, style="bold")
+        console.print(tbl)
+        console.print()
 
     # Write forensics_details.txt
     tsv_path = output_dir / "forensics_details.txt"
