@@ -205,8 +205,10 @@ channels = ["conda-forge", "bioconda"]
 [feature.hts-tools.dependencies]
 samtools = "==1.23.1"
 bcftools = "==1.23.1"
+bwa-mem2 = "==2.3"
 rich = "==15.0.0"
 tqdm = "==4.67.3"
+pysam = "==0.23.3"
 
 [environments]
 profiling = { features = ["profiling"], solve-group = "default" }
