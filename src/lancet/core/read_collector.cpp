@@ -148,17 +148,14 @@ auto ReadCollector::ProfileAndDownsample(hts::Extractor& extractor, std::string 
   extractor.SetRegionToExtract(region_spec);
   for (auto const& aln : extractor) {
     auto const bflag = aln.Flag();
-    if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() == 0) {
+    if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() < 20) {
       continue;
     }
 
     auto const qhash = HashQname(aln.QnameView());
-    bool const passes_filters = aln.MapQual() >= 20;
-    if (passes_filters) {
-      num_pass_reads += 1;
-      num_pass_bases += aln.Length();
-      pass_qname_hashes.push_back(qhash);
-    }
+    num_pass_reads += 1;
+    num_pass_bases += aln.Length();
+    pass_qname_hashes.push_back(qhash);
 
     if (!mParams.mExtractPairs) continue;
 
@@ -216,7 +213,7 @@ void ReadCollector::ExtractKeptReads(hts::Extractor& extractor, std::string cons
   extractor.SetRegionToExtract(region_spec);
   for (auto const& aln : extractor) {
     auto const bflag = aln.Flag();
-    if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() == 0) {
+    if (bflag.IsQcFail() || bflag.IsDuplicate() || bflag.IsUnmapped() || aln.MapQual() < 20) {
       continue;
     }
 
