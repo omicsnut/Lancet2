@@ -84,7 +84,6 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
 
   static constexpr usize DEFAULT_EST_NUM_NODES = 32'768;
   static constexpr usize DEFAULT_MIN_ANCHOR_LENGTH = 150;
-  static constexpr f64 DEFAULT_PCT_NODES_NEEDED = 10.0;
 
   // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
   auto const reg_str = mRegion->ToSamtoolsRegion();
@@ -122,7 +121,6 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
     bool should_retry_kmer = false;
     for (auto const& cinfo : components) {
       if (should_retry_kmer) break;
-      if (cinfo.mPctNodes < DEFAULT_PCT_NODES_NEEDED) continue;
 
       auto const comp_id = cinfo.mCompId;
       auto const source = FindSource(comp_id);
