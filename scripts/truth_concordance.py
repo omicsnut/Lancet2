@@ -2145,7 +2145,7 @@ def write_forensics_report(
       1. Resolves S_UNK variants via MSA haplotype check:
          - Variant found in haplotype (edit < 10%) → S6_GENO
          - Variant not found → S4_NOPATH
-      2. Runs MSA check on called variants as calibration baseline,
+      2. Runs MSA check on called variants as comparison baseline,
          showing the expected edit distance profile for variants that
          ARE successfully called.
     """
@@ -2183,7 +2183,7 @@ def write_forensics_report(
         else:
             print(f"  Warning: MSA directory {poa_dir} not found, skipping MSA checks")
 
-    # ── MSA calibration: check called variants ───────────────────────────
+    # ── MSA: check called variants as baseline ───────────────────────────
     # Run MSA check on called variants (L0/LD/L1) as baseline. This
     # establishes the expected edit distance profile for variants that
     # ARE in the MSA, validating the 10% threshold empirically.
@@ -2191,8 +2191,8 @@ def write_forensics_report(
     if msa_index and ref_fa and all_concordance:
         called_variants = [r.truth for r in all_concordance if r.level in ("L0", "LD", "L1")]
         if called_variants:
-            print(f"  MSA calibration: checking {len(called_variants)} called variants...")
-            for v in tqdm(called_variants, desc="msa-calibration", unit="var"):
+            print(f"  MSA baseline: checking {len(called_variants)} called variants...")
+            for v in tqdm(called_variants, desc="msa-baseline", unit="var"):
                 epct = _check_variant_in_msa(v, window_index, msa_index, ref_fa)
                 called_msa.append((v, epct))
 
@@ -2245,14 +2245,14 @@ def write_forensics_report(
     console.print(summary)
     console.print()
 
-    # ── MSA Calibration: Called vs Missed ─────────────────────────────────
+    # ── MSA: Called vs Missed ─────────────────────────────────────────────
     # Compare edit distance profiles between called and missed variants
-    # to validate the 10% threshold and show calibration baseline.
+    # to validate the 10% threshold and show baseline comparison.
     if called_msa:
         import statistics
 
         console.print("[bold]§6 MSA Haplotype Analysis[/bold]\n")
-        console.print("[bold]Calibration: Called vs Missed Edit Distance[/bold]")
+        console.print("[bold]Called vs Missed Edit Distance[/bold]")
         console.print(
             f"  Called: {len(called_msa)} variants checked  |  "
             f"Missed (MSA-resolved): "
@@ -2308,14 +2308,14 @@ def write_forensics_report(
         console.print(cal_tbl)
         console.print()
 
-        # Size-stratified calibration for INS and DEL
+        # Size-stratified comparison for INS and DEL
         for vtype in ["INS", "DEL"]:
             c_items = [(v, e) for v, e in called_msa if v.vtype == vtype]
             m_items = [(v, e) for v, e in missed_msa if v.vtype == vtype]
             if len(c_items) < 5 and len(m_items) < 5:
                 continue
 
-            sz_tbl = Table(title=f"MSA Calibration by Size: {vtype}")
+            sz_tbl = Table(title=f"Called vs Missed by Size: {vtype}")
             sz_tbl.add_column("Size Tier")
             sz_tbl.add_column("Set")
             sz_tbl.add_column("N", justify="right")
