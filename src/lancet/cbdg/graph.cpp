@@ -860,7 +860,7 @@ auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav
   // Deduplicate by sequence. Because the array is sorted by MinWeight,
   // this retains the highest-MinWeight copy for any duplicate sequence.
   absl::flat_hash_set<std::string_view> seen_seqs;
-  std::erase_if(haplotypes, [&seen_seqs](Path const& path) -> bool {
+  std::erase_if(haplotypes, [&seen_seqs, &ref_anchor_seq](Path const& path) -> bool {
     auto const [_unused, inserted] = seen_seqs.insert(path.Sequence());
     return !inserted || path.Sequence() == ref_anchor_seq;
   });
