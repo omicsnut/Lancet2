@@ -92,6 +92,11 @@ class VariantSupport {
   [[nodiscard]] auto TotalSampleCov() const noexcept -> usize;
   [[nodiscard]] auto NumAlleles() const noexcept -> usize { return mAlleleData.size(); }
 
+  /// Const access to per-allele read ownership data.
+  [[nodiscard]] auto AlleleData() const noexcept -> absl::Span<PerAlleleData const> {
+    return absl::MakeConstSpan(mAlleleData);
+  }
+
   // Convenience shims matching the old REF/ALT interface (for VariantCall)
   [[nodiscard]] auto TotalRefCov() const -> usize { return TotalAlleleCov(REF_ALLELE_IDX); }
   [[nodiscard]] auto TotalAltCov() const -> usize;

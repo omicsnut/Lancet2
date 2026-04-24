@@ -270,6 +270,18 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
          GRP_OPTIONAL)
       ->check(CLI::Range(0.0, 1.0));
 
+  auto* probe_variants_opt =
+      AddOpt(sub, "--probe-variants", var_params.mProbeVariantsPath,
+             "Path to missed_variants.txt for k-mer probe diagnostics", GRP_OPTIONAL)
+          ->check(CLI::ExistingFile);
+
+  auto* probe_results_opt = AddOpt(sub, "--probe-results", var_params.mProbeResultsPath,
+                                   "Output path for k-mer probe results TSV", GRP_OPTIONAL);
+
+  // Bidirectional: both must be provided together or neither.
+  probe_variants_opt->needs(probe_results_opt);
+  probe_results_opt->needs(probe_variants_opt);
+
   // ============================================================================
   // Subcommand callback
   // ============================================================================

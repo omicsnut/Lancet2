@@ -28,6 +28,10 @@ class PipelineRunner {
   /// Propagates graph output directory from CLI params and recreates it on disk.
   void SetupGraphOutputDir();
 
+  /// Propagates probe variant/results paths to GraphParams and clears stale output.
+  /// Called only when --probe-variants is provided.
+  void SetupProbeTracking();
+
   /// Resolves the output VCF path (local or cloud), validates credentials,
   /// and opens the BGZF output stream. Exits on failure.
   void OpenOutputVcf(hts::BgzfOstream& output_vcf);

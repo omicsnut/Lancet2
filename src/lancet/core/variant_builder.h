@@ -7,6 +7,8 @@
 #include "lancet/caller/variant_call.h"
 #include "lancet/caller/variant_set.h"
 #include "lancet/cbdg/graph.h"
+#include "lancet/cbdg/probe_index.h"
+#include "lancet/core/probe_diagnostics.h"
 #include "lancet/core/read_collector.h"
 #include "lancet/core/sample_info.h"
 #include "lancet/core/variant_annotator.h"
@@ -27,6 +29,9 @@ class VariantBuilder {
   struct Params {
     // ── 8B Align ────────────────────────────────────────────────────────────
     std::filesystem::path mOutGraphsDir;
+    std::filesystem::path mProbeVariantsPath;  // input missed_variants.txt for k-mer probing
+    std::filesystem::path mProbeResultsPath;   // output probe_results.tsv
+    std::shared_ptr<cbdg::ProbeIndex const> mProbeIndex;  // precomputed global k-mer index
 
     /// Global genome GC fraction for LongdustQ bias correction.
     /// Default: 0.41 (human genome-wide average, Lander et al. 2001,
@@ -74,6 +79,9 @@ class VariantBuilder {
 
   /// Variant annotator — produces coverage-invariant complexity features per variant.
   VariantAnnotator mAnnotator;
+
+  /// Post-graph probe analysis: MSA extraction and genotyper read assignment.
+  ProbeDiagnostics mProbeDiagnostics;
 
   // ── 1B Align ────────────────────────────────────────────────────────────
   StatusCode mCurrentCode = StatusCode::UNKNOWN;

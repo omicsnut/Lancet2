@@ -26,10 +26,13 @@ option(LANCET_BENCHMARKS "Builds the Lancet benchmarks executable" "OFF")
 option(LANCET_PROFILE_MODE "Enables CPU profiling for the Lancet executable" "OFF")
 option(LANCET_BUILD_STATIC "Build a statically linked Lancet executable" "ON")
 option(LANCET_NATIVE_BUILD "Optimize for this specific CPU. Faster but binary may not run on different hardware" "OFF")
+option(LANCET_DEVELOPER_MODE "Builds the Lancet executable in develop mode to enable even richer debugging" "OFF")
 set_property(CACHE LANCET_TESTS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_BENCHMARKS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_PROFILE_MODE PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_BUILD_STATIC PROPERTY STRINGS "OFF" "ON")
+set_property(CACHE LANCET_NATIVE_BUILD PROPERTY STRINGS "OFF" "ON")
+set_property(CACHE LANCET_DEVELOPER_MODE PROPERTY STRINGS "OFF" "ON")
 
 cmake_dependent_option(LANCET_ENABLE_CLOUD_IO
 	"Enables native S3 and GCS streaming via libcurl" OFF
@@ -146,6 +149,8 @@ endif ()
 #       ↓
 #   max_flow, graph_complexity             flow + complexity metrics
 #       ↓
+#   probe_index → probe_tracker            truth variant k-mer tracking
+#       ↓
 #   graph                                  assembly orchestrator
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_cbdg STATIC
@@ -164,6 +169,8 @@ add_library(lancet_cbdg STATIC
 		src/lancet/cbdg/serialize_dot.cpp src/lancet/cbdg/serialize_dot.h
 		src/lancet/cbdg/max_flow.cpp src/lancet/cbdg/max_flow.h
 		src/lancet/cbdg/graph_complexity.cpp src/lancet/cbdg/graph_complexity.h
+		src/lancet/cbdg/probe_index.cpp src/lancet/cbdg/probe_index.h
+		src/lancet/cbdg/probe_tracker.cpp src/lancet/cbdg/probe_tracker.h
 		src/lancet/cbdg/graph.cpp src/lancet/cbdg/graph.h)
 target_include_directories(lancet_cbdg PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(lancet_cbdg PUBLIC lancet_hts absl::cord absl::inlined_vector absl::flat_hash_map)
@@ -244,6 +251,8 @@ set_target_properties(lancet_caller PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQU
 #       ↓
 #   read_collector                         BAM read extraction per window
 #       ↓
+#   probe_diagnostics                      truth variant MSA + genotyper analysis
+#       ↓
 #   variant_builder                        assembly + calling per window
 #       ↓
 #   variant_annotator → variant_store      annotation + dedup + VCF output
@@ -256,13 +265,14 @@ add_library(lancet_core STATIC
 		# ── Header-only: window + sample metadata ─────────────────────────
 		src/lancet/core/window.h
 		src/lancet/core/sample_info.h
-		# ── Implementation pairs: parsing → windowing → reads → build → store → execute ─
+		# ── Implementation pairs: parsing → windowing → reads → build → diagnostics → store → execute ─
 		src/lancet/core/input_spec_parser.cpp src/lancet/core/input_spec_parser.h
 		src/lancet/core/sample_header_reader.cpp src/lancet/core/sample_header_reader.h
 		src/lancet/core/bed_parser.cpp src/lancet/core/bed_parser.h
 		src/lancet/core/active_region_detector.cpp src/lancet/core/active_region_detector.h
 		src/lancet/core/window_builder.cpp src/lancet/core/window_builder.h
 		src/lancet/core/read_collector.cpp src/lancet/core/read_collector.h
+		src/lancet/core/probe_diagnostics.cpp src/lancet/core/probe_diagnostics.h
 		src/lancet/core/variant_builder.cpp src/lancet/core/variant_builder.h
 		src/lancet/core/variant_annotator.cpp src/lancet/core/variant_annotator.h
 		src/lancet/core/variant_store.cpp src/lancet/core/variant_store.h
@@ -306,7 +316,7 @@ set_target_properties(Lancet2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED O
 set_property(TARGET Lancet2 PROPERTY $<$<ENABLE_LTO>:INTERPROCEDURAL_OPTIMIZATION TRUE>)
 install(TARGETS Lancet2 DESTINATION bin)
 
-if (${CMAKE_BUILD_TYPE} MATCHES Debug)
+if (LANCET_DEVELOPER_MODE)
 	add_compile_definitions(LANCET_DEVELOP_MODE)
 endif ()
 

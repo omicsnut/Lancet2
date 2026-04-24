@@ -11,6 +11,7 @@
 #include "lancet/cbdg/label.h"
 #include "lancet/cbdg/node.h"
 #include "lancet/cbdg/path.h"
+#include "lancet/cbdg/probe_tracker.h"
 #include "lancet/cbdg/read.h"
 #include "lancet/cbdg/serialize_dot.h"
 #include "lancet/cbdg/traversal_index.h"
@@ -57,6 +58,10 @@ class Graph {
   /// Iterates kmer lengths from min to max, returning assembled haplotypes on success.
   [[nodiscard]] auto BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result;
 
+  /// Set the external ProbeTracker for truth variant k-mer tracing. Null
+  /// disables tracing (zero overhead in production).
+  void SetProbeTracker(ProbeTracker* tracker) { mProbeTrackerPtr = tracker; }
+
  private:
   // ── 8B Align ────────────────────────────────────────────────────────────
   usize mCurrK = 0;
@@ -64,6 +69,10 @@ class Graph {
   ReadList mReads;
   NodeTable mNodes;
   GraphParams mParams;
+
+  /// Non-owning pointer to the ProbeTracker owned by ProbeDiagnostics.
+  /// Null when --probe-variants is not specified (zero overhead in production).
+  ProbeTracker* mProbeTrackerPtr = nullptr;
 
   std::vector<NodeID> mRefNodeIds;
   NodeIDPair mSourceAndSinkIds = {0, 0};
@@ -239,6 +248,42 @@ class Graph {
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
   constexpr void WriteDotDevelop([[maybe_unused]] Args&&... /*unused*/) {}
 #endif
+
+  // ============================================================================
+  // ProbeTracker Forwarding Helpers (null-safe)
+  //
+  // Each helper checks mProbeTrackerPtr for null before forwarding.
+  // In production (no --probe-variants), the pointer is null and all
+  // calls are no-ops with zero overhead beyond a single branch prediction.
+  // ============================================================================
+
+  using Context = ProbeTracker::Context;
+
+  [[nodiscard]] auto HasProbeTracker() const -> bool { return mProbeTrackerPtr != nullptr; }
+
+  // Graph construction: tag ALT k-mers and count them in raw reads.
+  void ProbeGenerateAndTag(Context const& ctx);
+  void ProbeCountInReads(Context const& ctx);
+  void ProbeLogStatus(PruneStage stage, Context const& ctx);
+
+  // Graph mutation: keep side-table synchronized with node removal/merging.
+  void ProbeOnNodeRemove(NodeID node_id);
+  void ProbeOnNodeMerge(NodeID absorbed_id, NodeID surviving_id) const;
+
+  // Component analysis: record component membership and anchor failures.
+  void ProbeRecordComponentInfo(absl::Span<ProbeTracker::ComponentInfo const> probe_comps,
+                                Context const& ctx);
+  void ProbeSetNoAnchor(Context const& ctx);
+  void ProbeSetShortAnchor(Context const& ctx);
+  void ProbeCheckAnchorOverlap(RefAnchor const& source, RefAnchor const& sink, Context const& ctx);
+
+  // Pruning retries: flag probes when k is retried due to cycles or complexity.
+  void ProbeSetCycleRetry(Context const& ctx);
+  void ProbeSetComplexRetry(Context const& ctx);
+
+  // Path enumeration: flag traversal-limited probes and check path survival.
+  void ProbeSetTraversalLimit(Context const& ctx) const;
+  void ProbeCheckPaths(absl::Span<Path const> haplotypes, Context const& ctx);
 };
 
 }  // namespace lancet::cbdg

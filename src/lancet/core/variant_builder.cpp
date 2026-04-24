@@ -186,6 +186,11 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
       mAnnotator(mParamsPtr->mGcFraction) {
   mSpoaState.mEngine->Prealloc(window_length * PREALLOC_WINDOW_LENGTH_MULTIPLIER,
                                DNA_ALPHABET_SIZE);
+
+  // Initialize probe diagnostics and wire ProbeTracker into the graph.
+  mProbeDiagnostics.Initialize(mParamsPtr->mProbeVariantsPath, mParamsPtr->mProbeResultsPath,
+                               mParamsPtr->mProbeIndex);
+  mDebruijnGraph.SetProbeTracker(mProbeDiagnostics.Tracker());
 }
 
 auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) -> WindowResults {
@@ -275,9 +280,15 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
       continue;
     }
 
+    // Check whether probe variants appear in the MSA-extracted variant set.
+    mProbeDiagnostics.CheckMsaExtraction(vset, *window, idx);
+
     LOG_DEBUG("Found variant(s) in graph component {} for window {} with {} haplotypes", idx,
               reg_str, nhaps)
     auto genotyped = mGenotyper.Genotype(absl::MakeConstSpan(comp_haps), reads, vset);
+
+    // Check genotyper read assignment for probe variants.
+    mProbeDiagnostics.CheckGenotyperResult(genotyped, vset, idx);
 
     std::ranges::for_each(vset, [&](auto const& var) -> void {
       auto iter = genotyped.find(&var);

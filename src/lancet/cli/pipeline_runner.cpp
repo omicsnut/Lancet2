@@ -10,6 +10,7 @@
 #include "lancet/base/types.h"
 #include "lancet/cbdg/graph_params.h"
 #include "lancet/cbdg/label.h"
+#include "lancet/cbdg/probe_index.h"
 #include "lancet/cli/cli_params.h"
 #include "lancet/cli/vcf_header_builder.h"
 #include "lancet/core/active_region_detector.h"
@@ -20,6 +21,7 @@
 #include "lancet/core/variant_builder.h"
 #include "lancet/core/window_builder.h"
 #include "lancet/hts/bgzf_ostream.h"
+#include "lancet/hts/reference.h"
 #include "lancet/hts/uri_utils.h"
 
 #include "absl/time/time.h"
@@ -27,6 +29,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <ostream>
 #include <ranges>
@@ -62,6 +65,7 @@ void PipelineRunner::Run() {
   base::Timer timer;
   ValidateAndPopulateParams();
   SetupGraphOutputDir();
+  SetupProbeTracking();
 
   hts::BgzfOstream output_vcf;
   OpenOutputVcf(output_vcf);
@@ -103,12 +107,52 @@ void PipelineRunner::Run() {
 // ============================================================================
 
 void PipelineRunner::SetupGraphOutputDir() {
-  if (!mParamsPtr->mVariantBuilder.mOutGraphsDir.empty()) {
-    mParamsPtr->mVariantBuilder.mGraphParams.mOutGraphsDir =
-        mParamsPtr->mVariantBuilder.mOutGraphsDir;
-    std::filesystem::remove_all(mParamsPtr->mVariantBuilder.mOutGraphsDir);
-    std::filesystem::create_directories(mParamsPtr->mVariantBuilder.mOutGraphsDir);
+  if (mParamsPtr->mVariantBuilder.mOutGraphsDir.empty()) return;
+
+  mParamsPtr->mVariantBuilder.mGraphParams.mOutGraphsDir =
+      mParamsPtr->mVariantBuilder.mOutGraphsDir;
+
+  std::filesystem::remove_all(mParamsPtr->mVariantBuilder.mOutGraphsDir);
+  std::filesystem::create_directories(mParamsPtr->mVariantBuilder.mOutGraphsDir);
+}
+
+// ============================================================================
+// SetupProbeTracking — build the global probe k-mer index at startup
+// ============================================================================
+void PipelineRunner::SetupProbeTracking() {
+  auto const& vb_params = mParamsPtr->mVariantBuilder;
+  if (vb_params.mProbeVariantsPath.empty() || vb_params.mProbeResultsPath.empty()) return;
+
+  // Validate write access before the expensive index build.
+  std::filesystem::create_directories(vb_params.mProbeResultsPath.parent_path());
+  std::ofstream test_stream(vb_params.mProbeResultsPath, std::ios::app);
+  if (!test_stream.is_open()) {
+    LOG_CRITICAL("Cannot write probe results file: {}", vb_params.mProbeResultsPath.string())
+    std::exit(EXIT_FAILURE);
   }
+  test_stream.close();
+  std::filesystem::remove(vb_params.mProbeResultsPath);
+
+  auto probe_variants = cbdg::ProbeIndex::LoadVariantsFromFile(vb_params.mProbeVariantsPath);
+  if (probe_variants.empty()) return;
+
+  base::Timer timer;
+
+  auto const& graph_params = vb_params.mGraphParams;
+  hts::Reference const ref(vb_params.mRdCollParams.mRefPath);
+
+  LOG_INFO("Building probe k-mer index | variants={} k_range=[{},{},{}]", probe_variants.size(),
+           graph_params.mMinKmerLen, graph_params.mMaxKmerLen, graph_params.mKmerStepLen)
+
+  auto index =
+      cbdg::ProbeIndex::Build(absl::MakeConstSpan(probe_variants), ref, graph_params.mMinKmerLen,
+                              graph_params.mMaxKmerLen, graph_params.mKmerStepLen);
+
+  LOG_INFO("Done building probe k-mer index | time={} | entries={}", timer.HumanRuntime(),
+           index.TotalEntries());
+
+  mParamsPtr->mVariantBuilder.mProbeIndex =
+      std::make_shared<cbdg::ProbeIndex const>(std::move(index));
 }
 
 // ============================================================================
