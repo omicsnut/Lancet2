@@ -786,6 +786,11 @@ auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav
     path_seq = max_flow.NextPath();
   }
 
+  if (max_flow.HitTraversalLimit()) {
+    LOG_DEBUG("BFS traversal limit hit for {} comp={} k={} after {} paths", reg_str, comp_id,
+              mCurrK, haplotypes.size())
+  }
+
   if (!haplotypes.empty()) {
     // Sort ALT haplotypes by descending MinWeight (weakest-link confidence).
     // A path is only as trustworthy as its least-supported node.

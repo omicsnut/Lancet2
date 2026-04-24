@@ -172,7 +172,10 @@ auto MaxFlow::NextPath() -> Result {
 
   while (!frontier.empty()) {
     nvisits++;
-    if (nvisits > MaxFlow::DEFAULT_GRAPH_TRAVERSAL_LIMIT) break;
+    if (nvisits > MaxFlow::DEFAULT_GRAPH_TRAVERSAL_LIMIT) {
+      mHitTraversalLimit = true;
+      break;
+    }
 
     u32 const arena_idx = frontier.front();
     frontier.pop_front();

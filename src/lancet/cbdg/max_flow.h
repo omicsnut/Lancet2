@@ -68,6 +68,10 @@ class MaxFlow {
   // 2^20 — caps BFS walk-tree expansion
   static constexpr u32 DEFAULT_GRAPH_TRAVERSAL_LIMIT = 1'048'576;
 
+  /// Returns true if the most recent NextPath() call was terminated
+  /// by the traversal budget rather than genuine walk exhaustion.
+  [[nodiscard]] auto HitTraversalLimit() const noexcept -> bool { return mHitTraversalLimit; }
+
   explicit MaxFlow(Graph::NodeTable const* graph, usize currk, TraversalIndex const* trav_idx,
                    usize num_samples);
 
@@ -89,6 +93,9 @@ class MaxFlow {
   /// Edges in this set get score 0; walks must have at least one
   /// edge NOT in this set to be accepted.
   absl::flat_hash_set<u32> mTraversedOrdinals;
+
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  bool mHitTraversalLimit = false;
 
   using Walk = std::vector<Edge>;
   using WalkView = absl::Span<Edge const>;
