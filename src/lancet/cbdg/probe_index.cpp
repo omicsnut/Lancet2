@@ -113,7 +113,7 @@ void IndexProbeAtK(ProbeVariant const& probe, hts::Reference const& reference, u
   auto const chrom_result = reference.FindChromByName(probe.mChrom);
   if (!chrom_result.ok()) return;
   auto const chrom_len = chrom_result->Length();
-  auto const clamped_end1 = std::min(fetch_end1, chrom_len);
+  auto const clamped_end1 = std::min<u64>(fetch_end1, chrom_len);
   if (fetch_start1 > clamped_end1) return;
 
   hts::Reference::OneBasedClosedOptional const interval = {fetch_start1, clamped_end1};
