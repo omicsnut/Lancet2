@@ -196,8 +196,9 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
 auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) -> WindowResults {
   auto const region = window->AsRegionPtr();
   auto const reg_str = region->ToSamtoolsRegion();
-  static thread_local auto const THREAD_ID =
-      absl::Hash<std::thread::id>()(std::this_thread::get_id());
+
+  static thread_local auto const current_tid = std::this_thread::get_id();
+  static thread_local auto const THREAD_ID = absl::Hash<std::thread::id>()(current_tid);
   LOG_DEBUG("Processing window {} in thread {:#x}", reg_str, THREAD_ID)
 
   if (std::ranges::all_of(window->SeqView(), [](char base) { return base == 'N'; })) {
