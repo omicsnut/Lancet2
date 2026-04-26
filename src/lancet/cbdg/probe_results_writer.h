@@ -1,9 +1,11 @@
 #ifndef SRC_LANCET_CBDG_PROBE_RESULTS_WRITER_H_
 #define SRC_LANCET_CBDG_PROBE_RESULTS_WRITER_H_
 
+#include "lancet/base/types.h"
 #include "lancet/cbdg/probe_index.h"
 
 #include "absl/base/thread_annotations.h"
+#include "absl/container/flat_hash_set.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 
@@ -136,7 +138,10 @@ struct ProbeKRecord;
 //   §9 Attribution — first pipeline stage where the variant was lost.
 //     lost_at_stage  str  Priority-ordered cascade (first match wins):
 //
-//       Structural (highest priority):
+//       Not processed (highest priority):
+//         "not_processed"        probe never activated in any window
+//
+//       Structural:
 //         "variant_in_anchor"    variant overlaps source/sink k-mer range
 //         "no_anchor"            no valid source/sink pair
 //         "short_anchor"         anchor region too short
@@ -176,10 +181,15 @@ class ProbeResultsWriter {
   /// Called from ProbeTracker::SubmitCompleted() after each window.
   void Append(absl::Span<ProbeKRecord const> records);
 
+  /// Emit default "not_processed" records for any loaded variant that never
+  /// appeared in any thread's output. Call exactly once after all workers finish.
+  void EmitUnprocessedProbes();
+
  private:
   // ── 8B Align ────────────────────────────────────────────────────────────
   std::filesystem::path mResultsPath;
   std::vector<ProbeVariant> mVariants;
+  absl::flat_hash_set<u16> mWrittenProbeIds ABSL_GUARDED_BY(mMutex);
   mutable absl::Mutex mMutex;
 
   // ── 1B Align ────────────────────────────────────────────────────────────

@@ -146,7 +146,7 @@ auto ProbeIndex::LoadVariantsFromFile(std::filesystem::path const& path)
   std::vector<ProbeVariant> variants;
   std::ifstream infile(path);
   if (!infile.is_open()) {
-    LOG_WARN("KMER_PROBE could not open probe variants file: {}", path.string())
+    LOG_WARN("ProbeIndex could not open probe variants file: {}", path.string())
     return variants;
   }
 
@@ -155,7 +155,9 @@ auto ProbeIndex::LoadVariantsFromFile(std::filesystem::path const& path)
   std::getline(infile, line);
 
   u16 probe_idx = 0;
+  usize file_line = 1;  // header is line 1
   while (std::getline(infile, line)) {
+    ++file_line;
     // missed_variants.txt columns (tab-separated):
     // chrom, start, end, ref, alt, type, length, classification,
     // tier1_alt_count, tier2_alt_count, max_alt_count, engine, source
@@ -170,10 +172,18 @@ auto ProbeIndex::LoadVariantsFromFile(std::filesystem::path const& path)
     static constexpr usize TIER1_IDX = 8;
 
     u16 tier1_count = 0;
-    if (!absl::SimpleAtoi(fields[TIER1_IDX], &tier1_count) || tier1_count == 0) continue;
+    if (!absl::SimpleAtoi(fields[TIER1_IDX], &tier1_count)) {
+      LOG_WARN("ProbeIndex could not parse tier1_alt_count '{}' at line {} from file {}",
+               fields[TIER1_IDX], file_line, path.string());
+      continue;
+    }
 
     usize genome_start = 0;
-    if (!absl::SimpleAtoi(fields[START_IDX], &genome_start)) continue;
+    if (!absl::SimpleAtoi(fields[START_IDX], &genome_start)) {
+      LOG_WARN("ProbeIndex could not parse start position '{}' at line {} from file {}",
+               fields[START_IDX], file_line, path.string());
+      continue;
+    }
 
     variants.emplace_back(ProbeVariant{
         .mChrom = std::string(fields[CHROM_IDX]),
@@ -187,7 +197,7 @@ auto ProbeIndex::LoadVariantsFromFile(std::filesystem::path const& path)
     ++probe_idx;
   }
 
-  LOG_INFO("KMER_PROBE loaded {} probe variants from {}", variants.size(), path.string())
+  LOG_INFO("ProbeIndex loaded {} probe variants from {}", variants.size(), path.string())
   return variants;
 }
 

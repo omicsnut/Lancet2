@@ -144,6 +144,7 @@ struct ProbeKRecord {
   // Genotyper outcome flags
   bool mIsGenoHasAltSupport = false;  // 1B — genotyper found >0 reads supporting truth ALT
   bool mIsGenoNoResult = false;       // 1B — variant not found in genotyper result map
+  bool mIsNotProcessed = false;       // 1B — probe never activated in any window
 };
 
 // ============================================================================

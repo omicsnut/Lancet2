@@ -4,7 +4,9 @@
 #include "lancet/cbdg/probe_index.h"
 #include "lancet/cbdg/probe_tracker.h"
 
+#include "absl/container/flat_hash_set.h"
 #include "absl/container/inlined_vector.h"
+#include "absl/hash/hash.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/base.h"
@@ -61,6 +63,7 @@ void ProbeResultsWriter::Append(absl::Span<ProbeKRecord const> records) {
     auto const& probe = mVariants[record.mProbeId];
     auto const lost_at = DeriveLostAt(record);
     auto const paths_str = fmt::format("{}", fmt::join(record.mHapIndices, ","));
+    mWrittenProbeIds.insert(record.mProbeId);
 
     out << fmt::format(
         "{PROBE_ID}\t{CHROM}\t{POS}\t{REF}\t{ALT}\t{N_TIER1_READS}\t{KMER_SIZE}\t"
@@ -118,9 +121,34 @@ void ProbeResultsWriter::Append(absl::Span<ProbeKRecord const> records) {
 }
 
 // ============================================================================
+// EmitUnprocessedProbes: emit default records for loaded variants never written.
+//
+// Probes that fall in skipped windows (N-only, repeat, inactive region) are
+// never activated by GenerateAndTag, so no ProbeKRecord is ever created.
+// This method ensures every input variant has exactly one output row.
+// ============================================================================
+void ProbeResultsWriter::EmitUnprocessedProbes() {
+  std::vector<ProbeKRecord> unprocessed;
+  {
+    absl::MutexLock const lock(mMutex);
+    for (u16 idx = 0; idx < static_cast<u16>(mVariants.size()); ++idx) {
+      if (mWrittenProbeIds.contains(idx)) continue;
+      unprocessed.push_back(ProbeKRecord{.mProbeId = idx, .mIsNotProcessed = true});
+    }
+  }
+
+  if (!unprocessed.empty()) {
+    LOG_INFO("KMER_PROBE emitting {} not-processed probe records", unprocessed.size())
+    Append(absl::MakeConstSpan(unprocessed));
+  }
+}
+
+// ============================================================================
 // DeriveLostAt: priority-based attribution of where the variant was lost.
 //
-// All values use consistent snake_case. Categories (20-level cascade):
+// All values use consistent snake_case. Categories (21-level cascade):
+//   Not processed (highest priority):
+//     0. not_processed     — probe never activated in any window (skipped region)
 //   Structural (component-level impossibilities):
 //     1. variant_in_anchor — variant overlaps source/sink k-mer range
 //     2. no_anchor         — component had no valid source/sink anchors
@@ -144,6 +172,7 @@ void ProbeResultsWriter::Append(absl::Span<ProbeKRecord const> records) {
 //     20. survived          — variant found and genotyped with ALT support
 // ============================================================================
 auto ProbeResultsWriter::DeriveLostAt(ProbeKRecord const& record) -> std::string_view {
+  if (record.mIsNotProcessed) return "not_processed";
   if (record.mIsVariantInAnchor) return "variant_in_anchor";
   if (record.mIsNoAnchor) return "no_anchor";
   if (record.mIsShortAnchor) return "short_anchor";

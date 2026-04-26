@@ -94,6 +94,10 @@ void PipelineRunner::Run() {
       mParamsPtr->mNumWorkerThreads, mParamsPtr->mWindowBuilder.mWindowLength);
 
   auto const stats = executor.Execute(output_vcf);
+  if (mParamsPtr->mVariantBuilder.mProbeResultsWriter) {
+    mParamsPtr->mVariantBuilder.mProbeResultsWriter->EmitUnprocessedProbes();
+  }
+
   output_vcf.Close();
   core::PipelineExecutor::LogWindowStats(stats);
 
