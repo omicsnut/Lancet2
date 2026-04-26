@@ -323,13 +323,16 @@ void ProbeTracker::RecordComponentInfo(NodeTable const& nodes,
 void ProbeTracker::OnNodeMerge(NodeID absorbed_id, NodeID surviving_id) {
   if (mNodeTags.empty()) return;
 
-  auto const absorbed_it = mNodeTags.find(absorbed_id);
+  auto absorbed_it = mNodeTags.find(absorbed_id);
   if (absorbed_it == mNodeTags.end()) return;
 
-  auto& surviving_tags = mNodeTags[surviving_id];
-  surviving_tags.insert(surviving_tags.end(), absorbed_it->second.begin(),
-                        absorbed_it->second.end());
+  // Move tags out before modifying the map. operator[] on surviving_id may
+  // insert a new entry, triggering a rehash that invalidates absorbed_it.
+  auto absorbed_tags = std::move(absorbed_it->second);
   mNodeTags.erase(absorbed_it);
+
+  auto& surviving_tags = mNodeTags[surviving_id];
+  surviving_tags.insert(surviving_tags.end(), absorbed_tags.begin(), absorbed_tags.end());
 }
 
 void ProbeTracker::OnNodeRemove(NodeID node_id) {
