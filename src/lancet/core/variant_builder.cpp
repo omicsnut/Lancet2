@@ -289,20 +289,19 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
 
     // Check genotyper read assignment for probe variants.
     mProbeDiagnostics.CheckGenotyperResult(genotyped, vset, idx);
-
-    std::ranges::for_each(vset, [&](auto const& var) -> void {
+    for (auto const& var: vset) {
       auto iter = genotyped.find(&var);
       caller::VariantCall::SupportsByVariant var_supports;
       if (iter != genotyped.end() && HasAltSupport(iter->second)) {
         var_supports.emplace(&var, std::move(iter->second));
       }
 
-      if (var_supports.empty()) return;
+      if (var_supports.empty()) continue;
 
       AnnotatePathMetrics(var, comp_paths);
       variants.emplace_back(std::make_unique<caller::VariantCall>(&var, std::move(var_supports),
                                                                   samples, per_sample_cov));
-    });
+    }
   }
 
   if (variants.empty()) {
