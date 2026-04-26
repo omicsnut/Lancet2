@@ -32,8 +32,8 @@ class VariantStore {
  private:
   // ── 8B Align ────────────────────────────────────────────────────────────
   struct alignas(64) VariantBucket {
-    mutable absl::Mutex mUtex;
-    absl::flat_hash_map<Key, Value> mData ABSL_GUARDED_BY(mUtex);
+    mutable absl::Mutex mMutex;
+    absl::flat_hash_map<Key, Value> mData ABSL_GUARDED_BY(mMutex);
   };
 
   static constexpr usize NUM_SHARDS = 256;

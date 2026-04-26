@@ -25,7 +25,7 @@ void VariantStore::AddVariants(std::vector<Value> variants) {
     usize const shard_idx = absl::Hash<Key>()(identifier) & (NUM_SHARDS - 1);
 
     // Independent lock specifically for this shard
-    absl::MutexLock const lock(mBuckets[shard_idx].mUtex);
+    absl::MutexLock const lock(mBuckets[shard_idx].mMutex);
     auto& map = mBuckets[shard_idx].mData;
 
     auto prev = map.find(identifier);
@@ -48,7 +48,7 @@ void VariantStore::FlushVariantsBeforeWindow(Window const& win, std::ostream& ou
 
   // Extract variants from each bucket completely independently
   for (auto& bucket : mBuckets) {
-    absl::MutexLock const lock(bucket.mUtex);
+    absl::MutexLock const lock(bucket.mMutex);
 
     std::vector<Key> keys_to_extract;
     for (auto const& item : bucket.mData) {
@@ -79,7 +79,7 @@ void VariantStore::FlushAllVariantsInStore(std::ostream& out) {
   std::vector<Value> variants_to_write;
 
   for (auto& bucket : mBuckets) {
-    absl::MutexLock const lock(bucket.mUtex);
+    absl::MutexLock const lock(bucket.mMutex);
 
     using caller::AlleleType::REF;
     static auto const HAS_NO_SUPPORT = [](Value const& item) -> bool {
