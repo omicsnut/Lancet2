@@ -25,7 +25,7 @@ TEST_CASE("SampleFormatData compactly serializes VCF genotype structure strings 
   sample.SetField(SampleFormatData::BASE_QUAL_COHEN_D, 0.2);
   sample.SetField(SampleFormatData::MAP_QUAL_COHEN_D, -0.5);
   sample.SetField(SampleFormatData::ALLELE_MISMATCH_DELTA, 0.05);
-  sample.SetSiteDepthFoldChange(1.25F);
+  sample.SetField(SampleFormatData::SITE_DEPTH_FOLD_CHANGE, 1.25);
   sample.SetPolarRadius(5.51F);
   sample.SetPolarAngle(0.588F);
   sample.SetTotalDepth(50);
@@ -53,8 +53,7 @@ TEST_CASE("SampleFormatData renders nullopt metrics as VCF missing value dot",
   sample.SetContinuousMixtureLods({0.0, 0.0});
   sample.SetStrandBias(0.0F);
   sample.SetSoftClipAsym(0.0F);
-  // Leave 9 optional metrics at their default (absent) — untestable → "." in VCF
-  sample.SetSiteDepthFoldChange(1.0F);
+  // Leave 10 optional metrics at their default (absent) — renders as "." in VCF
   sample.SetPolarRadius(1.0F);
   sample.SetPolarAngle(0.0F);
   sample.SetTotalDepth(10);
@@ -63,9 +62,10 @@ TEST_CASE("SampleFormatData renders nullopt metrics as VCF missing value dot",
   sample.SetMissingSupport(false);
 
   auto const vcf_str = sample.RenderVcfString();
-  // FLD, RPCD, BQCD, MQCD, ASMD, FSSE, AHDD, HSE, PDCV should all render as "." (absent → dot)
+  // FLD, RPCD, BQCD, MQCD, ASMD, SDFC, FSSE, AHDD, HSE, PDCV
+  // should all render as "." (absent → dot)
   REQUIRE(vcf_str == "0/0:10,0:5,0:5,0:10:60.0,0.0:30.0,0.0:0.000:0.0000:.:"
-                     ".:.:.:.:1.00:1.0000:0.0000:0.0000:"
+                     ".:.:.:.:.:1.0000:0.0000:0.0000:"
                      ".:.:.:.:0,10,50:0");
 }
 

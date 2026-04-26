@@ -31,20 +31,22 @@ class SampleInfo {
   [[nodiscard]] auto NumSampledBases() const noexcept -> u64 { return mNumSampledBases; }
   [[nodiscard]] auto SampleName() const noexcept -> std::string_view { return mSampleName; }
 
-  /// Per-sample mean coverage over a reference region of length ref_len.
+  /// Per-sample mean read depth over a window of length window_length.
   /// Used by SDFC (Site Depth Fold Change) to normalize per-sample site depth.
-  [[nodiscard]] auto SampledCov(u64 const ref_len) const noexcept -> f64 {
-    return ref_len > 0 ? static_cast<f64>(mNumSampledBases) / static_cast<f64>(ref_len) : 0.0;
+  [[nodiscard]] auto MeanCoverage(u64 const window_length) const noexcept -> f64 {
+    return window_length > 0 ? static_cast<f64>(mNumSampledBases) / static_cast<f64>(window_length)
+                             : 0.0;
   }
 
-  [[nodiscard]] static auto CombinedSampledCov(absl::Span<SampleInfo const> samples,
-                                               u64 const ref_len) -> f64 {
+  /// Cross-sample mean read depth: sum of all samples' bases / window_length.
+  [[nodiscard]] static auto CrossSampleMeanCoverage(absl::Span<SampleInfo const> samples,
+                                                    u64 const window_length) -> f64 {
     static auto const SUMMER = [](u64 const sum, SampleInfo const& sinfo) -> u64 {
       return sum + sinfo.NumSampledBases();
     };
 
     u64 const total_bases = std::accumulate(samples.cbegin(), samples.cend(), u64{0}, SUMMER);
-    return static_cast<f64>(total_bases) / static_cast<f64>(ref_len);
+    return static_cast<f64>(total_bases) / static_cast<f64>(window_length);
   }
 
   friend auto operator<(SampleInfo const& lhs, SampleInfo const& rhs) -> bool {

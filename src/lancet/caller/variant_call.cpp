@@ -46,13 +46,13 @@ namespace lancet::caller {
 // Unspools a multi-allelic RawVariant into the VCF array mapping.
 // ============================================================================
 VariantCall::VariantCall(RawVariant const* var, SupportsByVariant const& all_supports,
-                         Samples samps, PerSampleCov per_sample_cov)
+                         Samples samps, usize window_length)
     : mVariantId(HashRawVariant(var)),
       mChromIndex(var->mChromIndex),
       mStartPos1(var->mGenomeChromPos1),
 
       mRawVariant(var),
-      mPerSampleCov(std::move(per_sample_cov)),
+      mWindowLength(window_length),
       mChromName(var->mChromName),
       mRefAllele(var->mRefAllele),
       mGraphCx(var->mGraphMetrics),
@@ -182,8 +182,8 @@ void VariantCall::BuildFormatFields(SupportArray const& evidence, Samples samps,
     sample.SetField(SampleFormatData::ALLELE_MISMATCH_DELTA,
                     support->AlleleMismatchDelta(max_var_len));
 
-    sample.SetSiteDepthFoldChange(
-        static_cast<f32>(SiteDepthFoldChange(sinfo.SampleName(), support->TotalSampleCov())));
+    sample.SetField(SampleFormatData::SITE_DEPTH_FOLD_CHANGE,
+                    SiteDepthFoldChange(sinfo, support->TotalSampleCov()));
 
     // Polar coordinate features for ML variant classification
     // PRAD/PANG separate allele identity from depth (see polar_coords.h)

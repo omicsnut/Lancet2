@@ -20,11 +20,11 @@ namespace lancet::caller {
 // Members ordered by alignment: 8B → 4B → 2B → 1B.
 //
 // MEMORY COMPACTION (optional fields):
-// The 9 optional FORMAT metrics (FLD, RPCD, BQCD, etc.) are stored as a
-// compact bitfield + flat array instead of 9 × std::optional<f32>.
-//   Before: 9 × 8B (std::optional<f32>)  = 72B
-//   After:  2B (u16 mask) + 36B (f32[9]) = 38B  (padded to 40B)
-// Savings: 32B per sample per variant call.
+// The 10 optional FORMAT metrics (FLD, RPCD, BQCD, SDFC, etc.) are stored as a
+// compact bitfield + flat array instead of 10 × std::optional<f32>.
+//   Before: 10 × 8B (std::optional<f32>) = 80B
+//   After:  2B (u16 mask) + 40B (f32[10]) = 42B  (padded to 44B)
+// Savings: 36B per sample per variant call.
 //
 // Cannot use IEEE NaN because -ffast-math (set in cmake/defaults.cmake) implies
 // -ffinite-math-only, which lets the compiler assume NaN never exists — so
@@ -35,16 +35,17 @@ class SampleFormatData {
   // ── Optional field indices ────────────────────────────────────────────
   // NOLINTNEXTLINE(cppcoreguidelines-use-enum-class)
   enum FieldSlot : u8 {
-    FRAG_LEN_DELTA = 0,         // FLD
-    READ_POS_COHEN_D = 1,       // RPCD
-    BASE_QUAL_COHEN_D = 2,      // BQCD
-    MAP_QUAL_COHEN_D = 3,       // MQCD
-    ALLELE_MISMATCH_DELTA = 4,  // ASMD
-    FRAG_START_ENTROPY = 5,     // FSSE
-    ALT_HAP_DISCORD_DELTA = 6,  // AHDD
-    HAPLOTYPE_SEG_ENTROPY = 7,  // HSE
-    PATH_DEPTH_CV = 8,          // PDCV
-    NUM_FIELDS = 9,
+    FRAG_LEN_DELTA = 0,          // FLD
+    READ_POS_COHEN_D = 1,        // RPCD
+    BASE_QUAL_COHEN_D = 2,       // BQCD
+    MAP_QUAL_COHEN_D = 3,        // MQCD
+    ALLELE_MISMATCH_DELTA = 4,   // ASMD
+    FRAG_START_ENTROPY = 5,      // FSSE
+    ALT_HAP_DISCORD_DELTA = 6,   // AHDD
+    HAPLOTYPE_SEG_ENTROPY = 7,   // HSE
+    PATH_DEPTH_CV = 8,           // PDCV
+    SITE_DEPTH_FOLD_CHANGE = 9,  // SDFC
+    NUM_FIELDS = 10,
   };
 
   // ============================================================================
@@ -61,7 +62,6 @@ class SampleFormatData {
 
   void SetStrandBias(f32 value) { mStrandBias = value; }
   void SetSoftClipAsym(f32 value) { mSoftClipAsym = value; }
-  void SetSiteDepthFoldChange(f32 value) { mSiteDepthFoldChange = value; }
   void SetPolarRadius(f32 value) { mPolarRadius = value; }
   void SetPolarAngle(f32 value) { mPolarAngle = value; }
   void SetTotalDepth(u32 value) { mTotalDepth = value; }
@@ -99,7 +99,6 @@ class SampleFormatData {
 
   [[nodiscard]] auto StrandBias() const -> f32 { return mStrandBias; }
   [[nodiscard]] auto SoftClipAsym() const -> f32 { return mSoftClipAsym; }
-  [[nodiscard]] auto SiteDepthFoldChange() const -> f32 { return mSiteDepthFoldChange; }
   [[nodiscard]] auto PolarRadius() const -> f32 { return mPolarRadius; }
   [[nodiscard]] auto PolarAngle() const -> f32 { return mPolarAngle; }
   [[nodiscard]] auto TotalDepth() const -> u32 { return mTotalDepth; }
@@ -135,8 +134,7 @@ class SampleFormatData {
   // ── 4B Align ────────────────────────────────────────────────────────────
   f32 mStrandBias{0.0F};
   f32 mSoftClipAsym{0.0F};
-  std::array<f32, NUM_FIELDS> mFieldValues{};  // 36B — dense, cache-friendly
-  f32 mSiteDepthFoldChange{0.0F};
+  std::array<f32, NUM_FIELDS> mFieldValues{};  // 40B — dense, cache-friendly
   f32 mPolarRadius{0.0F};
   f32 mPolarAngle{0.0F};
   u32 mTotalDepth{0};

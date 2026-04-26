@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <compare>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -72,9 +73,8 @@ class VariantCall {
 
   // Native multi-allelic constructor
   using SupportsByVariant = absl::flat_hash_map<RawVariant const*, SupportArray>;
-  using PerSampleCov = absl::flat_hash_map<std::string_view, f64>;
   VariantCall(RawVariant const* var, SupportsByVariant const& all_supports, Samples samps,
-              PerSampleCov per_sample_cov);
+              usize window_length);
 
   [[nodiscard]] auto ChromIndex() const -> usize { return mChromIndex; }
   [[nodiscard]] auto ChromName() const -> std::string_view { return mChromName; }
@@ -178,7 +178,7 @@ class VariantCall {
   // BuildFormatFields to access mNumTotalHaps (HSE) and mMaxPathCv (PDCV).
   RawVariant const* mRawVariant{nullptr};
 
-  PerSampleCov mPerSampleCov;
+  usize mWindowLength;
 
   std::string mChromName;
   std::string mRefAllele;
@@ -204,12 +204,12 @@ class VariantCall {
   bool mHasAltSupport = false;
 
   /// Site Depth Fold Change: sample DP / per-sample window mean coverage.
-  /// Spikes indicate collapsed paralogous mappings; dips indicate mapping holes.
-  [[nodiscard]] auto SiteDepthFoldChange(std::string_view sample_name, usize sample_dp) const
-      -> f64 {
-    auto const iter = mPerSampleCov.find(sample_name);
-    if (iter == mPerSampleCov.end() || iter->second <= 0.0) return 1.0;
-    return static_cast<f64>(sample_dp) / iter->second;
+  /// Returns nullopt if window coverage is zero (renders as "." in VCF).
+  [[nodiscard]] auto SiteDepthFoldChange(core::SampleInfo const& sinfo, usize sample_dp) const
+      -> std::optional<f64> {
+    auto const window_cov = sinfo.MeanCoverage(mWindowLength);
+    if (window_cov <= 0.0) return std::nullopt;
+    return static_cast<f64>(sample_dp) / window_cov;
   }
 
   // ============================================================================

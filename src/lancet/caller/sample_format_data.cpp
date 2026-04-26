@@ -74,11 +74,12 @@ auto SampleFormatData::RenderVcfString() const -> std::string {
   auto const ahdd_str = FormatOptional(GetField(ALT_HAP_DISCORD_DELTA), "{:.3f}");
   auto const hse_str = FormatOptional(GetField(HAPLOTYPE_SEG_ENTROPY), "{:.4f}");
   auto const pdcv_str = FormatOptional(GetField(PATH_DEPTH_CV), "{:.4f}");
+  auto const sdfc_str = FormatOptional(GetField(SITE_DEPTH_FOLD_CHANGE), "{:.2f}");
 
   // clang-format off
   return fmt::format(
       "{GT}:{AD}:{ADF}:{ADR}:{DP}:{RMQ}:{NPBQ}:{SB:.3f}:{SCA:.4f}:{FLD}:{RPCD}:"
-      "{BQCD}:{MQCD}:{ASMD}:{SDFC:.2f}:{PRAD:.4f}:{PANG:.4f}:{CMLOD}:"
+      "{BQCD}:{MQCD}:{ASMD}:{SDFC}:{PRAD:.4f}:{PANG:.4f}:{CMLOD}:"
       "{FSSE}:{AHDD}:{HSE}:{PDCV}:{PL}:{GQ}",
       fmt::arg("GT",    gt_str),           fmt::arg("AD",    ad_str),
       fmt::arg("ADF",   adf_str),          fmt::arg("ADR",   adr_str),
@@ -87,7 +88,7 @@ auto SampleFormatData::RenderVcfString() const -> std::string {
       fmt::arg("SCA",   SoftClipAsym()),    fmt::arg("FLD",   fld_str),
       fmt::arg("RPCD",  rpcd_str),         fmt::arg("BQCD",  bqcd_str),
       fmt::arg("MQCD",  mqcd_str),         fmt::arg("ASMD",  asmd_str),
-      fmt::arg("SDFC",  SiteDepthFoldChange()), fmt::arg("PRAD",  PolarRadius()),
+      fmt::arg("SDFC",  sdfc_str),         fmt::arg("PRAD",  PolarRadius()),
       fmt::arg("PANG",  PolarAngle()),      fmt::arg("CMLOD", cmlod_str),
       fmt::arg("FSSE",  fsse_str),         fmt::arg("AHDD",  ahdd_str),
       fmt::arg("HSE",   hse_str),          fmt::arg("PDCV",  pdcv_str),

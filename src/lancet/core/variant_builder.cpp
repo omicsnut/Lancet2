@@ -145,18 +145,6 @@ auto CollectHapWeights(absl::Span<cbdg::Path const> paths) -> cbdg::Path::HapWei
 }
 
 // ============================================================================
-// BuildPerSampleCov: compute per-sample window coverage for SDFC normalization.
-// ============================================================================
-auto BuildPerSampleCov(absl::Span<SampleInfo const> samples, usize win_len)
-    -> caller::VariantCall::PerSampleCov {
-  caller::VariantCall::PerSampleCov result;
-  for (auto const& sinfo : samples) {
-    result[sinfo.SampleName()] = sinfo.SampledCov(win_len);
-  }
-  return result;
-}
-
-// ============================================================================
 // CountAssembledHaplotypes: total non-REF haplotypes across all graph components.
 // ============================================================================
 auto CountAssembledHaplotypes(absl::Span<std::vector<cbdg::Path> const> components) -> u64 {
@@ -227,7 +215,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
   absl::Span<cbdg::Read const> const reads = absl::MakeConstSpan(rc_result.mSampleReads);
   absl::Span<SampleInfo const> const samples = absl::MakeConstSpan(rc_result.mSampleList);
 
-  auto const total_cov = SampleInfo::CombinedSampledCov(samples, window->Length());
+  auto const total_cov = SampleInfo::CrossSampleMeanCoverage(samples, window->Length());
   if (total_cov < static_cast<f64>(mParamsPtr->mGraphParams.mMinAnchorCov)) {
     LOG_DEBUG("Skipping window {} since it has only {:.2f}x total sample coverage", reg_str,
               total_cov)
@@ -251,7 +239,6 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
   }
 
   WindowResults variants;
-  auto const per_sample_cov = BuildPerSampleCov(samples, window->Length());
   for (usize idx = 0; idx < component_haplotypes.size(); ++idx) {
     auto const nhaps = component_haplotypes[idx].size();
     auto const anchor_start = window->StartPos1() + dbg_rslt.mAnchorStartIdxs[idx];
@@ -301,7 +288,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
 
       AnnotatePathMetrics(var, comp_paths);
       variants.emplace_back(std::make_unique<caller::VariantCall>(&var, std::move(var_supports),
-                                                                  samples, per_sample_cov));
+                                                                  samples, window->Length()));
     }
   }
 
