@@ -141,13 +141,13 @@ void FindShiftedMatch(caller::VariantSet const& variant_set, cbdg::ProbeVariant 
 }  // namespace
 
 void ProbeDiagnostics::Initialize(std::filesystem::path const& variants_path,
-                                  std::filesystem::path const& results_path,
+                                  std::shared_ptr<cbdg::ProbeResultsWriter> results_writer,
                                   std::shared_ptr<cbdg::ProbeIndex const> probe_index) {
   if (variants_path.empty()) return;
   auto variants = cbdg::ProbeIndex::LoadVariantsFromFile(variants_path);
   if (variants.empty()) return;
   mTracker.LoadVariants(std::move(variants));
-  mTracker.SetResultsPath(results_path);
+  mTracker.SetResultsWriter(std::move(results_writer));
   mTracker.SetProbeIndex(std::move(probe_index));
 }
 

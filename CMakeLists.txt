@@ -149,7 +149,7 @@ endif ()
 #       ↓
 #   max_flow, graph_complexity             flow + complexity metrics
 #       ↓
-#   probe_index → probe_tracker            truth variant k-mer tracking
+#   probe_index → probe_results_writer → probe_tracker   truth variant k-mer tracking
 #       ↓
 #   graph                                  assembly orchestrator
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -169,11 +169,14 @@ add_library(lancet_cbdg STATIC
 		src/lancet/cbdg/serialize_dot.cpp src/lancet/cbdg/serialize_dot.h
 		src/lancet/cbdg/max_flow.cpp src/lancet/cbdg/max_flow.h
 		src/lancet/cbdg/graph_complexity.cpp src/lancet/cbdg/graph_complexity.h
+		# ── Probe diagnostics: index → tracker → results writer ───────────
 		src/lancet/cbdg/probe_index.cpp src/lancet/cbdg/probe_index.h
+		src/lancet/cbdg/probe_results_writer.cpp src/lancet/cbdg/probe_results_writer.h
 		src/lancet/cbdg/probe_tracker.cpp src/lancet/cbdg/probe_tracker.h
+		# ── Assembly orchestrator ─────────────────────────────────────────
 		src/lancet/cbdg/graph.cpp src/lancet/cbdg/graph.h)
 target_include_directories(lancet_cbdg PUBLIC "${CMAKE_SOURCE_DIR}/src")
-target_link_libraries(lancet_cbdg PUBLIC lancet_hts absl::cord absl::inlined_vector absl::flat_hash_map)
+target_link_libraries(lancet_cbdg PUBLIC lancet_hts absl::cord absl::inlined_vector absl::flat_hash_map absl::synchronization)
 set_target_properties(lancet_cbdg PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # ═══════════════════════════════════════════════════════════════════════════════

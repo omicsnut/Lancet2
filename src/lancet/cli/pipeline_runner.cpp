@@ -11,6 +11,7 @@
 #include "lancet/cbdg/graph_params.h"
 #include "lancet/cbdg/label.h"
 #include "lancet/cbdg/probe_index.h"
+#include "lancet/cbdg/probe_results_writer.h"
 #include "lancet/cli/cli_params.h"
 #include "lancet/cli/vcf_header_builder.h"
 #include "lancet/core/active_region_detector.h"
@@ -117,7 +118,8 @@ void PipelineRunner::SetupGraphOutputDir() {
 }
 
 // ============================================================================
-// SetupProbeTracking — build the global probe k-mer index at startup
+// SetupProbeTracking — build the global probe k-mer index and create the
+// shared results writer at startup.
 // ============================================================================
 void PipelineRunner::SetupProbeTracking() {
   auto const& vb_params = mParamsPtr->mVariantBuilder;
@@ -153,6 +155,10 @@ void PipelineRunner::SetupProbeTracking() {
 
   mParamsPtr->mVariantBuilder.mProbeIndex =
       std::make_shared<cbdg::ProbeIndex const>(std::move(index));
+
+  // Create the thread-safe results writer shared by all ProbeTracker instances.
+  mParamsPtr->mVariantBuilder.mProbeResultsWriter = std::make_shared<cbdg::ProbeResultsWriter>(
+      vb_params.mProbeResultsPath, std::move(probe_variants));
 }
 
 // ============================================================================

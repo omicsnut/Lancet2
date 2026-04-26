@@ -5,6 +5,7 @@
 #include "lancet/cbdg/node.h"
 #include "lancet/cbdg/path.h"
 #include "lancet/cbdg/probe_index.h"
+#include "lancet/cbdg/probe_results_writer.h"
 #include "lancet/cbdg/read.h"
 
 #include "absl/container/flat_hash_map.h"
@@ -13,7 +14,6 @@
 #include "absl/types/span.h"
 
 #include <array>
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -201,8 +201,8 @@ class ProbeTracker {
 
   ProbeTracker() = default;
 
-  /// Flush accumulated probe records to the results TSV on destruction (RAII).
-  ~ProbeTracker() { WriteResults(); }
+  /// Submit any remaining probe records to the results writer on destruction (safety net).
+  ~ProbeTracker() { SubmitCompleted(); }
 
   /// Non-copyable: accumulator semantics — copying would duplicate records and
   /// double-write on destruction. Movable: moved-from containers are empty, so
@@ -215,8 +215,11 @@ class ProbeTracker {
   /// Load truth variants from a pre-parsed vector.
   void LoadVariants(std::vector<ProbeVariant> variants);
 
-  /// Set the output path for probe results TSV.
-  void SetResultsPath(std::filesystem::path results_path);
+  /// Set the shared results writer for thread-safe TSV output.
+  void SetResultsWriter(std::shared_ptr<ProbeResultsWriter> writer);
+
+  /// Flush current records to the writer. Called after each window and from destructor.
+  void SubmitCompleted();
 
   /// Set the precomputed global k-mer index (shared across threads).
   void SetProbeIndex(std::shared_ptr<ProbeIndex const> probe_index);
@@ -297,23 +300,16 @@ class ProbeTracker {
   std::vector<ProbeKRecord> mRecords;
   std::vector<u16> mActiveProbeIds;
   absl::flat_hash_map<u16, u16> mAltKmerCounts;
-  std::filesystem::path mResultsPath;
+  std::shared_ptr<ProbeResultsWriter> mResultsWriter;
   std::shared_ptr<ProbeIndex const> mProbeIndex;
   absl::flat_hash_map<u16, absl::flat_hash_set<u32>> mProbeReadIndex;
   absl::flat_hash_set<u16> mActiveProbeIdSet;
-
-  /// Write all accumulated probe records to the results TSV file.
-  /// Called automatically by the destructor (RAII).
-  void WriteResults() const;
 
   /// Find or create a ProbeKRecord for the given (probe_id, kmer_size) pair.
   [[nodiscard]] auto FindOrCreateRecord(u16 probe_id, usize kmer_size) -> ProbeKRecord&;
 
   /// Count surviving k-mers per probe from the side-table with offset analysis.
   [[nodiscard]] auto CountSurvivingKmers() const -> absl::flat_hash_map<u16, SurvivalProfile>;
-
-  /// Derive the lost_at attribution string from a record's state.
-  [[nodiscard]] static auto DeriveLostAt(ProbeKRecord const& record) -> std::string_view;
 };
 
 }  // namespace lancet::cbdg

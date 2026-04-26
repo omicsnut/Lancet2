@@ -11,6 +11,9 @@
 
 #include <filesystem>
 #include <memory>
+#ifdef LANCET_DEVELOP_MODE
+#include <string>
+#endif
 
 namespace lancet::cbdg {
 

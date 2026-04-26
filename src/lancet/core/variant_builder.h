@@ -8,6 +8,7 @@
 #include "lancet/caller/variant_set.h"
 #include "lancet/cbdg/graph.h"
 #include "lancet/cbdg/probe_index.h"
+#include "lancet/cbdg/probe_results_writer.h"
 #include "lancet/core/probe_diagnostics.h"
 #include "lancet/core/read_collector.h"
 #include "lancet/core/sample_info.h"
@@ -30,8 +31,9 @@ class VariantBuilder {
     // ── 8B Align ────────────────────────────────────────────────────────────
     std::filesystem::path mOutGraphsDir;
     std::filesystem::path mProbeVariantsPath;  // input missed_variants.txt for k-mer probing
-    std::filesystem::path mProbeResultsPath;   // output probe_results.tsv
+    std::filesystem::path mProbeResultsPath;   // output probe_results.tsv (CLI parsing only)
     std::shared_ptr<cbdg::ProbeIndex const> mProbeIndex;  // precomputed global k-mer index
+    std::shared_ptr<cbdg::ProbeResultsWriter> mProbeResultsWriter;  // thread-safe TSV writer
 
     /// Global genome GC fraction for LongdustQ bias correction.
     /// Default: 0.41 (human genome-wide average, Lander et al. 2001,

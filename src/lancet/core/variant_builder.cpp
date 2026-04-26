@@ -188,7 +188,7 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
                                DNA_ALPHABET_SIZE);
 
   // Initialize probe diagnostics and wire ProbeTracker into the graph.
-  mProbeDiagnostics.Initialize(mParamsPtr->mProbeVariantsPath, mParamsPtr->mProbeResultsPath,
+  mProbeDiagnostics.Initialize(mParamsPtr->mProbeVariantsPath, mParamsPtr->mProbeResultsWriter,
                                mParamsPtr->mProbeIndex);
   mDebruijnGraph.SetProbeTracker(mProbeDiagnostics.Tracker());
 }
@@ -267,7 +267,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     // (i.e., --out-graphs-dir was not specified on the CLI).
     mSpoaState.SerializeGraph(MakeGfaPath(*window, idx));
 
-    caller::VariantSet vset(mSpoaState.mGraph, *window, anchor_start);
+    caller::VariantSet const vset(mSpoaState.mGraph, *window, anchor_start);
 
     // Annotate complexity features on every variant
     mAnnotator.AnnotateSequenceComplexity(vset, absl::MakeConstSpan(comp_haps));
@@ -289,7 +289,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
 
     // Check genotyper read assignment for probe variants.
     mProbeDiagnostics.CheckGenotyperResult(genotyped, vset, idx);
-    for (auto const& var: vset) {
+    for (auto const& var : vset) {
       auto iter = genotyped.find(&var);
       caller::VariantCall::SupportsByVariant var_supports;
       if (iter != genotyped.end() && HasAltSupport(iter->second)) {
@@ -303,6 +303,9 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
                                                                   samples, per_sample_cov));
     }
   }
+
+  // Flush this window's probe records to the shared writer (no-op if inactive).
+  mProbeDiagnostics.SubmitCompleted();
 
   if (variants.empty()) {
     LOG_DEBUG("No variants found for window {} from {} assembled graph paths", reg_str,
