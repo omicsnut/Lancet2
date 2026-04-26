@@ -8,7 +8,7 @@
 
 #include "absl/types/span.h"
 
-#include <string>
+#include <string_view>
 
 namespace lancet::core {
 
@@ -31,7 +31,7 @@ class VariantAnnotator {
   /// Scores each variant against REF and ALT haplotypes, merging across
   /// multiple ALT haplotypes via element-wise max (pessimistic worst-case).
   void AnnotateSequenceComplexity(caller::VariantSet const& vset,
-                                  absl::Span<std::string const> haplotypes) const;
+                                  absl::Span<std::string_view const> haplotypes) const;
 
   /// Annotate all variants in `vset` with graph complexity metrics.
   /// All variants from the same component share the same graph complexity

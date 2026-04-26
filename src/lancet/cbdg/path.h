@@ -81,12 +81,6 @@ class Path {
   f64 mTotalCov = 0.0;
 };
 
-// First is always ref hap. Subsequent ALT haplotypes are sorted by descending
-// MinWeight (weakest-link confidence), establishing structural priority in
-// downstream SPOA MSA.
-using CompHaps = std::vector<Path>;
-using GraphHaps = std::vector<CompHaps>;
-
 }  // namespace lancet::cbdg
 
 #endif  // SRC_LANCET_CBDG_PATH_H_

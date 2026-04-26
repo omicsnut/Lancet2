@@ -10,6 +10,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 /*
@@ -24,12 +25,18 @@
 
 namespace lancet::caller {
 
-void MsaBuilder::UpdateSpoaState(absl::Span<std::string const> sequences,
+void MsaBuilder::UpdateSpoaState(absl::Span<std::string_view const> sequences,
                                  absl::Span<cbdg::Path::BaseWeights const> weights) {
   mGraph.Clear();
   for (usize idx = 0; idx < sequences.size(); ++idx) {
-    auto const alignment = mEngine->Align(sequences[idx], mGraph);
-    mGraph.AddAlignment(alignment, sequences[idx], weights[idx]);
+    // Views point into Path::mSequence strings owned by ComponentResult on the
+    // caller's stack — guaranteed to outlive this call. SPOA's const char*
+    // overloads take an explicit uint32_t length, so null-termination is irrelevant.
+    // NOLINTBEGIN(bugprone-suspicious-stringview-data-usage)
+    auto const seq_len = static_cast<std::uint32_t>(sequences[idx].size());
+    auto const alignment = mEngine->Align(sequences[idx].data(), seq_len, mGraph);
+    mGraph.AddAlignment(alignment, sequences[idx].data(), seq_len, weights[idx]);
+    // NOLINTEND(bugprone-suspicious-stringview-data-usage)
   }
 }
 

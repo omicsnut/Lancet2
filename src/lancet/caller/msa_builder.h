@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 
 namespace lancet::caller {
 
@@ -21,7 +22,7 @@ class MsaBuilder {
 
   using FsPath = std::filesystem::path;
 
-  void UpdateSpoaState(absl::Span<std::string const> sequences,
+  void UpdateSpoaState(absl::Span<std::string_view const> sequences,
                        absl::Span<cbdg::Path::BaseWeights const> weights);
 
   void SerializeGraph(FsPath const& out_gfa_path);

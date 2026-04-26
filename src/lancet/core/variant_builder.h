@@ -88,6 +88,17 @@ class VariantBuilder {
   // ── 1B Align ────────────────────────────────────────────────────────────
   StatusCode mCurrentCode = StatusCode::UNKNOWN;
 
+  // ── ProcessWindow helpers ───────────────────────────────────────────────
+  [[nodiscard]] auto ShouldSkipWindow(Window const& window) -> bool;
+
+  [[nodiscard]] auto ExtractVariants(cbdg::ComponentResult const& component, usize component_id,
+                                     Window const& window) -> caller::VariantSet;
+
+  static void CollectSupportedCalls(caller::VariantSet const& extracted,
+                                    caller::Genotyper::Result& geno_result,
+                                    absl::Span<SampleInfo const> samples, usize window_length,
+                                    WindowResults& output_variant_calls);
+
   [[nodiscard]] auto MakeGfaPath(Window const& win, usize comp_id) const -> std::filesystem::path;
 };
 

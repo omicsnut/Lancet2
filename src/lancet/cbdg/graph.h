@@ -4,6 +4,7 @@
 #include "lancet/base/repeat.h"
 #include "lancet/base/sliding.h"
 #include "lancet/base/types.h"
+#include "lancet/cbdg/component_result.h"
 #include "lancet/cbdg/edge.h"
 #include "lancet/cbdg/graph_complexity.h"
 #include "lancet/cbdg/graph_params.h"
@@ -37,6 +38,7 @@ class Graph {
   using NodeTable = absl::flat_hash_map<NodeID, NodePtr>;
   using RegionPtr = std::shared_ptr<hts::Reference::Region const>;
   using ReadList = absl::Span<Read const>;
+  using ComponentResults = std::vector<ComponentResult>;
 
   explicit Graph(GraphParams params) : mParams(std::move(params)) {}
 
@@ -46,17 +48,9 @@ class Graph {
   /// Const access to the node table — used by graph_complexity.cpp free functions.
   [[nodiscard]] auto Nodes() const noexcept -> NodeTable const& { return mNodes; }
 
-  /// Output of the main assembly pipeline: assembled haplotypes, anchor offsets,
-  /// and per-component complexity metrics for downstream variant calling.
-  struct Result {
-    GraphHaps mGraphHaplotypes;
-    std::vector<usize> mAnchorStartIdxs;
-    std::vector<GraphComplexity> mComponentMetrics;
-  };
-
   /// Main entry point: build, prune, and enumerate haplotypes from reads + reference.
-  /// Iterates kmer lengths from min to max, returning assembled haplotypes on success.
-  [[nodiscard]] auto BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result;
+  /// Iterates kmer lengths from min to max, returning per-component results on success.
+  [[nodiscard]] auto BuildComponentResults(RegionPtr region, ReadList reads) -> ComponentResults;
 
   /// Set the external ProbeTracker for truth variant k-mer tracing. Null
   /// disables tracing (zero overhead in production).

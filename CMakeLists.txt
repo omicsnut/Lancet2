@@ -149,7 +149,9 @@ endif ()
 #       ↓
 #   max_flow, graph_complexity             flow + complexity metrics
 #       ↓
-#   probe_index → probe_results_writer → probe_tracker   truth variant k-mer tracking
+#   component_result                       per-component assembly output (paths + metrics)
+#       ↓
+#   probe_index → probe_tracker → probe_results_writer   truth variant k-mer tracking
 #       ↓
 #   graph                                  assembly orchestrator
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -169,6 +171,8 @@ add_library(lancet_cbdg STATIC
 		src/lancet/cbdg/serialize_dot.cpp src/lancet/cbdg/serialize_dot.h
 		src/lancet/cbdg/max_flow.cpp src/lancet/cbdg/max_flow.h
 		src/lancet/cbdg/graph_complexity.cpp src/lancet/cbdg/graph_complexity.h
+		# ── Per-component assembly output: paths + complexity metrics ─────
+		src/lancet/cbdg/component_result.cpp src/lancet/cbdg/component_result.h
 		# ── Probe diagnostics: index → tracker → results writer ───────────
 		src/lancet/cbdg/probe_index.cpp src/lancet/cbdg/probe_index.h
 		src/lancet/cbdg/probe_results_writer.cpp src/lancet/cbdg/probe_results_writer.h

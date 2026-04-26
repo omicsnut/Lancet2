@@ -71,21 +71,19 @@ namespace lancet::cbdg {
 ///
 /// https://github.com/GATB/bcalm/blob/v2.2.3/bidirected-graphs-in-bcalm2/bidirected-graphs-in-bcalm2.md
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result {
+auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> ComponentResults {
   mReads = reads;
   mRegion = std::move(region);
 
   lancet::base::Timer timer;
-  GraphHaps per_comp_haps;
+  ComponentResults results;
   std::string_view ref_anchor_seq;
-  std::vector<usize> anchor_start_idxs;
-  std::vector<GraphComplexity> component_metrics;
   absl::flat_hash_set<MateMer> mate_mers;
 
   static constexpr usize DEFAULT_EST_NUM_NODES = 32'768;
   static constexpr usize DEFAULT_MIN_ANCHOR_LENGTH = 150;
 
-  auto const reg_str = mRegion->ToSamtoolsRegion();
+  auto const region_str = mRegion->ToSamtoolsRegion();
   auto const region_chrom = mRegion->ChromName();
   auto const region_start0 = mRegion->StartPos1() - 1;
   auto const region_seq = mRegion->SeqView();
@@ -93,12 +91,12 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
 
   Context probe_ctx{.mChrom = region_chrom,
                     .mRefSeq = region_seq,
-                    .mRegStr = reg_str,
+                    .mRegStr = region_str,
                     .mRegionStart = region_start0};
 
   // Outer loop: increment k and retry until haplotypes are found or k is exhausted.
   // Replaces the old `goto IncrementKmerAndRetry` with structured control flow.
-  while (per_comp_haps.empty() && (mCurrK + mParams.mKmerStepLen) <= mParams.mMaxKmerLen) {
+  while (results.empty() && (mCurrK + mParams.mKmerStepLen) <= mParams.mMaxKmerLen) {
     mCurrK += mParams.mKmerStepLen;
     timer.Reset();
     mSourceAndSinkIds = {0, 0};
@@ -113,7 +111,7 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
 
     mNodes.clear();
     BuildGraph(mate_mers);
-    LOG_TRACE("Done building graph for {} with k={}, nodes={}, reads={}", reg_str, mCurrK,
+    LOG_TRACE("Done building graph for {} with k={}, nodes={}, reads={}", region_str, mCurrK,
               mNodes.size(), mReads.size())
 
     // Tag probe ALT-unique k-mers in the graph and count them in the raw reads.
@@ -125,27 +123,27 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
     WriteDotDevelop(GraphState::FIRST_LOW_COV_REMOVAL, 0);
     ProbeLogStatus(PruneStage::PRUNED_AT_LOWCOV1, probe_ctx);
 
-    auto const components = MarkConnectedComponents();
-    per_comp_haps.reserve(components.size());
-    anchor_start_idxs.reserve(components.size());
-    LOG_TRACE("Found {} connected components in graph for {} with k={}", components.size(), reg_str,
-              mCurrK)
+    auto const connected_components = MarkConnectedComponents();
+    results.reserve(connected_components.size());
+    LOG_TRACE("Found {} connected components in graph for {} with k={}",
+              connected_components.size(), region_str, mCurrK)
 
     // Inner loop: process each connected component with valid source/sink anchors.
     // The should_retry_kmer flag is set to true by cycle detection to abandon all
     // remaining components at this k and retry at a higher k value.
     bool should_retry_kmer = false;
-    for (auto const& cinfo : components) {
+    for (auto const& component_info : connected_components) {
       if (should_retry_kmer) break;
 
-      auto const comp_id = cinfo.mCompId;
-      probe_ctx.mCompId = comp_id;
+      auto const component_index = component_info.mCompId;
+      probe_ctx.mCompId = component_index;
 
-      auto const source = FindSource(comp_id);
-      auto const sink = FindSink(comp_id);
+      auto const source = FindSource(component_index);
+      auto const sink = FindSink(component_index);
 
       if (!source.mFoundAnchor || !sink.mFoundAnchor || source.mAnchorId == sink.mAnchorId) {
-        LOG_TRACE("Skipping comp{} in graph for {} as source/sink not found", comp_id, reg_str)
+        LOG_TRACE("Skipping component {} in graph for {} as source/sink not found", component_index,
+                  region_str)
         ProbeSetNoAnchor(probe_ctx);
         continue;
       }
@@ -156,26 +154,25 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
         continue;
       }
 
-      LOG_TRACE("Found {}bp ref anchor for {} comp={} with k={}", ref_anchor_len, reg_str, comp_id,
-                mCurrK)
+      LOG_TRACE("Found {}bp reference anchor for {} component {} with k={}", ref_anchor_len,
+                region_str, component_index, mCurrK)
 
       ProbeCheckAnchorOverlap(source, sink, probe_ctx);
-
       mSourceAndSinkIds = NodeIDPair{source.mAnchorId, sink.mAnchorId};
       ref_anchor_seq = region_seq.substr(source.mRefOffset, ref_anchor_len);
-      WriteDotDevelop(GraphState::FOUND_REF_ANCHORS, comp_id);
-
-      PruneComponent(comp_id);
+      WriteDotDevelop(GraphState::FOUND_REF_ANCHORS, component_index);
+      PruneComponent(component_index);
 
       // Build the flat traversal index on the frozen (fully-pruned) graph.
       // This maps NodeID -> contiguous u32 and constructs the CSR adjacency list.
       // Both HasCycle and MaxFlow operate on this flat structure for O(1) state tracking.
-      auto const trav_idx = BuildTraversalIndex(mNodes, mSourceAndSinkIds, comp_id);
+      auto const traversal_index = BuildTraversalIndex(mNodes, mSourceAndSinkIds, component_index);
 
       // O(V+E) cycle detection using three-color DFS on the flat adjacency list.
       // See HasCycle() implementation for bidirected sign-continuity handling.
-      if (HasCycle(trav_idx)) {
-        LOG_TRACE("Cycle found in pruned graph for {} comp={} with k={}", reg_str, comp_id, mCurrK)
+      if (HasCycle(traversal_index)) {
+        LOG_TRACE("Cycle found in pruned graph for {} component {} with k={}", region_str,
+                  component_index, mCurrK)
         ProbeSetCycleRetry(probe_ctx);
         should_retry_kmer = true;
         break;
@@ -185,50 +182,44 @@ auto Graph::BuildComponentHaplotypes(RegionPtr region, ReadList reads) -> Result
       // All metrics are O(V+E) to compute and help identify pathological windows.
       // Skip walk enumeration on pathological graphs — retry with larger k to
       // collapse branches. Same control flow as the HasCycle guard above.
-      auto const cplx = ComputeComponentComplexity(comp_id);
-      if (cplx.IsComplex()) {
-        LOG_DEBUG("Graph too complex for {} comp={} k={}: CC={} branches={}", reg_str, comp_id,
-                  mCurrK, cplx.CyclomaticComplexity(), cplx.NumBranchPoints())
+      auto const graph_complexity = ComputeComponentComplexity(component_index);
+      if (graph_complexity.IsComplex()) {
+        LOG_DEBUG("Graph too complex for {} comp={} k={}: CC={} branches={}", region_str,
+                  component_index, mCurrK, graph_complexity.CyclomaticComplexity(),
+                  graph_complexity.NumBranchPoints())
         ProbeSetComplexRetry(probe_ctx);
         should_retry_kmer = true;
         break;
       }
 
-      WriteDot(GraphState::FULLY_PRUNED_GRAPH, comp_id);
+      WriteDot(GraphState::FULLY_PRUNED_GRAPH, component_index);
 
-      auto haplotypes = EnumerateAndSortHaplotypes(comp_id, trav_idx, ref_anchor_seq);
-      if (haplotypes.empty()) continue;
+      auto haps = EnumerateAndSortHaplotypes(component_index, traversal_index, ref_anchor_seq);
+      ProbeCheckPaths(absl::MakeConstSpan(haps), probe_ctx);
 
-      ProbeCheckPaths(absl::MakeConstSpan(haplotypes), probe_ctx);
-
-      per_comp_haps.emplace_back(std::move(haplotypes));
-      anchor_start_idxs.emplace_back(source.mRefOffset);
-      component_metrics.emplace_back(cplx);
+      if (haps.empty()) continue;
+      results.emplace_back(std::move(haps), graph_complexity, static_cast<u32>(source.mRefOffset));
     }
 
     // If any component triggered a retry, discard partial results and try next k
     if (should_retry_kmer) {
-      per_comp_haps.clear();
-      anchor_start_idxs.clear();
-      component_metrics.clear();
+      results.clear();
       continue;
     }
   }
 
   // Count ALT haplotypes per component (excluding the leading reference path at index 0).
   // NOLINTNEXTLINE(clang-analyzer-deadcode.DeadStores)
-  auto const num_haps = std::accumulate(
-      per_comp_haps.cbegin(), per_comp_haps.cend(), u64{0},
-      [](u64 const sum, auto const& comp_haps) -> u64 { return sum + comp_haps.size() - 1; });
+  auto const num_haplotypes = std::accumulate(
+      results.cbegin(), results.cend(), u64{0},
+      [](u64 const sum, auto const& comp) -> u64 { return sum + comp.NumAltHaplotypes(); });
 
   // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
   auto const human_rt = timer.HumanRuntime();
+  LOG_TRACE("Assembled {} graph haplotypes for {} with k={} in {}", num_haplotypes, region_str,
+            mCurrK, human_rt)
 
-  LOG_TRACE("Assembled {} haplotypes for {} with k={} in {}", num_haps, reg_str, mCurrK, human_rt)
-
-  return {.mGraphHaplotypes = per_comp_haps,
-          .mAnchorStartIdxs = anchor_start_idxs,
-          .mComponentMetrics = std::move(component_metrics)};
+  return results;
 }
 
 // ============================================================================

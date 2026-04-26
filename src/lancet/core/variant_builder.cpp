@@ -23,11 +23,10 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <iterator>
 #include <memory>
 #include <numeric>
-#include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -98,59 +97,6 @@ constexpr i8 MSA_OPEN1_SCORE = -6;
 constexpr i8 MSA_EXTEND1_SCORE = -2;
 constexpr i8 MSA_OPEN2_SCORE = -26;
 constexpr i8 MSA_EXTEND2_SCORE = -1;
-constexpr u8 DNA_ALPHABET_SIZE = 4;
-constexpr u32 PREALLOC_WINDOW_LENGTH_MULTIPLIER = 3;
-
-// ============================================================================
-// AnnotatePathMetrics: populate haplotype count + path depth CV on a RawVariant.
-//
-// Sets two mutable fields on the variant (same pattern as mGraphMetrics):
-//   mNumTotalHaps — total SPOA paths in this component (for HSE normalization)
-//   mMaxPathCv    — max path depth CV across ALT paths (for PDCV FORMAT field)
-// ============================================================================
-void AnnotatePathMetrics(caller::RawVariant const& var, absl::Span<cbdg::Path const> comp_paths) {
-  var.mNumTotalHaps = comp_paths.size();
-
-  // Max path depth CV across ALT paths — O(nhaps) single pass.
-  std::optional<f64> max_cv;
-  for (usize hap = 1; hap < comp_paths.size(); ++hap) {
-    auto const cv_val = comp_paths[hap].CoefficientOfVariationCoverage();
-    max_cv = max_cv.has_value() ? std::max(*max_cv, cv_val) : cv_val;
-  }
-  var.mMaxPathCv = max_cv;
-}
-
-// ============================================================================
-// CollectPathSequences: extract haplotype sequences from graph paths.
-// ============================================================================
-auto CollectPathSequences(absl::Span<cbdg::Path const> paths) -> std::vector<std::string> {
-  std::vector<std::string> seqs;
-  seqs.reserve(paths.size());
-  std::ranges::transform(paths, std::back_inserter(seqs), [](auto const& path) -> std::string {
-    return std::string(path.Sequence());
-  });
-  return seqs;
-}
-
-// ============================================================================
-// CollectHapWeights: extract per-base SPOA weights from graph paths.
-// ============================================================================
-auto CollectHapWeights(absl::Span<cbdg::Path const> paths) -> cbdg::Path::HapWeights {
-  cbdg::Path::HapWeights path_weights;
-  path_weights.reserve(paths.size());
-  std::ranges::transform(
-      paths, std::back_inserter(path_weights),
-      [](auto const& path) -> cbdg::Path::BaseWeights { return path.PerBaseWeights(); });
-  return path_weights;
-}
-
-// ============================================================================
-// CountAssembledHaplotypes: total non-REF haplotypes across all graph components.
-// ============================================================================
-auto CountAssembledHaplotypes(absl::Span<std::vector<cbdg::Path> const> components) -> u64 {
-  return std::accumulate(components.begin(), components.end(), u64{0},
-                         [](u64 sum, auto const& comp) -> u64 { return sum + comp.size() - 1; });
-}
 
 // ============================================================================
 // HasAltSupport: true if any sample has > 0 ALT-supporting reads.
@@ -172,8 +118,9 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
                      MSA_EXTEND1_SCORE, MSA_OPEN2_SCORE, MSA_EXTEND2_SCORE),
                  .mGraph = spoa::Graph()},
       mAnnotator(mParamsPtr->mGcFraction) {
-  mSpoaState.mEngine->Prealloc(window_length * PREALLOC_WINDOW_LENGTH_MULTIPLIER,
-                               DNA_ALPHABET_SIZE);
+  static constexpr u8 DNA_ALPHABET_SIZE = 4;
+  static constexpr u32 PREALLOC_MULTIPLIER = 3;
+  mSpoaState.mEngine->Prealloc(window_length * PREALLOC_MULTIPLIER, DNA_ALPHABET_SIZE);
 
   // Initialize probe diagnostics and wire ProbeTracker into the graph.
   mProbeDiagnostics.Initialize(mParamsPtr->mProbeVariantsPath, mParamsPtr->mProbeResultsWriter,
@@ -181,131 +128,180 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
   mDebruijnGraph.SetProbeTracker(mProbeDiagnostics.Tracker());
 }
 
-auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) -> WindowResults {
-  auto const region = window->AsRegionPtr();
-  auto const reg_str = region->ToSamtoolsRegion();
+// ============================================================================
+// ShouldSkipWindow: pre-read guard checks for N-only, repeat, and inactive.
+// ============================================================================
+auto VariantBuilder::ShouldSkipWindow(Window const& window) -> bool {
+  auto const region_string = window.AsRegionPtr()->ToSamtoolsRegion();
 
-  static thread_local auto const current_tid = std::this_thread::get_id();
-  static thread_local auto const THREAD_ID = absl::Hash<std::thread::id>()(current_tid);
-  LOG_DEBUG("Processing window {} in thread {:#x}", reg_str, THREAD_ID)
-
-  if (std::ranges::all_of(window->SeqView(), [](char base) { return base == 'N'; })) {
-    LOG_DEBUG("Skipping window {} since it has only N bases in reference", reg_str)
+  if (std::ranges::all_of(window.SeqView(), [](char base) { return base == 'N'; })) {
+    LOG_DEBUG("Skipping window {} since it has only N bases in reference", region_string)
     mCurrentCode = StatusCode::SKIPPED_NONLY_REF_BASES;
-    return {};
+    return true;
   }
 
   if (lancet::base::HasExactRepeat(
-          lancet::base::SlidingView(window->SeqView(), mParamsPtr->mGraphParams.mMaxKmerLen))) {
-    LOG_DEBUG("Skipping window {} since reference has repeat {}-mers", reg_str,
+          lancet::base::SlidingView(window.SeqView(), mParamsPtr->mGraphParams.mMaxKmerLen))) {
+    LOG_DEBUG("Skipping window {} since reference has repeat {}-mers", region_string,
               mParamsPtr->mGraphParams.mMaxKmerLen)
     mCurrentCode = StatusCode::SKIPPED_REF_REPEAT_SEEN;
-    return {};
+    return true;
   }
 
   if (!mParamsPtr->mSkipActiveRegion &&
-      !core::IsActiveRegion(mReadCollector.SampleList(), mReadCollector.Extractors(), *region)) {
-    LOG_DEBUG("Skipping window {} since it has no evidence of mutation in any sample", reg_str)
+      !core::IsActiveRegion(mReadCollector.SampleList(), mReadCollector.Extractors(),
+                            *window.AsRegionPtr())) {
+    LOG_DEBUG("Skipping window {} since it has no evidence of mutation in any sample",
+              region_string)
     mCurrentCode = StatusCode::SKIPPED_INACTIVE_REGION;
-    return {};
+    return true;
   }
 
-  LOG_DEBUG("Collecting all available sample reads for window {}", reg_str)
+  return false;
+}
+
+// ============================================================================
+// ExtractVariants: build MSA from component haplotypes, extract variants
+// from the alignment graph, and annotate complexity + path metrics.
+//
+// Uses ComponentResult's zero-copy HaplotypeSequenceViews() for SPOA/scorer
+// and pre-computed MaxAltPathCv()/NumPaths() for path metric annotation.
+// ============================================================================
+auto VariantBuilder::ExtractVariants(cbdg::ComponentResult const& component,
+                                     usize const component_id, Window const& window)
+    -> caller::VariantSet {
+  auto const region_string = window.AsRegionPtr()->ToSamtoolsRegion();
+  auto const ref_anchor_pos1 = window.StartPos1() + component.AnchorStartOffset();
+  auto const hap_views = component.HaplotypeSequenceViews();
+  auto const weights = component.HaplotypeWeights();
+
+  LOG_DEBUG("Building MSA for graph component {} from window {} with {} haplotypes", component_id,
+            region_string, component.NumPaths())
+
+  mSpoaState.UpdateSpoaState(absl::MakeConstSpan(hap_views), absl::MakeConstSpan(weights));
+  // SerializeGraph is a no-op when MakeGfaPath returns an empty path
+  // (i.e., --out-graphs-dir was not specified on the CLI).
+  mSpoaState.SerializeGraph(MakeGfaPath(window, component_id));
+
+  caller::VariantSet vset(mSpoaState.mGraph, window, ref_anchor_pos1);
+
+  mAnnotator.AnnotateSequenceComplexity(vset, absl::MakeConstSpan(hap_views));
+  VariantAnnotator::AnnotateGraphComplexity(vset, component.Metrics());
+
+  // Path metrics annotation: nhaps + max ALT path depth CV.
+  // Deterministic — depends only on component paths, not on genotyping.
+  auto const max_alt_cv = component.MaxAltPathCv();
+  for (auto const& var : vset) {
+    var.mNumTotalHaps = component.NumPaths();
+    var.mMaxPathCv = max_alt_cv;
+  }
+
+  if (vset.IsEmpty()) {
+    LOG_DEBUG("No variants found in graph component {} for window {} with {} haplotypes",
+              component_id, region_string, component.NumPaths())
+  }
+
+  return vset;
+}
+
+// ============================================================================
+// CollectSupportedCalls: filter genotyped variants for ALT support and
+// construct VariantCalls. Appends to output_variant_calls container.
+// ============================================================================
+void VariantBuilder::CollectSupportedCalls(caller::VariantSet const& extracted,
+                                           caller::Genotyper::Result& geno_result,
+                                           absl::Span<SampleInfo const> samples,
+                                           usize const window_length,
+                                           WindowResults& output_variant_calls) {
+  for (auto const& var : extracted) {
+    auto iter = geno_result.find(&var);
+    caller::VariantCall::SupportsByVariant var_supports;
+    if (iter != geno_result.end() && HasAltSupport(iter->second)) {
+      var_supports.emplace(&var, std::move(iter->second));
+    }
+
+    if (var_supports.empty()) continue;
+
+    output_variant_calls.emplace_back(std::make_unique<caller::VariantCall>(
+        &var, std::move(var_supports), samples, window_length));
+  }
+}
+
+auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) -> WindowResults {
+  auto const region = window->AsRegionPtr();
+  auto const region_string = region->ToSamtoolsRegion();
+
+  static thread_local auto const CURRENT_TID = std::this_thread::get_id();
+  static thread_local auto const THREAD_ID = absl::Hash<std::thread::id>()(CURRENT_TID);
+  LOG_DEBUG("Processing window {} in thread {:#x}", region_string, THREAD_ID)
+
+  // Phase 1: Pre-read qualification — N-only, repeat k-mers, active region
+  if (ShouldSkipWindow(*window)) return {};
+
+  // Phase 2: Read collection and depth qualification
+  LOG_DEBUG("Collecting all available sample reads for window {}", region_string)
   auto const rc_result = mReadCollector.CollectRegionResult(*region);
-  absl::Span<cbdg::Read const> const reads = absl::MakeConstSpan(rc_result.mSampleReads);
-  absl::Span<SampleInfo const> const samples = absl::MakeConstSpan(rc_result.mSampleList);
+  auto const reads = absl::MakeConstSpan(rc_result.mSampleReads);
+  auto const samples = absl::MakeConstSpan(rc_result.mSampleList);
 
-  auto const total_cov = SampleInfo::CrossSampleMeanCoverage(samples, window->Length());
-  if (total_cov < static_cast<f64>(mParamsPtr->mGraphParams.mMinAnchorCov)) {
-    LOG_DEBUG("Skipping window {} since it has only {:.2f}x total sample coverage", reg_str,
-              total_cov)
+  auto const cross_sample_cov = SampleInfo::CrossSampleMeanCoverage(samples, window->Length());
+  if (cross_sample_cov < static_cast<f64>(mParamsPtr->mGraphParams.mMinAnchorCov)) {
+    LOG_DEBUG("Skipping window {} with {:.2f}x total coverage as min. anchor coverage is {}x",
+              region_string, cross_sample_cov, mParamsPtr->mGraphParams.mMinAnchorCov)
     mCurrentCode = StatusCode::SKIPPED_INACTIVE_REGION;
     return {};
   }
 
-  LOG_DEBUG("Building graph for {} with {} sample reads and {:.2f}x total coverage", reg_str,
-            reads.size(), total_cov)
-  // First haplotype from each component will always be the reference haplotype sequence for the
-  // graph
-  auto const dbg_rslt = mDebruijnGraph.BuildComponentHaplotypes(window->AsRegionPtr(), reads);
-  auto const& component_haplotypes = dbg_rslt.mGraphHaplotypes;
+  // Phase 3: de Bruijn graph assembly and haplotype enumeration
+  LOG_DEBUG("Building graph for {} with {} extracted sample reads and {:.2f}x total coverage",
+            region_string, reads.size(), cross_sample_cov)
+  auto const components = mDebruijnGraph.BuildComponentResults(window->AsRegionPtr(), reads);
 
-  auto const num_asm_haps = CountAssembledHaplotypes(absl::MakeConstSpan(component_haplotypes));
-  if (num_asm_haps == 0) {
-    LOG_DEBUG("Could not assemble any haplotypes for window {} with k={}", reg_str,
-              mDebruijnGraph.CurrentK())
+  auto const num_assembled_haps = std::accumulate(
+      components.cbegin(), components.cend(), u64{0},
+      [](u64 const sum, auto const& comp) -> u64 { return sum + comp.NumAltHaplotypes(); });
+
+  if (num_assembled_haps == 0) {
+    LOG_DEBUG("Could not successfully assemble any haplotypes for window {} with k={}",
+              region_string, mDebruijnGraph.CurrentK())
     mCurrentCode = StatusCode::SKIPPED_NOASM_HAPLOTYPE;
     return {};
   }
 
-  WindowResults variants;
-  for (usize idx = 0; idx < component_haplotypes.size(); ++idx) {
-    auto const nhaps = component_haplotypes[idx].size();
-    auto const anchor_start = window->StartPos1() + dbg_rslt.mAnchorStartIdxs[idx];
-    std::vector<cbdg::Path> const& comp_paths = component_haplotypes[idx];
+  // Phase 4: Per-component MSA, genotyping, and variant collection
+  WindowResults variant_calls;
+  for (usize component_idx = 0; component_idx < components.size(); ++component_idx) {
+    auto const& component = components[component_idx];
 
-    auto const comp_haps = CollectPathSequences(comp_paths);
-    auto const comp_weights = CollectHapWeights(comp_paths);
+    auto extracted = ExtractVariants(component, component_idx, *window);
+    if (extracted.IsEmpty()) continue;
 
-    LOG_DEBUG("Building MSA for graph component {} from window {} with {} haplotypes", idx, reg_str,
-              nhaps)
+    mProbeDiagnostics.CheckMsaExtraction(extracted, *window, component_idx);
 
-    mSpoaState.UpdateSpoaState(absl::MakeConstSpan(comp_haps), absl::MakeConstSpan(comp_weights));
-    // SerializeGraph is a no-op when MakeGfaPath returns an empty path
-    // (i.e., --out-graphs-dir was not specified on the CLI).
-    mSpoaState.SerializeGraph(MakeGfaPath(*window, idx));
+    LOG_DEBUG("Found variant(s) in graph component {} for window {} with {} haplotypes",
+              component_idx, region_string, component.NumPaths())
 
-    caller::VariantSet const vset(mSpoaState.mGraph, *window, anchor_start);
+    // HaplotypeSequences() allocates — only called when variants exist.
+    // Genotyper's minimap2 requires null-terminated c_str() pointers.
+    auto const hap_seqs = component.HaplotypeSequences();
+    auto geno_result = mGenotyper.Genotype(hap_seqs, reads, extracted);
 
-    // Annotate complexity features on every variant
-    mAnnotator.AnnotateSequenceComplexity(vset, absl::MakeConstSpan(comp_haps));
-    LANCET_ASSERT(idx < dbg_rslt.mComponentMetrics.size())
-    VariantAnnotator::AnnotateGraphComplexity(vset, dbg_rslt.mComponentMetrics[idx]);
-
-    if (vset.IsEmpty()) {
-      LOG_DEBUG("No variants found in graph component {} for window {} with {} haplotypes", idx,
-                reg_str, nhaps)
-      continue;
-    }
-
-    // Check whether probe variants appear in the MSA-extracted variant set.
-    mProbeDiagnostics.CheckMsaExtraction(vset, *window, idx);
-
-    LOG_DEBUG("Found variant(s) in graph component {} for window {} with {} haplotypes", idx,
-              reg_str, nhaps)
-    auto genotyped = mGenotyper.Genotype(absl::MakeConstSpan(comp_haps), reads, vset);
-
-    // Check genotyper read assignment for probe variants.
-    mProbeDiagnostics.CheckGenotyperResult(genotyped, vset, idx);
-    for (auto const& var : vset) {
-      auto iter = genotyped.find(&var);
-      caller::VariantCall::SupportsByVariant var_supports;
-      if (iter != genotyped.end() && HasAltSupport(iter->second)) {
-        var_supports.emplace(&var, std::move(iter->second));
-      }
-
-      if (var_supports.empty()) continue;
-
-      AnnotatePathMetrics(var, comp_paths);
-      variants.emplace_back(std::make_unique<caller::VariantCall>(&var, std::move(var_supports),
-                                                                  samples, window->Length()));
-    }
+    mProbeDiagnostics.CheckGenotyperResult(geno_result, extracted, component_idx);
+    CollectSupportedCalls(extracted, geno_result, samples, window->Length(), variant_calls);
   }
 
-  // Flush this window's probe records to the shared writer (no-op if inactive).
   mProbeDiagnostics.SubmitCompleted();
-
-  if (variants.empty()) {
-    LOG_DEBUG("No variants found for window {} from {} assembled graph paths", reg_str,
-              num_asm_haps)
+  if (variant_calls.empty()) {
+    LOG_DEBUG("No variants found for window {} from {} assembled graph contigs/haplotypes",
+              region_string, num_assembled_haps)
     mCurrentCode = StatusCode::MISSING_NO_MSA_VARIANTS;
     return {};
   }
 
   mCurrentCode = StatusCode::FOUND_GENOTYPED_VARIANT;
-  LOG_DEBUG("Genotyped {} variant(s) for window {} by re-aligning sample reads", variants.size(),
-            reg_str)
-  return variants;
+  LOG_DEBUG("Genotyped {} variant(s) for window {} by re-aligning sample reads",
+            variant_calls.size(), region_string)
+  return variant_calls;
 }
 
 auto VariantBuilder::MakeGfaPath(Window const& win, usize const comp_id) const
