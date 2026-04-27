@@ -59,7 +59,7 @@ struct ProbeKRecord;
 //
 // ┌────────────────────────────────────────────────────────────────────┐
 // │ §1 Identity         probe_id chrom pos ref alt window              │
-// │ §2 Read evidence    n_tier1_reads n_alt_kmers_in_reads             │
+// │ §2 Read evidence    n_raw_alt_reads n_alt_kmers_in_reads           │
 // │ §3 Graph assembly   kmer_size n_expected_alt_kmers comp_id         │
 // │                     n_comp_nodes n_split_across_comps              │
 // │ §4 Survival funnel  n_surviving_{build,lowcov1,compress1,          │
@@ -73,7 +73,8 @@ struct ProbeKRecord;
 // │ §7 MSA extraction   msa_shift_bp is_msa_exact_match                │
 // │                     is_msa_shifted is_msa_subsumed                 │
 // │ §8 Genotyper        n_geno_true_alt_reads n_geno_total_ref_reads   │
-// │                     n_geno_stolen_to_ref n_geno_stolen_to_wrong_alt│
+// │                     n_geno_reassigned_to_ref                       │
+// │                     n_geno_reassigned_to_wrong_alt                 │
 // │                     n_geno_non_overlapping is_geno_has_alt_support │
 // │                     is_geno_no_overlap                             │
 // └────────────────────────────────────────────────────────────────────┘
@@ -88,7 +89,7 @@ struct ProbeKRecord;
 //     window                str            window region (e.g. "chr1:100-200") or "."
 //
 //   §2 Read evidence — raw signal before graph construction.
-//     n_tier1_reads         u16  ≥1        ALT reads reported by tier-1 caller
+//     n_raw_alt_reads       u16  ≥0        raw (unfiltered) ALT reads from truth concordance
 //     n_alt_kmers_in_reads  u16  ≥0        ALT-unique k-mers found in raw reads
 //
 //   §3 Graph assembly — graph topology at the current k.
@@ -131,13 +132,13 @@ struct ProbeKRecord;
 //     is_msa_subsumed         0|1               variant absorbed into larger MNV
 //
 //   §8 Genotyper — read assignment at the truth variant site.
-//     n_geno_true_alt_reads       u16  ≥0  reads on truth ALT allele
-//     n_geno_total_ref_reads      u16  ≥0  total reads on REF
-//     n_geno_stolen_to_ref        u16  ≥0  ALT reads misassigned to REF
-//     n_geno_stolen_to_wrong_alt  u16  ≥0  ALT reads misassigned to wrong ALT
-//     n_geno_non_overlapping      u16  ≥0  ALT reads outside alignment span
-//     is_geno_has_alt_support     0|1      ≥1 read supports truth ALT
-//     is_geno_no_overlap          0|1      zero read alignments overlapped variant
+//     n_geno_true_alt_reads           u16  ≥0   reads on truth ALT allele
+//     n_geno_total_ref_reads          u16  ≥0   total reads on REF
+//     n_geno_reassigned_to_ref        u16  ≥0   ALT reads misassigned to REF
+//     n_geno_reassigned_to_wrong_alt  u16  ≥0   ALT reads misassigned to wrong ALT
+//     n_geno_non_overlapping          u16  ≥0   ALT reads outside alignment span
+//     is_geno_has_alt_support              0|1  ≥1 read supports truth ALT
+//     is_geno_no_overlap                   0|1  zero read alignments overlapped variant
 // ============================================================================
 class ProbeResultsWriter {
  public:

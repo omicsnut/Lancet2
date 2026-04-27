@@ -49,14 +49,14 @@ void ProbeResultsWriter::Append(absl::Span<ProbeKRecord const> records) {
   // clang-format off
   if (!mHeaderWritten) {
     static constexpr auto HEADER_LINE =
-        "probe_id\tchrom\tpos\tref\talt\twindow\tn_tier1_reads\tkmer_size\tn_expected_alt_kmers\tn_alt_kmers_in_reads\t"
+        "probe_id\tchrom\tpos\tref\talt\twindow\tn_raw_alt_reads\tkmer_size\tn_expected_alt_kmers\tn_alt_kmers_in_reads\t"
         "comp_id\tn_comp_nodes\tn_split_across_comps\tn_surviving_build\tn_surviving_lowcov1\tn_surviving_compress1\t"
         "n_surviving_lowcov2\tn_surviving_compress2\tn_surviving_tips\thap_indices\tis_traversal_limited\t"
         "is_graph_cycle\tis_graph_complex\tis_no_anchor\tis_short_anchor\tis_variant_in_anchor\t"
         "n_last_edge_kmers\tn_last_interior_kmers\tn_last_chain_gaps\t"
         "msa_shift_bp\tis_msa_exact_match\tis_msa_shifted\tis_msa_subsumed\t"
-        "n_geno_true_alt_reads\tn_geno_total_ref_reads\tn_geno_stolen_to_ref\t"
-        "n_geno_stolen_to_wrong_alt\tn_geno_non_overlapping\tis_geno_has_alt_support\tis_geno_no_overlap\n";
+        "n_geno_true_alt_reads\tn_geno_total_ref_reads\tn_geno_reassigned_to_ref\t"
+        "n_geno_reassigned_to_wrong_alt\tn_geno_non_overlapping\tis_geno_has_alt_support\tis_geno_no_overlap\n";
     out << HEADER_LINE;
     mHeaderWritten = true;
   }
@@ -67,22 +67,22 @@ void ProbeResultsWriter::Append(absl::Span<ProbeKRecord const> records) {
     mWrittenProbeIds.insert(record.mProbeId);
 
     out << fmt::format(
-        "{PROBE_ID}\t{CHROM}\t{POS}\t{REF}\t{ALT}\t{WINDOW}\t{N_TIER1_READS}\t{KMER_SIZE}\t"
+        "{PROBE_ID}\t{CHROM}\t{POS}\t{REF}\t{ALT}\t{WINDOW}\t{N_RAW_ALT_READS}\t{KMER_SIZE}\t"
         "{N_EXPECTED_ALT_KMERS}\t{N_ALT_KMERS_IN_READS}\t{COMP_ID}\t{N_COMP_NODES}\t"
         "{N_SPLIT_ACROSS_COMPS}\t{N_SURVIVING_BUILD}\t{N_SURVIVING_LOWCOV1}\t"
         "{N_SURVIVING_COMPRESS1}\t{N_SURVIVING_LOWCOV2}\t{N_SURVIVING_COMPRESS2}\t"
         "{N_SURVIVING_TIPS}\t{HAP_INDICES}\t{IS_TRAVERSAL_LIMITED}\t{IS_GRAPH_CYCLE}\t"
         "{IS_GRAPH_COMPLEX}\t{IS_NO_ANCHOR}\t{IS_SHORT_ANCHOR}\t{IS_VARIANT_IN_ANCHOR}\t"
         "{N_LAST_EDGE}\t{N_LAST_INTERIOR}\t{N_LAST_GAPS}\t{MSA_SHIFT}\t{IS_MSA_EXACT}\t"
-        "{IS_MSA_SHIFTED}\t{IS_MSA_SUBSUMED}\t{N_GENO_ALT}\t{N_GENO_REF}\t{N_GENO_STOLEN_REF}\t"
-        "{N_GENO_STOLEN_ALT}\t{N_GENO_NON_OVL}\t{IS_GENO_ALT}\t{IS_GENO_NO_OVL}\n",
+        "{IS_MSA_SHIFTED}\t{IS_MSA_SUBSUMED}\t{N_GENO_ALT}\t{N_GENO_REF}\t{N_GENO_REASSIGNED_REF}\t"
+        "{N_GENO_REASSIGNED_ALT}\t{N_GENO_NON_OVL}\t{IS_GENO_ALT}\t{IS_GENO_NO_OVL}\n",
         fmt::arg("PROBE_ID", record.mProbeId),
         fmt::arg("CHROM", probe.mChrom),
         fmt::arg("POS", probe.mGenomeStart0),
         fmt::arg("REF", probe.mRef),
         fmt::arg("ALT", probe.mAlt),
         fmt::arg("WINDOW", record.mRegion.empty() ? "." : record.mRegion),
-        fmt::arg("N_TIER1_READS", probe.mTier1AltCount),
+        fmt::arg("N_RAW_ALT_READS", probe.mRawAltCount),
         fmt::arg("KMER_SIZE", record.mKmerSize),
         fmt::arg("N_EXPECTED_ALT_KMERS", record.mExpectedAltKmers),
         fmt::arg("N_ALT_KMERS_IN_READS", record.mAltKmersInReads),
@@ -111,8 +111,8 @@ void ProbeResultsWriter::Append(absl::Span<ProbeKRecord const> records) {
         fmt::arg("IS_MSA_SUBSUMED", static_cast<int>(record.mIsMsaSubsumed)),
         fmt::arg("N_GENO_ALT", record.mGenoTrueAltReads),
         fmt::arg("N_GENO_REF", record.mGenoTotalRefReads),
-        fmt::arg("N_GENO_STOLEN_REF", record.mGenoStolenToRef),
-        fmt::arg("N_GENO_STOLEN_ALT", record.mGenoStolenToWrongAlt),
+        fmt::arg("N_GENO_REASSIGNED_REF", record.mGenoReassignedToRef),
+        fmt::arg("N_GENO_REASSIGNED_ALT", record.mGenoReassignedToWrongAlt),
         fmt::arg("N_GENO_NON_OVL", record.mGenoNonOverlapping),
         fmt::arg("IS_GENO_ALT", static_cast<int>(record.mIsGenoHasAltSupport)),
         fmt::arg("IS_GENO_NO_OVL", static_cast<int>(record.mIsGenoNoOverlap)));

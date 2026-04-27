@@ -30,8 +30,8 @@ struct ProbeVariant {
   usize mGenomeStart0 = 0;  // 8B — 0-based genomic start position
 
   // ── 2B Align ────────────────────────────────────────────────────────────
-  u16 mProbeId = 0;        // 2B — index into the variants vector
-  u16 mTier1AltCount = 0;  // 2B — tier-1 ALT read count from truth concordance
+  u16 mProbeId = 0;      // 2B — index into the variants vector
+  u16 mRawAltCount = 0;  // 2B — raw (unfiltered) ALT read count from truth concordance
 };
 
 // ============================================================================
@@ -55,7 +55,7 @@ class ProbeIndex {
 
   using KmerToProbes = absl::flat_hash_map<u64, absl::InlinedVector<KmerEntry, 2>>;
 
-  /// Parse missed_variants.txt, filter to entries with tier1_alt_count > 0.
+  /// Parse missed_variants.txt — loads all probe variants with their raw ALT read count.
   [[nodiscard]] static auto LoadVariantsFromFile(std::filesystem::path const& path)
       -> std::vector<ProbeVariant>;
 

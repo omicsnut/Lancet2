@@ -65,25 +65,25 @@ struct VariantMatch {
 }
 
 // ============================================================================
-// CountStolenReads: count ALT-carrying reads misassigned to REF or wrong ALT.
+// CountReassignedReads: count ALT-carrying reads misassigned to REF or wrong ALT.
 //
 // For each allele in the genotyper's VariantSupport, check whether any read
 // that was assigned to that allele also appears in the probe's read ownership
-// set. If that read was assigned to REF → mGenoStolenToRef++. If assigned
-// to a different ALT → mGenoStolenToWrongAlt++.
+// set. If that read was assigned to REF → mGenoReassignedToRef++. If assigned
+// to a different ALT → mGenoReassignedToWrongAlt++.
 // ============================================================================
-void CountStolenReads(caller::VariantSupport const& support,
-                      absl::flat_hash_set<u32> const& probe_reads,
-                      caller::AlleleIndex truth_alt_idx, cbdg::ProbeKRecord& record) {
+void CountReassignedReads(caller::VariantSupport const& support,
+                          absl::flat_hash_set<u32> const& probe_reads,
+                          caller::AlleleIndex truth_alt_idx, cbdg::ProbeKRecord& record) {
   auto const allele_data = support.AlleleData();
   for (usize idx = 0; idx < allele_data.size(); ++idx) {
     for (auto const& [qname_hash, strand] : allele_data[idx].mNameHashes) {
       if (!probe_reads.contains(qname_hash)) continue;
 
       if (idx == caller::REF_ALLELE_IDX) {
-        ++record.mGenoStolenToRef;
+        ++record.mGenoReassignedToRef;
       } else if (idx != truth_alt_idx) {
-        ++record.mGenoStolenToWrongAlt;
+        ++record.mGenoReassignedToWrongAlt;
       }
     }
   }
@@ -243,7 +243,7 @@ void ProbeDiagnostics::CheckMsaRepresentationMatch(caller::VariantSet const& var
 //
 // For each matching record:
 //   1. Records total ALT and REF coverage from the genotyper
-//   2. Counts "stolen reads" — ALT-carrying reads misassigned to REF or
+//   2. Counts reassigned reads — ALT-carrying reads misassigned to REF or
 //      a different ALT allele
 //   3. Counts non-overlapping reads — ALT-carrying reads that didn't
 //      appear in the genotyper alignment window at all
@@ -280,7 +280,7 @@ void ProbeDiagnostics::CheckGenotyperResult(caller::Genotyper::Result const& gen
         record->mGenoTotalRefReads += static_cast<u16>(named_support.mData->TotalRefCov());
 
         if (probe_reads == nullptr) continue;
-        CountStolenReads(*named_support.mData, *probe_reads, truth_alt_idx, *record);
+        CountReassignedReads(*named_support.mData, *probe_reads, truth_alt_idx, *record);
         CountNonOverlappingReads(*named_support.mData, *probe_reads, *record);
       }
 

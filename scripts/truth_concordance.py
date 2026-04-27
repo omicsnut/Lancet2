@@ -3,42 +3,40 @@
 
 Answers two questions independently:
 1. Sensitivity: For every expected variant, is Lancet2 calling it? If not, why?
-2. Specificity: For every Lancet2 call, do ≥2 reads in the relevant sample(s) support it?
+2. Specificity: For every Lancet2 call, do reads in the sample(s) support it?
 
-Supports germline and somatic truth sets, single or multi-sample BAM/CRAM input.
+Both questions use a single read evidence engine that mirrors Lancet2's
+ReadCollector filters (duplicate, mapq<20, qcfail) and reports per-filter
+ALT read counts — showing exactly why a variant appears unsupported.
 
 Output files:
-  truth_concordance_report.txt  Unified rich report (§1–§6, all tables)
-  concordance_details.txt       Per-variant TSV: all truth variants + match level
-  missed_variants.txt           Per-variant TSV: missed variants + read support
-  forensics_details.txt         Per-variant TSV: pipeline stage + MSA edit %
-  lancet_unmatched_details.txt  Per-variant TSV: unmatched Lancet calls
+  truth_concordance_report.txt  Rich console report (sections 1-4, all tables)
+  concordance_details.txt       Per-variant TSV: truth variants + match level
+  missed_variants.txt           Per-variant TSV: missed variants + per-filter evidence
+  lancet_unmatched_details.txt  Per-variant TSV: unmatched Lancet calls + evidence
 
-Usage (full analysis with forensics + MSA):
-    pixi run -e hts-tools python3 scripts/truth_concordance.py \\
-        --truth-small data/expected_small_variants_giab.chr1.vcf.gz \\
-        --truth-large data/expected_large_variants_manta.chr1.vcf.gz \\
-        --lancet data/post_weights.chr1.tmp.vcf.gz \\
-        --ref data/GRCh38_full_analysis_set_plus_decoy_hla.fa.gz \\
-        --samples data/NA12878.final.cram \\
-        --log data/post_weights.full_chr1.debug_run.log \\
-        --graphs data/post_weights.out_graphs \\
-        --output-dir data/ \\
-        --workers 64 \\
-        --mode all
+Analysis pipeline:
+  S1  Concordance funnel — 5 match levels + MISS:
+        L0:   exact POS + REF + ALT
+        LD:   truth SNV decomposed into a Lancet2 MNP spanning it
+        L1:   exact POS, same type, size within 20% (indels only)
+        L2:   +/-5bp POS, same type, size within 50% (indels only)
+        L3:   +/-50bp POS, same type, size within 50% (indels only)
+        MISS: no match found
+  S2  Concordance details TSV
+  S3  Sensitivity — classify missed truth variants by read support:
+        Tier 1: CIGAR-based ALT allele detection at the variant position
+        Tier 2: bwa-mem2 local realignment for all tier1=0 variants
+  S4  Specificity — classify unmatched Lancet calls by read support
 
-Arguments:
-    --truth-small   Small variant truth VCF (GIAB SNVs/indels)
-    --truth-large   Large variant truth VCF (e.g., Manta PASS INS/DEL)
-    --lancet        Lancet2 output VCF (required)
-    --ref           Reference FASTA, required for CRAM input (required)
-    --samples       One or more BAM/CRAM alignment files (required)
-    --output-dir    Directory for all output files (default: data/)
-    --log           Lancet2 debug log file (enables §5 forensics)
-    --graphs        Lancet2 output graphs directory (enables §6 MSA analysis)
-    --mode          Which truth sets: small, large, or all (default: all)
-    --skip-forensics  Skip §5–§6 pipeline forensics
-    --workers       Parallel workers for read evidence analysis (default: 16)
+Usage:
+    pixi run -e hts-tools python3 scripts/truth_concordance.py \
+        --truth-small data/expected_small_variants_giab.chr1.vcf.gz \
+        --truth-large data/expected_large_variants_manta.chr1.vcf.gz \
+        --lancet data/post_weights.chr1.tmp.vcf.gz \
+        --ref data/GRCh38_full_analysis_set_plus_decoy_hla.fa.gz \
+        --samples data/NA12878.final.cram \
+        --output-dir data/ --workers 64 --mode all
 """
 
 from __future__ import annotations
@@ -307,6 +305,16 @@ def load_small_truth_variants(vcf_path: Path) -> list[Variant]:
                     continue
 
                 ref = rec.ref
+                pos = rec.pos
+
+                # Normalize: strip multi-allelic shielding padding
+                if len(ref) > 1 and len(alt) > 1:
+                    core_ref, core_alt, offset = _sequence_core(ref, alt)
+                    if core_ref and core_alt:
+                        ref = core_ref
+                        alt = core_alt
+                        pos = pos + offset
+
                 vtype = classify_variant(ref, alt)
                 if vtype == "REF":
                     continue
@@ -315,7 +323,7 @@ def load_small_truth_variants(vcf_path: Path) -> list[Variant]:
                 variants.append(
                     Variant(
                         chrom=rec.chrom,
-                        pos=rec.pos,
+                        pos=pos,
                         ref_seq=ref,
                         alt_seq=alt,
                         vtype=vtype,
@@ -368,6 +376,16 @@ def load_large_truth_variants(vcf_path: Path) -> list[Variant]:
                     )
                 else:
                     ref = rec.ref
+                    pos = rec.pos
+
+                    # Normalize: strip multi-allelic shielding padding
+                    if len(ref) > 1 and len(alt) > 1:
+                        core_ref, core_alt, offset = _sequence_core(ref, alt)
+                        if core_ref and core_alt:
+                            ref = core_ref
+                            alt = core_alt
+                            pos = pos + offset
+
                     vtype = svtype if svtype else classify_variant(ref, alt)
                     if vtype == "REF":
                         continue
@@ -379,7 +397,7 @@ def load_large_truth_variants(vcf_path: Path) -> list[Variant]:
                     variants.append(
                         Variant(
                             chrom=rec.chrom,
-                            pos=rec.pos,
+                            pos=pos,
                             ref_seq=ref,
                             alt_seq=alt,
                             vtype=vtype,
@@ -393,10 +411,13 @@ def load_large_truth_variants(vcf_path: Path) -> list[Variant]:
 
 
 def load_lancet_variants(vcf_path: Path) -> list[Variant]:
-    """Load Lancet2 output VCF.
+    """Load Lancet2 output VCF with Sequence Core normalization.
 
-    Reads INFO/TYPE and INFO/LENGTH directly (already Sequence Core classified).
-    Per-allele fields are indexed by ALT position for multi-allelic records.
+    Multi-allelic records are decomposed into individual REF/ALT pairs, then
+    Sequence Core normalization strips matching 5'/3' bases (multi-allelic
+    shielding padding) and adjusts POS. This ensures concordance matching
+    compares the biological core, not VCF-padded representations.
+
     Returns list sorted by (chrom, pos) for binary search.
     """
     variants = []
@@ -412,14 +433,25 @@ def load_lancet_variants(vcf_path: Path) -> list[Variant]:
                     continue
 
                 ref = rec.ref
+                pos = rec.pos
+
+                # Normalize: strip multi-allelic shielding padding (matching 5'/3'
+                # bases left by VCF parsimony when another ALT blocks trimming).
+                # Adjusts pos to the core variant's true genomic position.
+                if len(ref) > 1 and len(alt) > 1:
+                    core_ref, core_alt, offset = _sequence_core(ref, alt)
+                    if core_ref and core_alt:  # Guard: don't reduce to empty
+                        ref = core_ref
+                        alt = core_alt
+                        pos = pos + offset
 
                 # Extract per-allele type
                 vtype_val = _extract_info_field(vtype_raw, alt_idx)
-                vtype = str(vtype_val) if vtype_val is not None else classify_variant(ref, alt)
+                # Re-classify after normalization (INFO/TYPE was pre-normalization)
+                vtype = classify_variant(ref, alt)
 
                 # Extract per-allele length
-                vlen_val = _extract_info_field(vlen_raw, alt_idx)
-                vlen = int(vlen_val) if vlen_val is not None else calculate_variant_length(ref, alt, vtype)
+                vlen = calculate_variant_length(ref, alt, vtype)
 
                 if vtype == "REF":
                     continue
@@ -427,7 +459,7 @@ def load_lancet_variants(vcf_path: Path) -> list[Variant]:
                 variants.append(
                     Variant(
                         chrom=rec.chrom,
-                        pos=rec.pos,
+                        pos=pos,
                         ref_seq=ref,
                         alt_seq=alt,
                         vtype=vtype,
@@ -437,13 +469,13 @@ def load_lancet_variants(vcf_path: Path) -> list[Variant]:
                     )
                 )
 
-    # Sort for binary search in Phase 2
+    # Sort by position for O(log N) bisect lookup in concordance matching
     variants.sort(key=lambda v: (v.chrom, v.pos))
     return variants
 
 
 # ============================================================================
-# Positional Concordance (Phase 2)
+# Concordance Matching Engine
 # ============================================================================
 
 
@@ -476,6 +508,23 @@ def _search_range(
     lo = bisect.bisect_left(chrom_index, (pos - margin,))
     hi = bisect.bisect_right(chrom_index, (pos + margin + 1,))
     return [v for _, v in chrom_index[lo:hi]]
+
+
+def _sequence_core(ref: str, alt: str) -> tuple[str, str, int]:
+    """Strip matching 5'/3' bases from REF/ALT, return (core_ref, core_alt, 5prime_offset).
+
+    Port of Lancet2's ClassifyVariant algorithm (raw_variant.cpp). Used to
+    normalize multi-allelic shielded variants at load time, stripping VCF padding
+    back to the biological core before concordance matching.
+    """
+    rlen, alen = len(ref), len(alt)
+    start = 0
+    while start < rlen and start < alen and ref[start] == alt[start]:
+        start += 1
+    end = 0
+    while end < (rlen - start) and end < (alen - start) and ref[-1 - end] == alt[-1 - end]:
+        end += 1
+    return ref[start : rlen - end], alt[start : alen - end], start
 
 
 def match_snv(
@@ -650,7 +699,7 @@ def run_concordance(
     lancet_index: dict[str, list[tuple[int, Variant]]],
     ref: Optional[Path] = None,
 ) -> list[ConcordanceResult]:
-    """Run Phase 2 concordance on all truth variants.
+    """Match all truth variants against the Lancet2 index.
 
     For L1-L3 matches, computes haplotype edit distance when ref is provided.
     Edit distance quantifies how similar the two variants' ALT haplotypes are,
@@ -680,164 +729,123 @@ def run_concordance(
 # ============================================================================
 
 
-def read_supports_variant(read: pysam.AlignedSegment, variant: Variant) -> bool:
-    """Check if a single read supports the variant ALT allele via CIGAR alignment.
+@dataclass
+class ReadEvidence:
+    """Per-filter breakdown of ALT read support at a variant position.
 
-    Filters: qcfail, duplicate, unmapped, MAPQ < 20 (secondary/supplementary kept).
-    SNV: check query base at the aligned position.
-    INS: find anchor position, check inserted bases after it.
-    DEL: check for deletion spanning the expected range.
+    Mirrors the read filters in Lancet2's ReadCollector (read_collector.cpp).
+    Answers: how many reads carry the ALT allele, and for those filtered away,
+    which specific filter removed them? This replaces opaque boolean/count-only
+    functions with transparent diagnostics for both sensitivity and specificity.
     """
-    # Read-level filters
-    if read.is_unmapped or read.is_qcfail or read.is_duplicate:
-        return False
-    if read.mapping_quality < 20:
-        return False
 
-    if variant.ref_seq is None or variant.alt_seq is None:
-        return False
+    raw_total_depth: int = 0       # all reads overlapping position (no filter)
+    raw_alt_count: int = 0         # ALT reads (no filter)
+    passing_total_depth: int = 0   # reads passing all Lancet2 filters
+    passing_alt_count: int = 0     # ALT reads passing all filters
+    alt_filt_duplicate: int = 0    # ALT reads filtered as duplicate
+    alt_filt_mapq: int = 0         # ALT reads filtered by mapq < 20
+    alt_filt_qcfail: int = 0      # ALT reads filtered as QC-fail
 
-    # 0-based position (VCF POS is 1-based)
-    var_pos_0 = variant.pos - 1
+
+def _read_has_alt_allele(
+    read: pysam.AlignedSegment, variant: Variant, var_pos_0: int,
+) -> bool:
+    """Check if read carries the ALT allele (no filter applied).
+
+    Pure allele detection: determines whether the read's CIGAR alignment
+    shows the variant's ALT sequence at the expected position. Filters
+    are handled by the caller (run_batch_read_evidence) to enable per-filter
+    accounting.
+    """
+    if read.is_unmapped or read.query_sequence is None:
+        return False
 
     if variant.vtype == "SNV":
-        # Find query position aligned to var_pos_0
-        aligned_pairs = read.get_aligned_pairs()
-        for qpos, rpos in aligned_pairs:
+        for qpos, rpos in read.get_aligned_pairs():
             if rpos == var_pos_0 and qpos is not None:
-                query_base = read.query_sequence[qpos].upper()
-                return query_base == variant.alt_seq[0].upper()
+                return read.query_sequence[qpos].upper() == variant.alt_seq[0].upper()
         return False
 
     if variant.vtype == "INS":
-        # Anchor is at var_pos_0. Look for inserted bases (rpos=None) after anchor.
         expected_ins = variant.alt_seq[1:].upper()
         if not expected_ins:
             return False
-
         aligned_pairs = read.get_aligned_pairs()
-        # Find anchor
-        anchor_qpos = None
+        anchor_idx = None
         for idx, (qpos, rpos) in enumerate(aligned_pairs):
             if rpos == var_pos_0 and qpos is not None:
-                anchor_qpos = idx
+                anchor_idx = idx
                 break
-
-        if anchor_qpos is None:
+        if anchor_idx is None:
             return False
-
-        # Collect inserted bases after anchor (rpos=None entries)
         ins_bases = []
-        for qpos, rpos in aligned_pairs[anchor_qpos + 1 :]:
+        for qpos, rpos in aligned_pairs[anchor_idx + 1:]:
             if rpos is not None:
-                break  # No longer in insertion
+                break
             if qpos is not None:
                 ins_bases.append(read.query_sequence[qpos].upper())
-
         return "".join(ins_bases) == expected_ins
 
     if variant.vtype == "DEL":
-        # Deletion: expect qpos=None for positions var_pos_0+1 .. var_pos_0+del_len
-        del_len = len(variant.ref_seq) - 1  # minus anchor
+        del_len = len(variant.ref_seq) - 1
         if del_len <= 0:
             return False
-
-        aligned_pairs = read.get_aligned_pairs()
         del_start = var_pos_0 + 1
         del_end = var_pos_0 + del_len
-
         deleted_count = 0
-        for qpos, rpos in aligned_pairs:
+        for qpos, rpos in read.get_aligned_pairs():
             if rpos is not None and del_start <= rpos <= del_end:
                 if qpos is None:
                     deleted_count += 1
-
         return deleted_count == del_len
 
-    # MNP/CPX: check first base (simplified)
     if variant.vtype in ("MNP", "CPX"):
-        aligned_pairs = read.get_aligned_pairs()
-        for qpos, rpos in aligned_pairs:
+        for qpos, rpos in read.get_aligned_pairs():
             if rpos == var_pos_0 and qpos is not None:
-                query_base = read.query_sequence[qpos].upper()
-                return query_base == variant.alt_seq[0].upper()
+                return read.query_sequence[qpos].upper() == variant.alt_seq[0].upper()
 
     return False
 
 
-def count_alt_support_cigar(
-    variant: Variant,
-    samples: list[Path],
-    ref: Path,
-    early_exit: int = 2,
-) -> dict[int, int]:
-    """Count ALT-supporting reads per sample using CIGAR walker.
-
-    Returns dict[sample_idx] -> count.
-    Early exits after `early_exit` confirmed ALT reads per sample.
-    """
-    if variant.ref_seq is None or variant.alt_seq is None:
-        return {si: 0 for si in range(len(samples))}
-
-    var_pos_0 = variant.pos - 1
-    var_span = max(len(variant.ref_seq), len(variant.alt_seq))
-    # Fetch window: variant span + one read length (150bp) on each side
-    fetch_start = max(0, var_pos_0 - 150)
-    fetch_end = var_pos_0 + var_span + 150
-
-    counts: dict[int, int] = {}
-    for si, sample_path in enumerate(samples):
-        count = 0
-        with pysam.AlignmentFile(str(sample_path), reference_filename=str(ref)) as af:
-            for read in af.fetch(variant.chrom, fetch_start, fetch_end):
-                if read_supports_variant(read, variant):
-                    count += 1
-                    if count >= early_exit:
-                        break
-        counts[si] = count
-
-    return counts
-
-
-def run_batch_cigar(
+def run_batch_read_evidence(
     variants: list[Variant],
     samples: list[Path],
     ref: Path,
-    early_exit: int = 1000,
     workers: int = 1,
-) -> dict[Variant, dict[int, int]]:
-    """Run read evidence engine on a batch of variants using chunked parallelism.
+) -> dict[Variant, dict[int, ReadEvidence]]:
+    """Compute per-filter read evidence for a batch of variants in parallel.
 
-    Opens each BAM/CRAM once per worker thread (not once per variant) to
-    amortize the ~100ms CRAM index load. Variants are split into contiguous
-    chunks sorted by (chrom, pos) for sequential I/O.
+    Used by BOTH the sensitivity report (§3: are missed truth variants
+    supported by reads?) and the specificity report (§4: are unmatched
+    Lancet calls supported by reads?). A single engine for both questions
+    ensures consistent methodology and provides transparent per-filter
+    breakdown everywhere.
 
-    Progress is tracked via a thread-safe atomic counter polled by the main
-    thread — workers never touch tqdm directly.
-    Returns dict[variant] -> dict[sample_idx, alt_count].
+    Opens each BAM/CRAM once per worker chunk (not once per variant) to
+    amortize the ~100ms CRAM index load. Variants are sorted by (chrom, pos)
+    for sequential I/O within each chunk.
+
+    Returns dict[variant] -> dict[sample_idx, ReadEvidence].
     """
     if not variants:
         return {}
 
-
-    # Sort by position for sequential CRAM access within each chunk
     sorted_vars = sorted(variants, key=lambda v: (v.chrom, v.pos))
     n_chunks = max(1, min(workers, len(sorted_vars)))
     chunk_size = (len(sorted_vars) + n_chunks - 1) // n_chunks
     chunks = [sorted_vars[i : i + chunk_size] for i in range(0, len(sorted_vars), chunk_size)]
 
-    # Thread-safe counter: workers increment, main thread reads for tqdm
     counter_lock = threading.Lock()
-    counter = [0]  # mutable container for closure
+    counter = [0]
 
-    def _process_chunk(chunk: list[Variant]) -> dict[Variant, dict[int, int]]:
-        chunk_results: dict[Variant, dict[int, int]] = {}
-        # Open each sample file once for the entire chunk
+    def _process_chunk(chunk: list[Variant]) -> dict[Variant, dict[int, ReadEvidence]]:
+        chunk_results: dict[Variant, dict[int, ReadEvidence]] = {}
         afiles = [pysam.AlignmentFile(str(s), reference_filename=str(ref)) for s in samples]
         try:
             for v in chunk:
                 if v.ref_seq is None or v.alt_seq is None:
-                    chunk_results[v] = {si: 0 for si in range(len(samples))}
+                    chunk_results[v] = {si: ReadEvidence() for si in range(len(samples))}
                     with counter_lock:
                         counter[0] += 1
                     continue
@@ -847,16 +855,35 @@ def run_batch_cigar(
                 fetch_start = max(0, var_pos_0 - 150)
                 fetch_end = var_pos_0 + var_span + 150
 
-                counts: dict[int, int] = {}
+                per_sample: dict[int, ReadEvidence] = {}
                 for si, af in enumerate(afiles):
-                    count = 0
+                    ev = ReadEvidence()
                     for read in af.fetch(v.chrom, fetch_start, fetch_end):
-                        if read_supports_variant(read, v):
-                            count += 1
-                            if count >= early_exit:
-                                break
-                    counts[si] = count
-                chunk_results[v] = counts
+                        ev.raw_total_depth += 1
+                        supports_alt = _read_has_alt_allele(read, v, var_pos_0)
+                        if supports_alt:
+                            ev.raw_alt_count += 1
+
+                        # Apply Lancet2 read filters (read_collector.cpp)
+                        if read.is_unmapped or read.is_qcfail:
+                            if supports_alt:
+                                ev.alt_filt_qcfail += 1
+                            continue
+                        if read.is_duplicate:
+                            if supports_alt:
+                                ev.alt_filt_duplicate += 1
+                            continue
+                        if read.mapping_quality < 20:
+                            if supports_alt:
+                                ev.alt_filt_mapq += 1
+                            continue
+
+                        ev.passing_total_depth += 1
+                        if supports_alt:
+                            ev.passing_alt_count += 1
+
+                    per_sample[si] = ev
+                chunk_results[v] = per_sample
                 with counter_lock:
                     counter[0] += 1
         finally:
@@ -864,12 +891,11 @@ def run_batch_cigar(
                 af.close()
         return chunk_results
 
-    results: dict[Variant, dict[int, int]] = {}
+    results: dict[Variant, dict[int, ReadEvidence]] = {}
     with ThreadPoolExecutor(max_workers=n_chunks) as pool:
         futures = [pool.submit(_process_chunk, chunk) for chunk in chunks]
 
-        # Main thread drives tqdm by polling the shared counter
-        progress = tqdm(total=len(variants), desc="read-evidence", unit="var")
+        progress = tqdm(total=len(variants), desc="read-evidence-rich", unit="var")
         while True:
             done_futures = [f for f in futures if f.done()]
             with counter_lock:
@@ -880,7 +906,6 @@ def run_batch_cigar(
             if len(done_futures) == len(futures):
                 break
             time.sleep(0.1)
-        # Final sync
         with counter_lock:
             final_delta = counter[0] - progress.n
         if final_delta > 0:
@@ -1377,9 +1402,18 @@ def write_sensitivity_report(
     ref: Path,
     workers: int = 32,
 ) -> list[Variant]:
-    """§3: Sensitivity loss analysis — classify missed truth variants by read support.
+    """S3: Sensitivity — why are truth variants missed?
 
-    Returns list of MISSED_WITH_SUPPORT variants for downstream forensics.
+    For each MISS variant, runs two tiers of read evidence:
+      Tier 1: CIGAR-based ALT allele detection with per-filter breakdown
+              (raw count, passing count, filtered-by-duplicate/mapq/qcfail)
+      Tier 2: bwa-mem2 local realignment for ALL tier1=0 variants
+
+    Classifies into MISSED_WITH_SUPPORT (>=2 ALT reads), MISSED_WEAK_SUPPORT
+    (1 ALT read), or NO_READ_SUPPORT (0 ALT reads).
+
+    Writes missed_variants.txt with full per-filter evidence columns.
+    Returns MISSED_WITH_SUPPORT variants for probe-tracking analysis.
     """
     console.print("[bold]§3 Sensitivity Loss Analysis[/bold]\n")
 
@@ -1390,42 +1424,44 @@ def write_sensitivity_report(
 
     console.print(f"Total missed variants: {len(missed):,}\n")
 
-    # Tier 1: Direct read evidence via pysam
-    console.print("[bold]Tier 1: Direct read evidence[/bold]")
-    cigar_results = run_batch_cigar(missed, samples, ref, workers=workers)
+    # Tier 1: Rich read evidence with per-filter breakdown
+    console.print("[bold]Tier 1: Direct read evidence (with per-filter breakdown)[/bold]")
+    evidence_results = run_batch_read_evidence(missed, samples, ref, workers=workers)
 
-    classifications: dict[int, tuple[Variant, str, int, int]] = {}
-    # (variant_id) -> (variant, classification, tier1_count, tier2_count)
+    # classifications: variant_id -> (variant, classification, ReadEvidence, tier2_count)
+    classifications: dict[int, tuple[Variant, str, ReadEvidence, int]] = {}
     tier2_candidates: list[Variant] = []
 
     for v in missed:
-        counts = cigar_results.get(v, {})
-        max_alt = max(counts.values()) if counts else 0
-        if max_alt >= 2:
-            classifications[id(v)] = (v, "MISSED_WITH_SUPPORT", max_alt, -1)
-        elif max_alt == 1:
-            classifications[id(v)] = (v, "MISSED_WEAK_SUPPORT", max_alt, -1)
-        else:
-            classifications[id(v)] = (v, "NO_READ_SUPPORT", 0, -1)
-            if abs(v.variant_length) > 5:
-                tier2_candidates.append(v)
+        per_sample = evidence_results.get(v, {})
+        # Use the max passing_alt_count across samples as the tier1 metric
+        best_ev = max(per_sample.values(), key=lambda e: e.passing_alt_count) if per_sample else ReadEvidence()
+        passing_alt = best_ev.passing_alt_count
 
-    # Tier 2: Local realignment for 0-support >5bp variants
+        if passing_alt >= 2:
+            classifications[id(v)] = (v, "MISSED_WITH_SUPPORT", best_ev, -1)
+        elif passing_alt == 1:
+            classifications[id(v)] = (v, "MISSED_WEAK_SUPPORT", best_ev, -1)
+        else:
+            classifications[id(v)] = (v, "NO_READ_SUPPORT", best_ev, -1)
+            # Tier2 on ALL tier1=0 variants (not just >5bp — rescues ~56% of SNVs)
+            tier2_candidates.append(v)
+
+    # Tier 2: Local realignment for ALL 0-support variants
     if tier2_candidates:
         console.print(f"\n[bold]Tier 2: Local realignment ({len(tier2_candidates)} variants)[/bold]")
         t2_results = run_tier2_realignment(tier2_candidates, samples, ref, workers=workers)
         for v in tier2_candidates:
-            # t2_results is keyed by (chrom, pos, sample_idx) -> alt_count
             per_sample = {si: t2_results.get((v.chrom, v.pos, si), 0)
                           for si in range(len(samples))}
             max_alt = max(per_sample.values()) if per_sample else 0
-            _, prev_class, t1_count, _ = classifications[id(v)]
+            _, prev_class, ev, _ = classifications[id(v)]
             if max_alt >= 2:
-                classifications[id(v)] = (v, "MISSED_WITH_SUPPORT", t1_count, max_alt)
+                classifications[id(v)] = (v, "MISSED_WITH_SUPPORT", ev, max_alt)
             elif max_alt == 1:
-                classifications[id(v)] = (v, "MISSED_WEAK_SUPPORT", t1_count, max_alt)
+                classifications[id(v)] = (v, "MISSED_WEAK_SUPPORT", ev, max_alt)
             else:
-                classifications[id(v)] = (v, "NO_READ_SUPPORT", t1_count, max_alt)
+                classifications[id(v)] = (v, "NO_READ_SUPPORT", ev, max_alt)
 
     # ── Table 1: Classification Summary ──────────────────────────────────
     console.print()
@@ -1458,7 +1494,7 @@ def write_sensitivity_report(
     console.print()
 
     # ── Table 2: Read Support Distribution (MISSED_WITH_SUPPORT) ─────────
-    mws_all = [(v, t1, t2) for _, (v, cls, t1, t2) in classifications.items()
+    mws_all = [(v, ev, t2) for _, (v, cls, ev, t2) in classifications.items()
                if cls == "MISSED_WITH_SUPPORT"]
 
     support_bins = [
@@ -1481,8 +1517,8 @@ def write_sensitivity_report(
             row = [bin_name]
             bin_total = 0
             for vt in types:
-                cnt = sum(1 for v, t1, t2 in mws_all
-                          if v.vtype == vt and lo <= max(t1, t2 if t2 >= 0 else 0) <= hi)
+                cnt = sum(1 for v, ev, t2 in mws_all
+                          if v.vtype == vt and lo <= max(ev.passing_alt_count, t2 if t2 >= 0 else 0) <= hi)
                 bin_total += cnt
                 row.append(str(cnt))
             row.append(str(bin_total))
@@ -1498,9 +1534,9 @@ def write_sensitivity_report(
         "Realignment rescued": Counter(),
         "No read evidence": Counter(),
     }
-    for _, (v, cls, t1, t2) in classifications.items():
+    for _, (v, cls, ev, t2) in classifications.items():
         if cls in ("MISSED_WITH_SUPPORT", "MISSED_WEAK_SUPPORT"):
-            if t1 >= 2:
+            if ev.passing_alt_count >= 2:
                 engine_counts["Direct read evidence"][v.vtype] += 1
             elif t2 >= 2:
                 engine_counts["Realignment rescued"][v.vtype] += 1
@@ -1533,7 +1569,7 @@ def write_sensitivity_report(
 
     # ── Table 4: Size × Support Cross-tabulation ─────────────────────────
     for vtype in ["SNV", "INS", "DEL"]:
-        vt_list = [(v, t1, t2) for v, t1, t2 in mws_all if v.vtype == vtype]
+        vt_list = [(v, ev, t2) for v, ev, t2 in mws_all if v.vtype == vtype]
         if not vt_list:
             continue
         tbl = Table(title=f"Table 4: {vtype} — Size × Read Support ({len(vt_list)} variants)")
@@ -1546,9 +1582,9 @@ def write_sensitivity_report(
             row = [tier_name]
             tier_total = 0
             for bin_name, blo, bhi in support_bins:
-                cnt = sum(1 for v, t1, t2 in vt_list
+                cnt = sum(1 for v, ev, t2 in vt_list
                           if slo <= abs(v.variant_length) <= shi
-                          and blo <= max(t1, t2 if t2 >= 0 else 0) <= bhi)
+                          and blo <= max(ev.passing_alt_count, t2 if t2 >= 0 else 0) <= bhi)
                 tier_total += cnt
                 row.append(str(cnt))
             row.append(str(tier_total))
@@ -1556,8 +1592,8 @@ def write_sensitivity_report(
                 tbl.add_row(*row)
 
         tbl.add_row("TOTAL", *[
-            str(sum(1 for v, t1, t2 in vt_list
-                    if blo <= max(t1, t2 if t2 >= 0 else 0) <= bhi))
+            str(sum(1 for v, ev, t2 in vt_list
+                    if blo <= max(ev.passing_alt_count, t2 if t2 >= 0 else 0) <= bhi))
             for _, blo, bhi in support_bins
         ], str(len(vt_list)), style="bold")
 
@@ -1566,7 +1602,7 @@ def write_sensitivity_report(
 
     # ── Table 5: High-Priority Misses (top 20 by read support) ───────────
     if mws_all:
-        ranked = sorted(mws_all, key=lambda x: max(x[1], x[2] if x[2] >= 0 else 0), reverse=True)
+        ranked = sorted(mws_all, key=lambda x: max(x[1].passing_alt_count, x[2] if x[2] >= 0 else 0), reverse=True)
         top_n = ranked[:20]
 
         tbl = Table(title=f"Table 5: Top {len(top_n)} High-Priority Misses (most read evidence)")
@@ -1575,19 +1611,22 @@ def write_sensitivity_report(
         tbl.add_column("Pos", justify="right")
         tbl.add_column("Type")
         tbl.add_column("Size", justify="right")
-        tbl.add_column("Direct", justify="right")
+        tbl.add_column("Raw ALT", justify="right")
+        tbl.add_column("Pass ALT", justify="right")
+        tbl.add_column("Filt MAPQ", justify="right")
+        tbl.add_column("Filt Dup", justify="right")
         tbl.add_column("Realign", justify="right")
-        tbl.add_column("Max", justify="right")
         tbl.add_column("REF/ALT")
 
-        for i, (v, t1, t2) in enumerate(top_n, 1):
+        for i, (v, ev, t2) in enumerate(top_n, 1):
             t2_str = str(t2) if t2 >= 0 else "."
-            max_reads = max(t1, t2 if t2 >= 0 else 0)
             ref_alt = f"{(v.ref_seq or '.')[:20]}/{(v.alt_seq or '.')[:20]}"
             tbl.add_row(
                 str(i), v.chrom, f"{v.pos:,}", v.vtype,
-                str(abs(v.variant_length)), str(t1), t2_str,
-                str(max_reads), ref_alt,
+                str(abs(v.variant_length)),
+                str(ev.raw_alt_count), str(ev.passing_alt_count),
+                str(ev.alt_filt_mapq), str(ev.alt_filt_duplicate),
+                t2_str, ref_alt,
             )
 
         console.print(tbl)
@@ -1598,23 +1637,28 @@ def write_sensitivity_report(
     with open(tsv_path, "w") as fh:
         fh.write(
             "#chrom\tstart\tend\tref\talt\ttype\tlength\t"
-            "classification\ttier1_alt_count\ttier2_alt_count\t"
-            "max_alt_count\tengine\tsource\n"
+            "classification\traw_alt_count\traw_total_depth\t"
+            "passing_alt_count\tpassing_total_depth\t"
+            "alt_filt_duplicate\talt_filt_mapq\talt_filt_qcfail\t"
+            "tier2_alt_count\tmax_alt_count\tengine\tsource\n"
         )
-        for _, (v, cls, t1, t2) in sorted(
+        for _, (v, cls, ev, t2) in sorted(
             classifications.items(), key=lambda x: (x[1][0].chrom, x[1][0].pos)
         ):
             start = v.pos - 1
             ref_len = len(v.ref_seq) if v.ref_seq else 1
             end = v.pos - 1 + ref_len
             t2_str = str(t2) if t2 >= 0 else "."
-            max_alt = max(t1, t2 if t2 >= 0 else 0)
-            engine = "direct" if t1 >= 2 else ("realignment" if t2 >= 2 else "none")
+            max_alt = max(ev.passing_alt_count, t2 if t2 >= 0 else 0)
+            engine = "direct" if ev.passing_alt_count >= 2 else ("realignment" if t2 >= 2 else "none")
             fh.write(
                 f"{v.chrom}\t{start}\t{end}\t"
                 f"{v.ref_seq or '.'}\t{v.alt_seq or '.'}\t"
                 f"{v.vtype}\t{v.variant_length}\t"
-                f"{cls}\t{t1}\t{t2_str}\t{max_alt}\t{engine}\t{v.source}\n"
+                f"{cls}\t{ev.raw_alt_count}\t{ev.raw_total_depth}\t"
+                f"{ev.passing_alt_count}\t{ev.passing_total_depth}\t"
+                f"{ev.alt_filt_duplicate}\t{ev.alt_filt_mapq}\t{ev.alt_filt_qcfail}\t"
+                f"{t2_str}\t{max_alt}\t{engine}\t{v.source}\n"
             )
 
     print(f"  Wrote {len(classifications)} rows to {tsv_path}")
@@ -1632,7 +1676,14 @@ def write_specificity_report(
     ref: Path,
     workers: int = 32,
 ) -> None:
-    """§4: Specificity audit — classify unmatched Lancet2 calls by read support."""
+    """S4: Specificity — are unmatched Lancet calls supported by reads?
+
+    Identifies Lancet calls not matched to any truth variant, then runs
+    the same per-filter read evidence engine used in S3 to determine
+    whether each call has genuine read support or is a potential artifact.
+
+    Writes lancet_unmatched_details.txt with full per-filter evidence columns.
+    """
     console.print("[bold]§4 Specificity Audit[/bold]\n")
 
     # Build reverse index: Lancet2 variants consumed by concordance matches
@@ -1647,23 +1698,24 @@ def write_specificity_report(
         console.print("No unmatched variants.")
         return
 
-    # Tier 1: Direct read evidence via pysam
-    console.print("[bold]Tier 1: Direct read evidence[/bold]")
-    cigar_results = run_batch_cigar(unmatched, samples, ref, workers=workers)
+    # Tier 1: Direct read evidence via pysam (per-filter breakdown)
+    console.print("[bold]Tier 1: Direct read evidence (with per-filter breakdown)[/bold]")
+    evidence_results = run_batch_read_evidence(unmatched, samples, ref, workers=workers)
 
-    classifications: dict[int, tuple[Variant, str, int]] = {}
+    classifications: dict[int, tuple[Variant, str, ReadEvidence]] = {}
     tier2_candidates: list[Variant] = []
 
     for v in unmatched:
-        counts = cigar_results.get(v, {})
-        max_alt = max(counts.values()) if counts else 0
+        per_sample = evidence_results.get(v, {})
+        best_ev = max(per_sample.values(), key=lambda e: e.passing_alt_count) if per_sample else ReadEvidence()
+        passing_alt = best_ev.passing_alt_count
 
-        if max_alt >= 2:
-            classifications[id(v)] = (v, "SUPPORTED", max_alt)
-        elif max_alt == 1:
-            classifications[id(v)] = (v, "WEAK_SUPPORT", max_alt)
+        if passing_alt >= 2:
+            classifications[id(v)] = (v, "SUPPORTED", best_ev)
+        elif passing_alt == 1:
+            classifications[id(v)] = (v, "WEAK_SUPPORT", best_ev)
         else:
-            classifications[id(v)] = (v, "UNSUPPORTED", 0)
+            classifications[id(v)] = (v, "UNSUPPORTED", best_ev)
             if abs(v.variant_length) > 5:
                 tier2_candidates.append(v)
 
@@ -1672,14 +1724,14 @@ def write_specificity_report(
         console.print(f"\n[bold]Tier 2: Local realignment ({len(tier2_candidates)} variants)[/bold]")
         t2_results = run_tier2_realignment(tier2_candidates, samples, ref, workers=workers)
         for v in tier2_candidates:
-            # t2_results is keyed by (chrom, pos, sample_idx) -> alt_count
             per_sample = {si: t2_results.get((v.chrom, v.pos, si), 0)
                           for si in range(len(samples))}
             max_alt = max(per_sample.values()) if per_sample else 0
+            _, _, ev = classifications[id(v)]
             if max_alt >= 2:
-                classifications[id(v)] = (v, "SUPPORTED", max_alt)
+                classifications[id(v)] = (v, "SUPPORTED", ev)
             elif max_alt == 1:
-                classifications[id(v)] = (v, "WEAK_SUPPORT", max_alt)
+                classifications[id(v)] = (v, "WEAK_SUPPORT", ev)
 
     # Summary table
     console.print()
@@ -1712,7 +1764,7 @@ def write_specificity_report(
     console.print()
 
     # Size × Type cross-tab for UNSUPPORTED variants
-    unsup = [(v, alt) for _, (v, cls, alt) in classifications.items() if cls == "UNSUPPORTED"]
+    unsup = [(v, ev) for _, (v, cls, ev) in classifications.items() if cls == "UNSUPPORTED"]
     if unsup:
         tbl = Table(title=f"UNSUPPORTED by Size × Type ({len(unsup)} variants)")
         tbl.add_column("Size")
@@ -1721,7 +1773,7 @@ def write_specificity_report(
         tbl.add_column("Total", justify="right")
 
         for tier_name, lo, hi in SIZE_TIERS:
-            tier = [(v, a) for v, a in unsup if lo <= abs(v.variant_length) <= hi]
+            tier = [(v, ev) for v, ev in unsup if lo <= abs(v.variant_length) <= hi]
             if not tier:
                 continue
             row = [tier_name]
@@ -1748,26 +1800,33 @@ def write_specificity_report(
         tbl.add_column("Pos", justify="right")
         tbl.add_column("Type")
         tbl.add_column("Size", justify="right")
+        tbl.add_column("Raw ALT", justify="right")
+        tbl.add_column("Pass ALT", justify="right")
+        tbl.add_column("Filt MAPQ", justify="right")
         tbl.add_column("REF/ALT")
 
-        for i, (v, _) in enumerate(top_n, 1):
+        for i, (v, ev) in enumerate(top_n, 1):
             ref_alt = f"{(v.ref_seq or '.')[:20]}/{(v.alt_seq or '.')[:20]}"
             tbl.add_row(
                 str(i), v.chrom, f"{v.pos:,}", v.vtype,
-                str(abs(v.variant_length)), ref_alt,
+                str(abs(v.variant_length)),
+                str(ev.raw_alt_count), str(ev.passing_alt_count),
+                str(ev.alt_filt_mapq), ref_alt,
             )
 
         console.print(tbl)
         console.print()
 
-    # Write lancet_unmatched_details.txt
+    # Write lancet_unmatched_details.txt (with per-filter evidence)
     tsv_path = output_dir / "lancet_unmatched_details.txt"
     with open(tsv_path, "w") as fh:
         fh.write(
             "#chrom\tstart\tend\tref\talt\ttype\tlength\t"
-            "classification\tmax_alt_count\n"
+            "classification\traw_alt_count\traw_total_depth\t"
+            "passing_alt_count\tpassing_total_depth\t"
+            "alt_filt_duplicate\talt_filt_mapq\talt_filt_qcfail\n"
         )
-        for _, (v, cls, max_alt) in sorted(
+        for _, (v, cls, ev) in sorted(
             classifications.items(), key=lambda x: (x[1][0].chrom, x[1][0].pos)
         ):
             start = v.pos - 1
@@ -1777,772 +1836,12 @@ def write_specificity_report(
                 f"{v.chrom}\t{start}\t{end}\t"
                 f"{v.ref_seq or '.'}\t{v.alt_seq or '.'}\t"
                 f"{v.vtype}\t{v.variant_length}\t"
-                f"{cls}\t{max_alt}\n"
+                f"{cls}\t{ev.raw_alt_count}\t{ev.raw_total_depth}\t"
+                f"{ev.passing_alt_count}\t{ev.passing_total_depth}\t"
+                f"{ev.alt_filt_duplicate}\t{ev.alt_filt_mapq}\t{ev.alt_filt_qcfail}\n"
             )
 
     print(f"  Wrote {len(classifications)} rows to {tsv_path}")
-
-
-# ── Forensics helpers ────────────────────────────────────────────────────
-
-# Lancet2 pipeline stages, ordered by pipeline depth.
-# Detection uses hierarchical approach: log messages → MSA haplotype analysis.
-# Naming: S{stage_number}_{ABBREV}. S_UNK is unnumbered (not a real stage).
-PIPELINE_STAGES = {
-    "S0_NONLY":    "Window skipped: all-N reference",
-    "S0_REPEAT":  "Window skipped: repeated max-k-mers in ref",
-    "S0_INACTIVE":"Window skipped: no mutation evidence / low coverage",
-    "S1_LOWCOV":  "Read collection: coverage below MinAnchorCov",
-    "S2_NOSRC":   "No valid source/sink anchor found",
-    "S3_CYCLE":   "Graph has cycle, all k-values exhausted",
-    "S3_COMPLEX": "Graph too complex, all k-values exhausted",
-    "S3_NOASM":   "All k-values exhausted, no haplotypes",
-    "S4_NOPATH":  "Variant not in assembled MSA haplotypes",
-    "S5_NOMSA":   "SPOA MSA produced no variant bubbles",
-    "S6_GENO":    "Variant in haplotype but not called after genotyping",
-    "S_UNK":      "Window completed, cause undetermined (no --graphs)",
-}
-
-# Ordering for "which window got furthest" tiebreaking.
-# Higher index = deeper in pipeline = more informative failure.
-_STAGE_ORDER = list(PIPELINE_STAGES.keys())
-
-
-def deduce_window_geometry(log_path: Path) -> tuple[int, int]:
-    """Deduce window_length and step_size from Lancet2 debug log.
-
-    Scans for 'Processing window chr:START-END' lines. Window length
-    is end - start from the first line. Step size is the minimum
-    difference between consecutive same-chrom window starts (sorted).
-
-    Handles interleaved multi-threaded logs where windows from different
-    chromosomes and non-consecutive positions appear out of order.
-    """
-    # Region format: chr1:S-E or {HLA:name}:S-E or HLA*12:A:S-E
-    # Greedy \S+ backtracks to find the rightmost :\d+-\d+ (see reference.cpp:L204)
-    pattern = re.compile(r"Processing window (\S+):(\d+)-(\d+)")
-    per_chrom: dict[str, set[int]] = defaultdict(set)
-    window_length = 0
-
-    # Collect enough windows to reliably compute step_size.
-    # 200 unique starts per chrom is more than enough.
-    max_per_chrom = 200
-    with open(log_path) as fh:
-        for line in fh:
-            m = pattern.search(line)
-            if m is None:
-                continue
-            chrom, start, end = m.group(1), int(m.group(2)), int(m.group(3))
-            if window_length == 0:
-                window_length = end - start
-            if len(per_chrom[chrom]) < max_per_chrom:
-                per_chrom[chrom].add(start)
-            # Stop once any chrom has enough
-            if any(len(s) >= max_per_chrom for s in per_chrom.values()):
-                break
-
-    if window_length == 0:
-        raise ValueError(f"No 'Processing window' lines found in {log_path}")
-
-    # Compute step_size: minimum gap between consecutive sorted starts
-    step_size = window_length  # default: non-overlapping
-    for starts_set in per_chrom.values():
-        sorted_starts = sorted(starts_set)
-        if len(sorted_starts) < 2:
-            continue
-        for i in range(1, len(sorted_starts)):
-            diff = sorted_starts[i] - sorted_starts[i - 1]
-            if 0 < diff < step_size:
-                step_size = diff
-        break  # one chrom is sufficient
-
-    return window_length, step_size
-
-
-def _build_window_index(
-    log_regions: dict[str, list[str]],
-) -> dict[str, list[tuple[int, int, str]]]:
-    """Build per-chrom sorted interval list from indexed log regions.
-
-    Returns dict[chrom] -> sorted list of (start, end, region_key).
-    Uses only regions that match the 'chr:start-end' format.
-    """
-    region_re = re.compile(r"^(\S+):(\d+)-(\d+)$")
-    per_chrom: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
-    seen: set[str] = set()
-
-    for region_key in log_regions:
-        if region_key in seen:
-            continue
-        seen.add(region_key)
-        m = region_re.match(region_key)
-        if m is None:
-            continue
-        chrom = m.group(1)
-        start, end = int(m.group(2)), int(m.group(3))
-        per_chrom[chrom].append((start, end, region_key))
-
-    for chrom in per_chrom:
-        per_chrom[chrom].sort()
-
-    return per_chrom
-
-
-def _windows_covering(
-    chrom: str,
-    pos: int,
-    window_index: dict[str, list[tuple[int, int, str]]],
-) -> list[str]:
-    """Find all actual log windows that cover a given 1-based position.
-
-    Uses bisect on the per-chrom sorted interval list for O(log N) lookup.
-    A window (start, end) covers pos when start <= pos <= end.
-    """
-    intervals = window_index.get(chrom, [])
-    if not intervals:
-        return []
-
-    # Binary search: find rightmost window whose start <= pos
-    hi = bisect.bisect_right(intervals, (pos, float("inf"), "")) - 1
-    results = []
-    for i in range(max(0, hi - 20), min(len(intervals), hi + 2)):
-        start, end, region_key = intervals[i]
-        if start <= pos <= end:
-            results.append(region_key)
-
-    return results
-
-
-def _index_log_by_region(log_path: Path) -> dict[str, list[str]]:
-    """Index debug log lines by window region string for fast lookup."""
-    # Greedy \S+ backtracks to match rightmost :\d+-\d+ — handles chr1:S-E,
-    # {HLA:name}:S-E, and HLA*12:A:S-E (see reference.cpp:L204)
-    region_pattern = re.compile(r"(\S+:\d+-\d+)")
-    index: dict[str, list[str]] = defaultdict(list)
-    with open(log_path) as fh:
-        for line in fh:
-            m = region_pattern.search(line)
-            if m:
-                index[m.group(1)].append(line.rstrip())
-    return index
-
-
-def _classify_window_lines(lines: list[str]) -> str:
-    """Classify failure stage from a single window's log lines.
-
-    Sorts lines by ISO 8601 timestamp (lexicographically sortable), then
-    walks in chronological order. The last matched lifecycle marker is the
-    deepest pipeline stage reached by this window.
-
-    Uses hierarchical detection matching the pipeline order in
-    variant_builder.cpp (L191-L307) and graph.cpp (L74-L207).
-
-    Log message sources (exact strings from C++ source):
-      S0: "only N bases in reference" (variant_builder.cpp:L199)
-      S0: "reference has repeat" (variant_builder.cpp:L206)
-      S0: "no evidence of mutation" (variant_builder.cpp:L214)
-      S1: "total sample coverage" + "Skipping" (variant_builder.cpp:L226)
-      S5: "source/sink was not found" (graph.cpp:L132)
-      S7: "Cycle found" (graph.cpp:L157)
-      S7: "Graph too complex" (graph.cpp:L168)
-      S8: "Assembled path sequence(s)" (graph.cpp:L785)
-      S10: "Building MSA" (variant_builder.cpp:L257)
-      S11: "No variants found in graph component" (variant_builder.cpp:L273)
-      OK: "Genotyped N variant(s)" (variant_builder.cpp:L305)
-    """
-    stage = "S_UNK"
-
-    for line in sorted(lines):
-        if "only N bases in reference" in line:
-            stage = "S0_NONLY"
-        elif "reference has repeat" in line:
-            stage = "S0_REPEAT"
-        elif "no evidence of mutation" in line:
-            stage = "S0_INACTIVE"
-        elif "total sample coverage" in line and "Skipping" in line:
-            stage = "S1_LOWCOV"
-        elif "source/sink was not found" in line:
-            stage = "S2_NOSRC"
-        elif "Cycle found" in line:
-            stage = "S3_CYCLE"
-        elif "Graph too complex" in line:
-            stage = "S3_COMPLEX"
-        elif "No variants found" in line:
-            stage = "S5_NOMSA"
-        elif "SKIPPED_NOASM_HAPLOTYPE" in line:
-            stage = "S3_NOASM"
-        elif "MISSING_NO_MSA_VARIANTS" in line:
-            stage = "S5_NOMSA"
-        elif "FOUND_GENOTYPED_VARIANT" in line:
-            stage = "S_UNK"
-        elif "SKIPPED_INACTIVE_REGION" in line:
-            stage = "S0_INACTIVE"
-
-    return stage
-
-
-def classify_failure_stage(
-    log_lines: dict[str, list[str]],
-    variant: Variant,
-    window_index: dict[str, list[tuple[int, int, str]]],
-) -> tuple[str, str, str]:
-    """Classify the pipeline failure stage for a missed variant.
-
-    A variant may be covered by multiple overlapping windows. The variant
-    is missed only if ALL covering windows failed. We report the stage of
-    the window that got furthest in the pipeline (most informative failure).
-    """
-    covering = _windows_covering(variant.chrom, variant.pos, window_index)
-
-    best_stage = None
-    best_order = -1
-    best_region = "unknown"
-
-    for region in covering:
-        lines = log_lines.get(region, [])
-        if not lines:
-            continue
-
-        stage = _classify_window_lines(lines)
-        order = _STAGE_ORDER.index(stage)
-        if order > best_order:
-            best_stage = stage
-            best_order = order
-            best_region = region
-
-    if best_stage is None:
-        best_stage = "S_UNK"
-
-    return best_stage, PIPELINE_STAGES[best_stage], best_region
-
-
-# ── MSA haplotype variant check ──────────────────────────────────────────
-
-
-def _build_msa_index(poa_dir: Path) -> dict[tuple[str, int, int], list[Path]]:
-    """Pre-build spatial index of MSA FASTA files.
-
-    Returns dict mapping (chrom, start, end) to sorted list of FASTA paths.
-    Filename format: msa__{chrom}_{start}_{end}__c{component}.fasta
-    """
-    msa_re = re.compile(r"msa__(.+?)_(\d+)_(\d+)__c(\d+)\.fasta")
-    index: dict[tuple[str, int, int], list[Path]] = defaultdict(list)
-    for f in poa_dir.iterdir():
-        m = msa_re.match(f.name)
-        if m:
-            chrom, start, end = m.group(1), int(m.group(2)), int(m.group(3))
-            index[(chrom, start, end)].append(f)
-    for key in index:
-        index[key].sort()
-    return dict(index)
-
-
-def _parse_msa_fasta(fasta_path: Path) -> list[tuple[str, str]]:
-    """Parse MSA FASTA, return list of (name, gap-stripped sequence)."""
-    haplotypes: list[tuple[str, str]] = []
-    try:
-        text = fasta_path.read_text().strip()
-    except OSError:
-        return haplotypes
-    if not text:
-        return haplotypes
-    lines = text.split("\n")
-    i = 0
-    while i < len(lines):
-        if lines[i].startswith(">"):
-            name = lines[i][1:].strip()
-            seq_lines: list[str] = []
-            i += 1
-            while i < len(lines) and not lines[i].startswith(">"):
-                seq_lines.append(lines[i].strip())
-                i += 1
-            haplotypes.append((name, "".join(seq_lines).replace("-", "")))
-        else:
-            i += 1
-    return haplotypes
-
-
-def _revcomp(s: str) -> str:
-    return s[::-1].translate(str.maketrans("ACGTacgt", "TGCAtgca"))
-
-
-def _check_variant_in_msa(
-    variant: Variant,
-    window_index: dict[str, list[tuple[int, int, str]]],
-    msa_index: dict[tuple[str, int, int], list[Path]],
-    ref_fa: pysam.FastaFile,
-) -> float:
-    """Check if a variant's ALT allele appears in any MSA haplotype.
-
-    Builds an ALT pseudo-haplotype (ref flanking + ALT allele, 50bp each
-    side) and searches for it within each non-ref MSA haplotype using
-    edlib semi-global (HW) alignment.
-
-    Returns the best (minimum) edit distance percentage across all
-    haplotypes across all covering windows. Returns 100.0 if no MSA
-    files exist for any covering window.
-    """
-    chrom, pos = variant.chrom, variant.pos
-    var_ref = variant.ref_seq or ""
-    var_alt = variant.alt_seq or ""
-
-    # Build ALT pseudo-haplotype: 50bp flanking + ALT allele
-    flank = 50
-    center = pos - 1  # 0-based
-    left = ref_fa.fetch(chrom, max(0, center - flank), center)
-    right = ref_fa.fetch(chrom, center + len(var_ref), center + len(var_ref) + flank)
-    alt_pseudo = left + var_alt + right
-    alt_pseudo_rc = _revcomp(alt_pseudo)
-    alt_len = len(alt_pseudo)
-
-    best_edit_pct = 100.0
-
-    # Find all covering windows
-    covering = _windows_covering(chrom, pos, window_index)
-    for region in covering:
-        m = re.match(r"^(\S+):(\d+)-(\d+)$", region)
-        if not m:
-            continue
-        wchrom, wstart, wend = m.group(1), int(m.group(2)), int(m.group(3))
-        msa_paths = msa_index.get((wchrom, wstart, wend), [])
-        for fpath in msa_paths:
-            for name, seq in _parse_msa_fasta(fpath):
-                if name.startswith("ref"):
-                    continue
-                aln_fwd = edlib.align(alt_pseudo, seq, mode="HW", task="distance")
-                aln_rc = edlib.align(alt_pseudo_rc, seq, mode="HW", task="distance")
-                edit_pct = min(aln_fwd["editDistance"], aln_rc["editDistance"]) / alt_len * 100
-                if edit_pct < best_edit_pct:
-                    best_edit_pct = edit_pct
-
-    return best_edit_pct
-
-
-def _percentile(data: list[float], p: float) -> float:
-    """Compute p-th percentile of sorted data using linear interpolation."""
-    s = sorted(data)
-    k = (len(s) - 1) * p / 100
-    lo, hi = int(k), min(int(k) + 1, len(s) - 1)
-    return s[lo] + (s[hi] - s[lo]) * (k - lo)
-
-
-def write_forensics_report(
-    console: Console,
-    output_dir: Path,
-    missed_with_support: list[Variant],
-    all_concordance: list[ConcordanceResult],
-    log_path: Path,
-    graphs_dir: Optional[Path] = None,
-    ref_path: Optional[Path] = None,
-) -> None:
-    """§5–6: Pipeline forensics and MSA haplotype analysis.
-
-    For each variant, maps position to covering window(s), parses all log
-    messages for those windows, and classifies the failure stage using
-    hierarchical detection of the window lifecycle messages.
-
-    When --graphs is provided:
-      1. Resolves S_UNK variants via MSA haplotype check:
-         - Variant found in haplotype (edit < 10%) → S6_GENO
-         - Variant not found → S4_NOPATH
-      2. Runs MSA check on called variants as comparison baseline,
-         showing the expected edit distance profile for variants that
-         ARE successfully called.
-    """
-    console.print("[bold]§5 Forensics: Pipeline Stage Attribution[/bold]\n")
-
-    if not missed_with_support:
-        console.print("No MISSED_WITH_SUPPORT variants to analyze.")
-        return
-
-    window_length, step_size = deduce_window_geometry(log_path)
-    console.print(f"Window geometry: length={window_length}, step={step_size}")
-    console.print(f"Overlap: {window_length - step_size}bp\n")
-
-    print("  Indexing debug log by region...")
-    log_lines = _index_log_by_region(log_path)
-    print(f"  Indexed {len(log_lines)} unique regions")
-
-    print("  Building window interval index...")
-    window_index = _build_window_index(log_lines)
-    total_windows = sum(len(v) for v in window_index.values())
-    print(f"  {total_windows} windows across {len(window_index)} chromosomes")
-
-    # Build MSA index if graphs directory is provided
-    msa_index: dict[tuple[str, int, int], list[Path]] = {}
-    ref_fa: Optional[pysam.FastaFile] = None
-    poa_dir: Optional[Path] = None
-    if graphs_dir and ref_path:
-        poa_dir = graphs_dir / "poa_graph"
-        if poa_dir.is_dir():
-            print("  Building MSA file index...")
-            msa_index = _build_msa_index(poa_dir)
-            n_files = sum(len(v) for v in msa_index.values())
-            print(f"  Indexed {n_files} MSA files")
-            ref_fa = pysam.FastaFile(str(ref_path))
-        else:
-            print(f"  Warning: MSA directory {poa_dir} not found, skipping MSA checks")
-
-    # ── MSA: check called variants as baseline ───────────────────────────
-    # Run MSA check on called variants (L0/LD/L1) as baseline. This
-    # establishes the expected edit distance profile for variants that
-    # ARE in the MSA, validating the 10% threshold empirically.
-    called_msa: list[tuple[Variant, float]] = []  # (variant, edit_pct)
-    if msa_index and ref_fa and all_concordance:
-        called_variants = [r.truth for r in all_concordance if r.level in ("L0", "LD", "L1")]
-        if called_variants:
-            print(f"  MSA baseline: checking {len(called_variants)} called variants...")
-            for v in tqdm(called_variants, desc="msa-baseline", unit="var"):
-                epct = _check_variant_in_msa(v, window_index, msa_index, ref_fa)
-                called_msa.append((v, epct))
-
-    # ── Classify missed-with-support variants ────────────────────────────
-    # classifications: (variant, stage, desc, region, msa_edit_pct)
-    classifications: list[tuple[Variant, str, str, str, float]] = []
-    for v in tqdm(missed_with_support, desc="forensics", unit="var"):
-        stage, desc, region = classify_failure_stage(log_lines, v, window_index)
-        msa_edit_pct = -1.0  # sentinel: not checked
-
-        # Resolve S_UNK via MSA haplotype check when graphs are available
-        if stage == "S_UNK" and msa_index and ref_fa:
-            msa_edit_pct = _check_variant_in_msa(v, window_index, msa_index, ref_fa)
-            if msa_edit_pct < 10.0:
-                stage = "S6_GENO"
-                desc = PIPELINE_STAGES["S6_GENO"]
-            else:
-                stage = "S4_NOPATH"
-                desc = PIPELINE_STAGES["S4_NOPATH"]
-
-        classifications.append((v, stage, desc, region, msa_edit_pct))
-
-    if ref_fa:
-        ref_fa.close()
-
-    # Summary: stage × type distribution
-    stage_counts: dict[str, Counter] = defaultdict(Counter)
-    for v, stage, desc, _, _ in classifications:
-        stage_counts[stage][v.vtype] += 1
-
-    types = ["SNV", "INS", "DEL", "MNP", "CPX"]
-    summary = Table(title=f"Forensics: {len(classifications):,} MISSED_WITH_SUPPORT variants")
-    summary.add_column("Stage")
-    summary.add_column("Description", min_width=30)
-    for vt in types:
-        summary.add_column(vt, justify="right")
-    summary.add_column("Total", justify="right")
-    summary.add_column("Pct", justify="right")
-
-    for stage in sorted(stage_counts.keys(), key=lambda s: _STAGE_ORDER.index(s)):
-        desc = PIPELINE_STAGES[stage]
-        row = [stage, desc]
-        stage_total = sum(stage_counts[stage].values())
-        for vt in types:
-            row.append(str(stage_counts[stage].get(vt, 0)))
-        row.append(str(stage_total))
-        row.append(f"{stage_total / len(classifications) * 100:.1f}%")
-        summary.add_row(*row)
-
-    console.print(summary)
-    console.print()
-
-    # ── MSA: Called vs Missed ─────────────────────────────────────────────
-    # Compare edit distance profiles between called and missed variants
-    # to validate the 10% threshold and show baseline comparison.
-    if called_msa:
-        import statistics
-
-        console.print("[bold]§6 MSA Haplotype Analysis[/bold]\n")
-        console.print("[bold]Called vs Missed Edit Distance[/bold]")
-        console.print(
-            f"  Called: {len(called_msa)} variants checked  |  "
-            f"Missed (MSA-resolved): "
-            f"{sum(1 for _, _, _, _, e in classifications if e >= 0)}\n"
-        )
-
-
-
-        # Table: Type × (Called stats | Missed stats)
-        cal_tbl = Table(title="MSA Edit Distance: Called vs Missed (by type)")
-        cal_tbl.add_column("Type")
-        cal_tbl.add_column("Set")
-        cal_tbl.add_column("N", justify="right")
-        cal_tbl.add_column("Median", justify="right")
-        cal_tbl.add_column("P95", justify="right")
-        cal_tbl.add_column("Max", justify="right")
-        cal_tbl.add_column("<10%", justify="right")
-
-        missed_msa = [(v, e) for v, _, _, _, e in classifications if e >= 0]
-
-        for vtype in ["SNV", "INS", "DEL"]:
-            for label, data in [("Called", called_msa), ("Missed", missed_msa)]:
-                edits = [e for v, e in data if v.vtype == vtype]
-                if not edits:
-                    continue
-                n_under10 = sum(1 for e in edits if e < 10.0)
-                cal_tbl.add_row(
-                    vtype if label == "Called" else "",
-                    label,
-                    str(len(edits)),
-                    f"{statistics.median(edits):.1f}%",
-                    f"{_percentile(edits, 95):.1f}%",
-                    f"{max(edits):.1f}%",
-                    f"{n_under10}/{len(edits)} ({n_under10/len(edits)*100:.1f}%)",
-                )
-
-        # Overall
-        for label, data in [("Called", called_msa), ("Missed", missed_msa)]:
-            edits = [e for _, e in data]
-            if edits:
-                n_under10 = sum(1 for e in edits if e < 10.0)
-                cal_tbl.add_row(
-                    "ALL" if label == "Called" else "",
-                    label,
-                    str(len(edits)),
-                    f"{statistics.median(edits):.1f}%",
-                    f"{_percentile(edits, 95):.1f}%",
-                    f"{max(edits):.1f}%",
-                    f"{n_under10}/{len(edits)} ({n_under10/len(edits)*100:.1f}%)",
-                    style="bold",
-                )
-
-        console.print(cal_tbl)
-        console.print()
-
-        # Size-stratified comparison for INS and DEL
-        for vtype in ["INS", "DEL"]:
-            c_items = [(v, e) for v, e in called_msa if v.vtype == vtype]
-            m_items = [(v, e) for v, e in missed_msa if v.vtype == vtype]
-            if len(c_items) < 5 and len(m_items) < 5:
-                continue
-
-            sz_tbl = Table(title=f"Called vs Missed by Size: {vtype}")
-            sz_tbl.add_column("Size Tier")
-            sz_tbl.add_column("Set")
-            sz_tbl.add_column("N", justify="right")
-            sz_tbl.add_column("Median", justify="right")
-            sz_tbl.add_column("P95", justify="right")
-            sz_tbl.add_column("<10%", justify="right")
-
-            for tier_name, lo, hi in SIZE_TIERS:
-                for label, data in [("Called", c_items), ("Missed", m_items)]:
-                    edits = [e for v, e in data if lo <= abs(v.variant_length) <= hi]
-                    if not edits:
-                        continue
-                    n_under10 = sum(1 for e in edits if e < 10.0)
-                    sz_tbl.add_row(
-                        tier_name if label == "Called" else "",
-                        label,
-                        str(len(edits)),
-                        f"{statistics.median(edits):.1f}%",
-                        f"{_percentile(edits, 95):.1f}%",
-                        f"{n_under10}/{len(edits)} ({n_under10/len(edits)*100:.1f}%)",
-                    )
-
-            console.print(sz_tbl)
-            console.print()
-
-    # ── MSA Haplotype Analysis ────────────────────────────────────────────
-    # For S_UNK variants resolved via MSA check, provide multi-faceted
-    # breakdown to identify where assembly vs genotyping failures concentrate
-    # and validate that the 10% threshold is appropriate across all sizes.
-
-    msa_checked = [(v, stage, epct) for v, stage, _, _, epct in classifications if epct >= 0]
-    if msa_checked:
-        import statistics
-
-        console.print("[bold]MSA Haplotype Analysis[/bold]")
-        console.print(
-            f"  {len(msa_checked)} variants resolved via MSA check "
-            f"(S_UNK → S6_GENO or S4_NOPATH)\n"
-        )
-
-        # ── Table A: Resolution by Type ──────────────────────────────────
-        # Top-level split: how many variants per type are assembly failures
-        # (S4_NOPATH = variant not in haplotype) vs genotyping failures
-        # (S6_GENO = variant IS in haplotype but not called)?
-        res_tbl = Table(title="MSA Resolution by Variant Type")
-        res_tbl.add_column("Type")
-        res_tbl.add_column("S6_GENO\n(in hap)", justify="right")
-        res_tbl.add_column("S4_NOPATH\n(not in hap)", justify="right")
-        res_tbl.add_column("Total", justify="right")
-        res_tbl.add_column("% In Hap", justify="right")
-
-        for vtype in ["SNV", "INS", "DEL"]:
-            vt_items = [(v, s, e) for v, s, e in msa_checked if v.vtype == vtype]
-            if not vt_items:
-                continue
-            n_geno = sum(1 for _, s, _ in vt_items if s == "S6_GENO")
-            n_nopath = sum(1 for _, s, _ in vt_items if s == "S4_NOPATH")
-            total = len(vt_items)
-            pct = n_geno / total * 100 if total else 0
-            res_tbl.add_row(vtype, str(n_geno), str(n_nopath), str(total), f"{pct:.1f}%")
-
-        totals = len(msa_checked)
-        total_geno = sum(1 for _, s, _ in msa_checked if s == "S6_GENO")
-        total_nopath = sum(1 for _, s, _ in msa_checked if s == "S4_NOPATH")
-        res_tbl.add_row(
-            "ALL", str(total_geno), str(total_nopath), str(totals),
-            f"{total_geno / totals * 100:.1f}%", style="bold",
-        )
-        console.print(res_tbl)
-        console.print()
-
-        # ── Table B: Size-stratified resolution per type ─────────────────
-        # For each variant type, break down S6_GENO vs S4_NOPATH by size
-        # tier. This reveals size-specific bottlenecks (e.g., "genotyper
-        # rejects 80% of 1bp INS but only 40% of 21-50bp INS").
-        for vtype in ["SNV", "INS", "DEL"]:
-            vt_items = [(v, s, e) for v, s, e in msa_checked if v.vtype == vtype]
-            if len(vt_items) < 3:
-                continue
-
-            size_tbl = Table(title=f"MSA Resolution by Size: {vtype}")
-            size_tbl.add_column("Size Tier")
-            size_tbl.add_column("S6_GENO", justify="right")
-            size_tbl.add_column("S4_NOPATH", justify="right")
-            size_tbl.add_column("Total", justify="right")
-            size_tbl.add_column("% In Hap", justify="right")
-            size_tbl.add_column("Med Edit%\n(S6_GENO)", justify="right")
-            size_tbl.add_column("Med Edit%\n(S4_NOPATH)", justify="right")
-
-            for tier_name, lo, hi in SIZE_TIERS:
-                tier = [(v, s, e) for v, s, e in vt_items if lo <= abs(v.variant_length) <= hi]
-                if not tier:
-                    continue
-                n_g = sum(1 for _, s, _ in tier if s == "S6_GENO")
-                n_p = sum(1 for _, s, _ in tier if s == "S4_NOPATH")
-                pct = n_g / len(tier) * 100 if tier else 0
-                geno_edits = [e for _, s, e in tier if s == "S6_GENO"]
-                nopath_edits = [e for _, s, e in tier if s == "S4_NOPATH"]
-                med_g = f"{statistics.median(geno_edits):.1f}" if geno_edits else "—"
-                med_p = f"{statistics.median(nopath_edits):.1f}" if nopath_edits else "—"
-                size_tbl.add_row(tier_name, str(n_g), str(n_p), str(len(tier)),
-                                 f"{pct:.1f}%", med_g, med_p)
-
-            # Totals row
-            all_g = [e for _, s, e in vt_items if s == "S6_GENO"]
-            all_p = [e for _, s, e in vt_items if s == "S4_NOPATH"]
-            n_g_total = len(all_g)
-            n_p_total = len(all_p)
-            pct_total = n_g_total / len(vt_items) * 100 if vt_items else 0
-            med_g_t = f"{statistics.median(all_g):.1f}" if all_g else "—"
-            med_p_t = f"{statistics.median(all_p):.1f}" if all_p else "—"
-            size_tbl.add_row(
-                "ALL", str(n_g_total), str(n_p_total), str(len(vt_items)),
-                f"{pct_total:.1f}%", med_g_t, med_p_t, style="bold",
-            )
-            console.print(size_tbl)
-            console.print()
-
-        # ── Table C: Edit Distance Profile ───────────────────────────────
-        # Validates the 10% threshold: shows edit distance distribution for
-        # S6_GENO (should cluster near 0%) and S4_NOPATH (should be well
-        # above 10%) across all types. If any type shows overlap near 10%,
-        # the threshold needs adjustment for that type.
-        ed_tbl = Table(title="MSA Edit Distance Profile (threshold validation)")
-        ed_tbl.add_column("Type × Resolution")
-        ed_tbl.add_column("N", justify="right")
-        ed_tbl.add_column("Min", justify="right")
-        ed_tbl.add_column("Median", justify="right")
-        ed_tbl.add_column("P95", justify="right")
-        ed_tbl.add_column("Max", justify="right")
-
-
-
-        for vtype in ["SNV", "INS", "DEL"]:
-            for stage_label, stage_key in [("S6_GENO", "S6_GENO"), ("S4_NOPATH", "S4_NOPATH")]:
-                edits = [e for v, s, e in msa_checked if v.vtype == vtype and s == stage_key]
-                if not edits:
-                    continue
-                ed_tbl.add_row(
-                    f"{vtype} {stage_label}",
-                    str(len(edits)),
-                    f"{min(edits):.1f}%",
-                    f"{statistics.median(edits):.1f}%",
-                    f"{_percentile(edits, 95):.1f}%",
-                    f"{max(edits):.1f}%",
-                )
-
-        # Overall rows
-        for stage_label, stage_key in [("S6_GENO", "S6_GENO"), ("S4_NOPATH", "S4_NOPATH")]:
-            edits = [e for _, s, e in msa_checked if s == stage_key]
-            if edits:
-                ed_tbl.add_row(
-                    f"ALL {stage_label}",
-                    str(len(edits)),
-                    f"{min(edits):.1f}%",
-                    f"{statistics.median(edits):.1f}%",
-                    f"{_percentile(edits, 95):.1f}%",
-                    f"{max(edits):.1f}%",
-                    style="bold",
-                )
-
-        console.print(ed_tbl)
-        console.print()
-
-    # Size × Stage cross-tab per variant type
-    # One table per type showing where in the pipeline each size tier fails.
-    active_stages = sorted(stage_counts.keys(), key=lambda s: _STAGE_ORDER.index(s))
-    for vtype in ["SNV", "INS", "DEL"]:
-        vt_class = [(v, s) for v, s, _, _, _ in classifications if v.vtype == vtype]
-        if len(vt_class) < 5:
-            continue
-
-        # Only show stages that have at least one variant of this type
-        vt_stages = [s for s in active_stages if any(st == s for _, st in vt_class)]
-        if not vt_stages:
-            continue
-
-        tbl = Table(title=f"Failure Stage × Size: {vtype} ({len(vt_class)} variants)")
-        tbl.add_column("Size")
-        for s in vt_stages:
-            tbl.add_column(s, justify="right")
-        tbl.add_column("Total", justify="right")
-
-        for tier_name, lo, hi in SIZE_TIERS:
-            tier = [(v, s) for v, s in vt_class if lo <= abs(v.variant_length) <= hi]
-            if not tier:
-                continue
-            row = [tier_name]
-            for s in vt_stages:
-                n = sum(1 for _, st in tier if st == s)
-                row.append(str(n) if n else "·")
-            row.append(str(len(tier)))
-            tbl.add_row(*row)
-
-        row = ["TOTAL"]
-        for s in vt_stages:
-            row.append(str(sum(1 for _, st in vt_class if st == s)))
-        row.append(str(len(vt_class)))
-        tbl.add_row(*row, style="bold")
-        console.print(tbl)
-        console.print()
-
-    # Write forensics_details.txt
-    tsv_path = output_dir / "forensics_details.txt"
-    with open(tsv_path, "w") as fh:
-        fh.write(
-            "#chrom\tstart\tend\tref\talt\ttype\tlength\t"
-            "failure_stage\tstage_description\twindow_region\t"
-            "msa_edit_pct\tsource\n"
-        )
-        for v, stage, desc, region, msa_epct in sorted(
-            classifications, key=lambda x: (x[0].chrom, x[0].pos)
-        ):
-            start = v.pos - 1
-            ref_len = len(v.ref_seq) if v.ref_seq else 1
-            end = v.pos - 1 + ref_len
-            epct_str = f"{msa_epct:.1f}" if msa_epct >= 0 else "."
-            fh.write(
-                f"{v.chrom}\t{start}\t{end}\t"
-                f"{v.ref_seq or '.'}\t{v.alt_seq or '.'}\t"
-                f"{v.vtype}\t{v.variant_length}\t"
-                f"{stage}\t{desc}\t{region}\t"
-                f"{epct_str}\t{v.source}\n"
-            )
-
-    print(f"  Wrote {len(classifications)} rows to {tsv_path}")
-
 
 # ============================================================================
 # CLI
@@ -2585,21 +1884,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for all output .txt files (default: data/)",
     )
     parser.add_argument(
-        "--log", type=Path, help="Lancet2 debug log file (enables §5 forensics)"
-    )
-    parser.add_argument(
-        "--graphs", type=Path, help="Lancet2 output graphs dir (enables §6 MSA analysis)"
-    )
-    parser.add_argument(
         "--mode",
         choices=["small", "large", "all"],
         default="all",
         help="Which truth sets to use (default: all)",
-    )
-    parser.add_argument(
-        "--skip-forensics",
-        action="store_true",
-        help="Skip §5–§6 pipeline forensics + MSA analysis",
     )
     parser.add_argument(
         "--workers",
@@ -2755,15 +2043,6 @@ def main() -> int:
         args.samples, args.ref, args.workers,
     )
 
-    # ── §5-6 Forensics + MSA ─────────────────────────────────────────────
-    if not args.skip_forensics and args.log:
-        print("\n§5-6: Forensics + MSA analysis...")
-        write_forensics_report(
-            console, args.output_dir, missed_with_support, all_concordance, args.log,
-            graphs_dir=args.graphs, ref_path=args.ref,
-        )
-    elif not args.log:
-        print("\nSkipping forensics (no --log provided)")
 
     print("\nDone.")
     return 0

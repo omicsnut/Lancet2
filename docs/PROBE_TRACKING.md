@@ -168,7 +168,7 @@ that only exist in component 1.
 
 ---
 
-## Phase 4: MSA + Genotyper Annotation
+## Phase 4: Variant Extraction + Genotyper Annotation
 
 **File:** `src/lancet/core/variant_builder.cpp`
 
@@ -205,7 +205,9 @@ non-empty `mHapIndices`. Each record gets independent classification:
 Same iteration over `FindRecordsWithPaths`. Sets:
 
 - `mGenoTrueAltReads`, `mGenoTotalRefReads`
-- `mGenoStolenToRef`, `mGenoStolenToWrongAlt`
+- `mGenoReassignedToRef`, `mGenoReassignedToWrongAlt` — ALT-carrying reads
+  that the genotyper's alignment scoring assigned to REF or a different ALT
+  haplotype instead of the truth ALT allele
 - `mGenoNonOverlapping`
 - `mIsGenoHasAltSupport` — true if ALT reads > 0
 - `mIsGenoNoOverlap` — true if zero read alignments overlapped the variant
@@ -260,46 +262,56 @@ probes = load_probe_results(args.probe_results)  # multi-row per probe
 probes = derive_lost_at(probes)
 ```
 
-Checks deepest evidence first. First match wins:
+Checks deepest evidence first. First match wins. The 27-level cascade spans
+7 categories:
 
-| Priority | Condition | Attribution |
-|----------|-----------|-------------|
-| 1 (deepest) | `is_geno_has_alt_support == 1` | `survived` |
-| 2 | `is_msa_exact_match` and `is_geno_no_overlap` | `geno_no_overlap` |
-| 3 | `is_msa_exact_match` and stolen > 0 | `geno_stolen` |
-| 4 | `is_msa_exact_match` and no ALT support | `geno_zero_alt_reads` |
-| 5 | `hap_indices != "."` and `is_msa_shifted` | `msa_shifted` |
-| 6 | `hap_indices != "."` and `is_msa_subsumed` | `msa_subsumed` |
-| 7 | `hap_indices != "."` (no MSA match) | `msa_not_extracted` |
-| 8 | `n_surviving_tips > 0` and `traversal_limited` | `bfs_exhausted` |
-| 9 | `n_surviving_tips > 0` | `no_path` |
-| 10–15 | Pruning stages (reverse pipeline order) | `pruned_at_*` |
-| 16 | `is_graph_cycle` | `graph_has_cycle` |
-| 17 | `is_graph_complex` | `graph_too_complex` |
-| 18 | `is_no_anchor` | `no_anchor` |
-| 19 | `is_short_anchor` | `short_anchor` |
-| 20 | `is_variant_in_anchor` | `variant_in_anchor` |
-| 21 | fallback | `not_processed` |
+| Category | Stages | Description |
+|----------|--------|-------------|
+| Genotyper | `survived`, `geno_reads_reassigned`, `geno_zero_alt_reads`, `geno_no_overlap` | Deepest — variant reached genotyping |
+| Variant extraction | `msa_not_extracted`, `msa_shifted`, `msa_subsumed` | Haplotype paths found, MSA outcome |
+| Path finding | `bfs_exhausted`, `no_path` | K-mers survived pruning, path enumeration outcome |
+| Pruning | `pruned_at_tips`, `pruned_at_compress2`, `pruned_at_lowcov2`, `pruned_at_compress1`, `pruned_at_lowcov1`, `pruned_at_build` | 6 graph simplification stages |
+| Graph construction | `graph_has_cycle`, `graph_too_complex`, `no_anchor`, `short_anchor`, `variant_in_anchor` | Structural graph failures |
+| Not processed | `not_processed` (+ 6 sub-stages with `--log`) | Variant never entered the graph pipeline |
+| Survived | `survived` | Variant reached genotyper with ALT support |
 
 ### Step 3: Select best record per probe
 
 ```python
-probes = compute_depth(probes)               # integer score 0–20
+probes = compute_depth(probes)               # integer score 0–26
 attribution = select_best_per_probe(probes)  # deepest stage, then highest k
 ```
 
-### Step 4: Report sections
+### Step 4: Sub-classify not_processed (optional, requires --log)
 
-| Section | Description |
-|---------|-------------|
-| §1 Scorecard | Coverage validation, vital signs |
-| §2 Funnel | Stage attribution distribution (21-level cascade) |
-| §3 Survival | K-mer attrition through 6 pruning stages |
-| §4 Breakdown | Type × Size × Stage cross-tabulation |
-| §5 Genotyper | MSA/Genotyper read assignment forensics |
-| §6 Targets | Top 30 variants closest to success |
-| §7 Deep Dive | Detailed analysis of top 2 loss stages |
-| §8 Windows | Cross-window attribution, boundary sensitivity |
+When `--log` points to the Lancet2 debug log, probes attributed as
+`not_processed` are sub-classified by their window's completion status:
+
+| Sub-stage | Window Status | Meaning |
+|-----------|--------------|---------|
+| `not_processed:ref_all_n` | `SKIPPED_NONLY_REF_BASES` | Window reference is all N bases |
+| `not_processed:ref_repeat` | `SKIPPED_REF_REPEAT_SEEN` | Window has k-mer repeats (guaranteed graph cycle) |
+| `not_processed:inactive` | `SKIPPED_INACTIVE_REGION` | Window had no mutation evidence |
+| `not_processed:low_coverage` | `SKIPPED_LOW_COVERAGE` | Window coverage below MinAnchorCov (5×) |
+| `not_processed:no_alt_haplotype` | `SKIPPED_NOASM_HAPLOTYPE` | Assembly ran but found no variant haplotypes |
+| `not_processed:other_variant_called` | `FOUND_GENOTYPED_VARIANT` | Window called other variants, not this one |
+
+When multiple windows overlap a probe's position (250bp overlap between
+adjacent 500bp windows), the window with the deepest pipeline stage wins.
+On ties, the window where the variant is most centered wins.
+
+### Step 5: Report sections
+
+| Section | View name | Description |
+|---------|-----------|-------------|
+| §1 Scorecard | `scorecard` | Coverage validation, vital signs |
+| §2 Funnel | `funnel` | Stage attribution distribution (27-level cascade) |
+| §3 Survival | `survival` | K-mer attrition through 6 pruning stages |
+| §4 Breakdown | `breakdown` | Type × Size × Stage cross-tabulation |
+| §5 Genotyper | `genotyper` | Variant extraction and read assignment forensics |
+| §6 Targets | `targets` | Top 30 variants closest to success |
+| §7 Deep Dive | `deepdive` | Detailed analysis of top 2 loss stages |
+| §8 Windows | `windows` | Cross-window attribution, boundary effects |
 
 ---
 
@@ -309,7 +321,7 @@ attribution = select_best_per_probe(probes)  # deepest stage, then highest k
 
 | Exit Point | Recording Mechanism | Python Attribution |
 |------------|--------------------|--------------------|
-| Window skipped (N-only, repeat, inactive) | `EmitUnprocessedProbes` | `not_processed` |
+| Window skipped (N-only, repeat, inactive) | `EmitUnprocessedProbes` | `not_processed` (sub-classified with `--log`) |
 | No anchor found | `ProbeSetNoAnchor` | `no_anchor` |
 | Anchor too short | `ProbeSetShortAnchor` | `short_anchor` |
 | Graph has cycle | `ProbeSetGraphCycle` | `graph_has_cycle` |
@@ -320,7 +332,7 @@ attribution = select_best_per_probe(probes)  # deepest stage, then highest k
 | MSA extracts but variant shifted | `CheckMsaExtraction` tier 2 | `msa_shifted` |
 | MSA extracts but variant subsumed | `CheckMsaExtraction` tier 3 | `msa_subsumed` |
 | MSA exact match, zero read overlap | `CheckGenotyperResult` | `geno_no_overlap` |
-| MSA exact match, reads stolen | `CheckGenotyperResult` | `geno_stolen` |
+| MSA exact match, reads reassigned | `CountReassignedReads` | `geno_reads_reassigned` |
 | MSA exact match, zero ALT reads | `CheckGenotyperResult` | `geno_zero_alt_reads` |
 | MSA exact match, ALT reads present | `CheckGenotyperResult` | `survived` |
 
@@ -331,13 +343,13 @@ continues through pruning, paths, MSA, and genotyping normally:
 
 | Annotation | Recording Mechanism | Effect in Python |
 |------------|--------------------|--------------------|
-| Variant falls inside anchor sequence | `ProbeCheckAnchorOverlap` | `variant_in_anchor` (standalone attribution at priority 20) |
+| Variant falls inside anchor sequence | `ProbeCheckAnchorOverlap` | `variant_in_anchor` (lowest priority — only attributed when nothing deeper succeeded) |
 | BFS walk-tree budget exhausted | `ProbeSetTraversalLimit` | Refines `no_path` → `bfs_exhausted` |
 
 **`variant_in_anchor`**: the truth variant's genomic position overlaps the
 invariant source/sink anchor nodes. The graph cannot distinguish this variant
 from reference by construction, but the pipeline still attempts full assembly.
-In Python's cascade it sits at priority 20 (lowest), so it only becomes the
+In Python's cascade it sits at the lowest priority, so it only becomes the
 final attribution when nothing deeper succeeded.
 
 **`is_traversal_limited`**: set inside `BuildHaplotypes` when the
@@ -382,7 +394,9 @@ The end-to-end workflow has three steps:
 ### Step 1: Truth Concordance
 
 `scripts/truth_concordance.py` compares a truth VCF against a Lancet2
-output VCF and produces per-variant match levels (L0, LD, L1–L3, MISS).
+output VCF. For each truth variant, it assigns a concordance level
+(L0, LD, L1–L3, MISS) and collects per-filter read evidence for missed
+variants.
 
 ```bash
 pixi run -e hts-tools python3 scripts/truth_concordance.py \
@@ -402,19 +416,16 @@ pixi run -e hts-tools python3 scripts/truth_concordance.py \
 | `--ref` | yes | Reference FASTA (required for CRAM and edit distance) |
 | `--samples` | yes | One or more BAM/CRAM alignment files |
 | `--mode` | no | `small`, `large`, or `all` (default: `all`) |
-| `--log` | no | Lancet2 debug log (enables §5 forensics) |
-| `--graphs` | no | Lancet2 `--graphs-dir` output (enables §6 MSA analysis) |
-| `--skip-forensics` | no | Skip §5–§6 pipeline forensics |
 | `--workers` | no | Parallel workers for read evidence (default: 16) |
 | `--output-dir` | no | Output directory (default: `data/`) |
 
 Key outputs:
 
-- `missed_variants.txt` — missed variants with read support counts
+- `missed_variants.txt` — missed variants with per-filter read support counts
   (**required input for step 2**)
 - `concordance_details.txt` — all truth variants with match levels
   (optional enrichment for probe analysis §1)
-- `truth_concordance_report.txt` — rich diagnostic report (§1–§6)
+- `truth_concordance_report.txt` — rich diagnostic report (§1–§4)
 
 ### Step 2: Lancet2 Probe Run
 
@@ -428,7 +439,8 @@ Lancet2 pipeline \
 ```
 
 Both `--probe-variants` and `--probe-results` must be provided together.
-Enable `--verbose` logging if you plan to use the `--log` flag in step 3.
+Enable `--verbose` logging if you plan to use the `--log` flag in step 3
+for not_processed sub-classification.
 
 ### Step 3: Probe Analysis
 
@@ -437,6 +449,7 @@ pixi run -e hts-tools python3 scripts/analyze_probe_results.py \
     --probe-results data/probe_results.tsv \
     --missed-variants data/missed_variants.txt \
     --concordance-details data/concordance_details.txt \
+    --log data/lancet2_debug.log \
     --output-dir data/ \
     --view all
 ```
@@ -446,7 +459,7 @@ pixi run -e hts-tools python3 scripts/analyze_probe_results.py \
 | `--probe-results` | yes | Raw TSV from Lancet2 `--probe-results` |
 | `--missed-variants` | yes | From step 1 (`missed_variants.txt`) |
 | `--concordance-details` | no | From step 1 (enriches §1 scorecard) |
-| `--log` | no | Lancet2 debug log (enables window status parsing) |
+| `--log` | no | Lancet2 debug log (enables not_processed sub-classification) |
 | `--output-dir` | no | Output directory (default: `data/`) |
 | `--view` | no | Single section or `all` (default: `all`) |
 
@@ -465,7 +478,9 @@ input variant produced at least one output row). A non-zero gap indicates
 probes in regions Lancet2 never processed.
 
 **§2 Funnel** shows the stage attribution distribution. The dominant loss
-stage identifies the primary pipeline bottleneck.
+stage identifies the primary pipeline bottleneck. With `--log`, the
+`not_processed` category expands into 6 sub-stages showing exactly why
+each window was skipped.
 
 **§6 Targets** lists the 30 variants closest to success (highest depth
 score) — the highest-value debugging targets.

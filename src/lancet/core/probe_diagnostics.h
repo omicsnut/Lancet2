@@ -1,7 +1,6 @@
 #ifndef SRC_LANCET_CORE_PROBE_DIAGNOSTICS_H_
 #define SRC_LANCET_CORE_PROBE_DIAGNOSTICS_H_
 
-#include "lancet/base/types.h"
 #include "lancet/caller/genotyper.h"
 #include "lancet/caller/variant_set.h"
 #include "lancet/cbdg/probe_index.h"

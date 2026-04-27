@@ -5,13 +5,20 @@ Reads probe_results.tsv (from Lancet2 --probe-variants) cross-referenced
 against missed_variants.txt and concordance_details.txt (from truth_concordance.py)
 to answer: for every missed variant, exactly where and why did the pipeline lose it?
 
-The C++ side emits one raw fact row per (probe_id, window, comp_id, k) attempt
-with no attribution. This script is the sole source of lost_at_stage derivation,
-using a bottom-up cascade that checks the deepest pipeline evidence first.
+The C++ probe tracker emits one raw fact row per (probe_id, window, comp_id, k)
+attempt with no attribution. This script is the sole source of lost_at_stage
+derivation, using a bottom-up cascade that checks the deepest pipeline evidence
+first. The 27-level cascade spans 7 categories:
+  Not processed → Graph construction → Pruning → Path finding →
+  Variant extraction → Genotyper → Survived
+
+When --log is provided, 'not_processed' probes are sub-classified by their
+window's completion status from the debug log (e.g. ref_all_n, low_coverage,
+no_alt_haplotype), answering why the window was skipped before graph assembly.
 
 Output files:
-  probe_analysis_report.txt   Unified rich report (§1–§7, all tables)
-  probe_stage_attribution.txt Per-probe TSV: final lost_at, type, size, tier1 reads
+  probe_analysis_report.txt   Unified rich report (§1–§8, all views)
+  probe_stage_attribution.txt Per-probe TSV: final lost_at, type, size, raw ALT reads
   probe_survival_matrix.txt   Per-(probe, window, comp, k) TSV: all 6 survival counts
 
 Usage:
@@ -27,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import re
 import sys
 from pathlib import Path
@@ -46,10 +54,10 @@ VIEWS = ("scorecard", "funnel", "survival", "breakdown", "genotyper", "targets",
 VIEW_HELP = """\
 Views:
   scorecard    Executive summary: coverage validation, vital signs
-  funnel       Stage attribution: where variants are lost (21-level cascade)
+  funnel       Stage attribution: where variants are lost (27-level cascade)
   survival     Pruning survival: k-mer attrition through 6 graph stages
   breakdown    Type × Size × Stage cross-tabulation
-  genotyper    Genotyper forensics: stolen reads, MSA extraction
+  genotyper    Genotyper forensics: read reassignment, MSA extraction
   targets      High-priority inspection targets (closest to success)
   deepdive     Deep dive into the top 2 most common loss stages
   windows      Window coverage: cross-window attribution, boundary effects
@@ -58,45 +66,78 @@ Views:
 
 # All possible lost_at_stage values — computed in Python from raw TSV facts.
 # Ordered by pipeline position for display. Grouped into categories.
+#
+# not_processed sub-stages: when --log is provided, variants that never entered
+# the probe system are sub-classified by their window's completion status from
+# the debug log. Each suffix answers "why wasn't this variant processed?":
+#   ref_all_n              → window reference is all N bases
+#   ref_repeat             → window has k-mer repeats, guaranteed graph cycle
+#   inactive               → window had no mutation evidence
+#   low_coverage           → window coverage below MinAnchorCov (5x)
+#   no_alt_haplotype       → assembly ran but found no variant haplotypes
+#   other_variant_called   → window called other variants, not this one
 STAGE_ORDER = [
     "not_processed",
+    "not_processed:ref_all_n", "not_processed:ref_repeat",
+    "not_processed:inactive", "not_processed:low_coverage",
+    "not_processed:no_alt_haplotype", "not_processed:other_variant_called",
     "variant_in_anchor", "no_anchor", "short_anchor",
     "graph_has_cycle", "graph_too_complex",
     "pruned_at_build", "pruned_at_lowcov1", "pruned_at_compress1",
     "pruned_at_lowcov2", "pruned_at_compress2", "pruned_at_tips",
     "bfs_exhausted", "no_path",
     "msa_not_extracted", "msa_shifted", "msa_subsumed",
-    "geno_no_overlap", "geno_zero_alt_reads", "geno_stolen",
+    "geno_no_overlap", "geno_zero_alt_reads", "geno_reads_reassigned",
     "survived",
 ]
 
 STAGE_CATEGORY = {
     "not_processed": "Not processed",
-    "variant_in_anchor": "Structural", "no_anchor": "Structural",
-    "short_anchor": "Structural", "graph_has_cycle": "Structural",
-    "graph_too_complex": "Structural",
+    "not_processed:ref_all_n": "Not processed",
+    "not_processed:ref_repeat": "Not processed",
+    "not_processed:inactive": "Not processed",
+    "not_processed:low_coverage": "Not processed",
+    "not_processed:no_alt_haplotype": "Not processed",
+    "not_processed:other_variant_called": "Not processed",
+    "variant_in_anchor": "Graph construction",
+    "no_anchor": "Graph construction",
+    "short_anchor": "Graph construction",
+    "graph_has_cycle": "Graph construction",
+    "graph_too_complex": "Graph construction",
     "pruned_at_build": "Pruning", "pruned_at_lowcov1": "Pruning",
     "pruned_at_compress1": "Pruning", "pruned_at_lowcov2": "Pruning",
     "pruned_at_compress2": "Pruning", "pruned_at_tips": "Pruning",
-    "bfs_exhausted": "Path enum", "no_path": "Path enum",
-    "msa_not_extracted": "MSA", "msa_shifted": "MSA",
-    "msa_subsumed": "MSA",
+    "bfs_exhausted": "Path finding", "no_path": "Path finding",
+    "msa_not_extracted": "Variant extraction",
+    "msa_shifted": "Variant extraction",
+    "msa_subsumed": "Variant extraction",
     "geno_no_overlap": "Genotyper", "geno_zero_alt_reads": "Genotyper",
-    "geno_stolen": "Genotyper",
+    "geno_reads_reassigned": "Genotyper",
     "survived": "Survived",
 }
 
+# C++ window status → not_processed sub-stage.
+# Priority: deeper pipeline stage = more informative for tiebreaking.
+_WINDOW_STATUS_TO_SUBSTAGE: dict[str, tuple[str, int]] = {
+    "SKIPPED_NONLY_REF_BASES":  ("not_processed:ref_all_n",            0),
+    "SKIPPED_REF_REPEAT_SEEN": ("not_processed:ref_repeat",           1),
+    "SKIPPED_INACTIVE_REGION": ("not_processed:inactive",             2),
+    "SKIPPED_LOW_COVERAGE":    ("not_processed:low_coverage",         3),
+    "SKIPPED_NOASM_HAPLOTYPE": ("not_processed:no_alt_haplotype",     4),
+    "FOUND_GENOTYPED_VARIANT": ("not_processed:other_variant_called", 5),
+}
+
 CATEGORY_ORDER = [
-    "Not processed", "Structural", "Pruning", "Path enum",
-    "MSA", "Genotyper", "Survived",
+    "Not processed", "Graph construction", "Pruning", "Path finding",
+    "Variant extraction", "Genotyper", "Survived",
 ]
 
 CATEGORY_STYLES = {
     "Not processed": "dim",
-    "Structural": "red",
+    "Graph construction": "red",
     "Pruning": "yellow",
-    "Path enum": "magenta",
-    "MSA": "cyan",
+    "Path finding": "magenta",
+    "Variant extraction": "cyan",
     "Genotyper": "blue",
     "Survived": "green",
 }
@@ -223,15 +264,123 @@ def load_debug_log_window_statuses(path: Path) -> pl.DataFrame:
     )
 
 
+WindowIndex = dict[str, list[tuple[int, int, str]]]
+
+
+def _build_window_index(window_statuses: pl.DataFrame) -> WindowIndex:
+    """Build per-chrom sorted window lists from the debug log DataFrame."""
+    index: WindowIndex = {}
+    for row in window_statuses.iter_rows(named=True):
+        chrom = row["chrom"]
+        if chrom not in index:
+            index[chrom] = []
+        index[chrom].append((row["win_start"], row["win_end"], row["win_status"]))
+    for chrom in index:
+        index[chrom].sort()
+    return index
+
+
+def _resolve_window_status(
+    chrom: str, pos: int, window_index: WindowIndex,
+) -> str | None:
+    """Find the best matching window status for a single genomic position.
+
+    When multiple windows overlap (250bp overlap between adjacent 500bp
+    windows is standard), two-tier tiebreaker selects:
+      1. Deepest pipeline stage priority
+      2. Best flank centering — min(pos - win_start, win_end - pos)
+    """
+    windows = window_index.get(chrom, [])
+    if not windows:
+        return None
+
+    # Binary search: find the rightmost window whose start <= pos
+    starts = [w[0] for w in windows]
+    idx = bisect.bisect_right(starts, pos) - 1
+
+    best_substage: str | None = None
+    best_priority = -1
+    best_centering = -1
+
+    # Scan a small neighborhood around idx for all overlapping windows
+    for scan_idx in range(max(0, idx - 5), min(len(windows), idx + 6)):
+        win_start, win_end, win_status = windows[scan_idx]
+        if win_start > pos:
+            break
+        if win_end < pos:
+            continue
+
+        entry = _WINDOW_STATUS_TO_SUBSTAGE.get(win_status)
+        if entry is None:
+            continue
+
+        substage, priority = entry
+        centering = min(pos - win_start, win_end - pos)
+
+        if (priority > best_priority) or (
+            priority == best_priority and centering > best_centering
+        ):
+            best_substage = substage
+            best_priority = priority
+            best_centering = centering
+
+    return best_substage
+
+
+def subclassify_not_processed(
+    attribution: pl.DataFrame,
+    window_statuses: pl.DataFrame,
+) -> pl.DataFrame:
+    """Replace 'not_processed' with 'not_processed:{reason}' using debug log.
+
+    Probes with no matching window keep the bare 'not_processed' label.
+    """
+    not_processed = attribution.filter(pl.col("lost_at_stage") == "not_processed")
+    if not_processed.height == 0 or window_statuses.height == 0:
+        return attribution
+
+    window_index = _build_window_index(window_statuses)
+
+    # Resolve each not_processed probe to its best matching window status
+    reclassified: dict[tuple[str, int, str, str], str] = {}
+    for row in not_processed.iter_rows(named=True):
+        substage = _resolve_window_status(row["chrom"], row["pos"], window_index)
+        if substage is not None:
+            reclassified[(row["chrom"], row["pos"], row["ref"], row["alt"])] = substage
+
+    if not reclassified:
+        return attribution
+
+    # Apply reclassification via left join on composite key
+    reclass_rows = [
+        {"chrom": k[0], "pos": k[1], "ref": k[2], "alt": k[3], "_new_stage": v}
+        for k, v in reclassified.items()
+    ]
+    reclass_df = pl.DataFrame(reclass_rows)
+    result = attribution.join(
+        reclass_df, on=["chrom", "pos", "ref", "alt"], how="left",
+    ).with_columns(
+        pl.when(pl.col("_new_stage").is_not_null())
+        .then(pl.col("_new_stage"))
+        .otherwise(pl.col("lost_at_stage"))
+        .alias("lost_at_stage")
+    ).drop("_new_stage")
+
+    n_remaining = result.filter(pl.col("lost_at_stage") == "not_processed").height
+    print(
+        f"  Sub-classified {len(reclassified)} not_processed probes "
+        f"({n_remaining} remain unresolved)",
+        file=sys.stderr,
+    )
+    return result
+
+
 def derive_lost_at(df: pl.DataFrame) -> pl.DataFrame:
     """Derive lost_at_stage for every row from observed diagnostic facts.
 
-    Bottom-up cascade: check deepest pipeline evidence first. The first
-    matching condition wins. This replaces the old C++ DeriveLostAt which
-    used a top-down priority cascade and operated on a single "best" record.
-
-    Genotyper outcomes checked first (deepest), then MSA, paths, pruning
-    stages (in reverse pipeline order), and finally structural flags.
+    Bottom-up cascade: check deepest pipeline evidence first (genotyper →
+    variant extraction → path finding → pruning → graph construction).
+    The first matching condition wins. Each row gets exactly one stage.
     """
     return df.with_columns(
         # ── Genotyper (deepest) ──────────────────────────────────────
@@ -240,8 +389,8 @@ def derive_lost_at(df: pl.DataFrame) -> pl.DataFrame:
         .when((pl.col("is_msa_exact_match") == 1) & (pl.col("is_geno_no_overlap") == 1))
           .then(pl.lit("geno_no_overlap"))
         .when((pl.col("is_msa_exact_match") == 1) & (pl.col("is_geno_has_alt_support") == 0)
-              & (pl.col("n_geno_stolen_to_ref") + pl.col("n_geno_stolen_to_wrong_alt") > 0))
-          .then(pl.lit("geno_stolen"))
+              & (pl.col("n_geno_reassigned_to_ref") + pl.col("n_geno_reassigned_to_wrong_alt") > 0))
+          .then(pl.lit("geno_reads_reassigned"))
         .when((pl.col("is_msa_exact_match") == 1) & (pl.col("is_geno_has_alt_support") == 0))
           .then(pl.lit("geno_zero_alt_reads"))
         # ── MSA extraction ───────────────────────────────────────────
@@ -269,7 +418,7 @@ def derive_lost_at(df: pl.DataFrame) -> pl.DataFrame:
           .then(pl.lit("pruned_at_lowcov1"))
         .when((pl.col("n_expected_alt_kmers") > 0) & (pl.col("n_surviving_build") == 0))
           .then(pl.lit("pruned_at_build"))
-        # ── Structural (shallowest — only when nothing above fired) ──
+        # ── Graph construction (shallowest — only when nothing above fired) ──
         .when(pl.col("is_graph_cycle") == 1).then(pl.lit("graph_has_cycle"))
         .when(pl.col("is_graph_complex") == 1).then(pl.lit("graph_too_complex"))
         .when(pl.col("is_no_anchor") == 1).then(pl.lit("no_anchor"))
@@ -298,8 +447,6 @@ def select_best_per_probe(df: pl.DataFrame) -> pl.DataFrame:
     """One row per probe_id — the attempt that reached the deepest stage.
 
     When multiple records tie on depth, the highest kmer_size wins.
-    This replaces the old build_final_attribution which blindly took the
-    highest-k record regardless of how far it actually progressed.
     """
     return (
         df
@@ -400,7 +547,7 @@ def render_stage_funnel(
     attribution: pl.DataFrame,
     output_dir: Path,
 ) -> None:
-    """§2: Stage attribution funnel — where variants are lost (21-level cascade)."""
+    """§2: Stage attribution funnel — where variants are lost (27-level cascade)."""
     console.print("[bold]§2 Stage Attribution Funnel[/bold]\n")
 
     total = attribution.height
@@ -631,7 +778,7 @@ def render_genotyper_forensics(
 
     # MSA extraction outcomes
     msa_stages = ["msa_not_extracted", "msa_shifted", "msa_subsumed"]
-    geno_stages = ["geno_no_overlap", "geno_zero_alt_reads", "geno_stolen", "survived"]
+    geno_stages = ["geno_no_overlap", "geno_zero_alt_reads", "geno_reads_reassigned", "survived"]
     relevant = attribution.filter(
         pl.col("lost_at_stage").is_in(msa_stages + geno_stages)
     )
@@ -675,8 +822,8 @@ def render_genotyper_forensics(
     geno_cols = [
         ("n_geno_true_alt_reads", "True ALT reads"),
         ("n_geno_total_ref_reads", "Total REF reads"),
-        ("n_geno_stolen_to_ref", "Stolen to REF"),
-        ("n_geno_stolen_to_wrong_alt", "Stolen to wrong ALT"),
+        ("n_geno_reassigned_to_ref", "Reassigned to REF"),
+        ("n_geno_reassigned_to_wrong_alt", "Reassigned to wrong ALT"),
         ("n_geno_non_overlapping", "Non-overlapping"),
     ]
 
@@ -718,25 +865,26 @@ def render_inspection_targets(
     """§6: High-priority inspection targets — variants closest to success."""
     console.print("[bold]§6 High-Priority Inspection Targets[/bold]\n")
 
-    # Join to get type, tier1 reads (composite key to avoid duplicates)
+    # Join to get type, raw ALT reads (composite key to avoid duplicates)
     joined = attribution.join(
-        missed.select("start", "ref", "alt", "type", "length", "tier1_alt_count").rename({"ref": "m_ref", "alt": "m_alt"}),
+        missed.select("start", "ref", "alt", "type", "length", "raw_alt_count").rename({"ref": "m_ref", "alt": "m_alt"}),
         left_on=["pos", "ref", "alt"], right_on=["start", "m_ref", "m_alt"], how="left",
     )
 
-    # Exclude survived and not_processed — focus on real losses
+    # Exclude survived and not_processed (including sub-stages)
     targets = joined.filter(
-        ~pl.col("lost_at_stage").is_in(["survived", "not_processed"])
+        ~pl.col("lost_at_stage").str.starts_with("not_processed")
+        & (pl.col("lost_at_stage") != "survived")
     )
 
     if targets.height == 0:
         console.print("[dim]No non-trivial losses to inspect.[/]")
         return
 
-    # Add priority score for sorting: higher stage priority + more tier1 reads
+    # Add priority score for sorting: higher stage priority + more raw ALT reads
     targets = targets.with_columns(
         pl.col("lost_at_stage").replace_strict(STAGE_PRIORITY, default=0).alias("_priority"),
-    ).sort(["_priority", "n_tier1_reads"], descending=[True, True])
+    ).sort(["_priority", "n_raw_alt_reads"], descending=[True, True])
 
     top_n = min(30, targets.height)
     top = targets.head(top_n)
@@ -750,7 +898,7 @@ def render_inspection_targets(
     table.add_column("Pos", justify="right")
     table.add_column("Type")
     table.add_column("Size", justify="right")
-    table.add_column("T1", justify="right")
+    table.add_column("Raw", justify="right")
     table.add_column("Lost at")
     table.add_column("Tips", justify="right")
     table.add_column("MSA?")
@@ -769,7 +917,7 @@ def render_inspection_targets(
         table.add_row(
             str(i), row["chrom"], f"{row['pos']:,}",
             vtype, str(abs(vlen)),
-            str(row.get("n_tier1_reads", 0)),
+            str(row.get("n_raw_alt_reads", 0)),
             Text(lost, style=style),
             str(row.get("n_surviving_tips", 0)),
             msa, f"{ref}/{alt}",
@@ -792,9 +940,11 @@ def render_top_loss_deep_dive(
     """§7: Deep dive into the top 2 most common loss stages."""
     console.print("[bold]§7 Top Loss Stage Deep Dive[/bold]\n")
 
-    # Exclude survived and not_processed — focus on actual pipeline losses
+    # Exclude survived and not_processed (including sub-stages) — focus on
+    # actual in-pipeline losses where the variant entered the graph
     losses = attribution.filter(
-        ~pl.col("lost_at_stage").is_in(["survived", "not_processed"])
+        ~pl.col("lost_at_stage").str.starts_with("not_processed")
+        & (pl.col("lost_at_stage") != "survived")
     )
     if losses.height == 0:
         console.print("[dim]No pipeline losses to analyze.[/]")
@@ -809,10 +959,10 @@ def render_top_loss_deep_dive(
     )
     top_stages = stage_counts[stage_counts.columns[0]].to_list()
 
-    # Join with missed variants for type/length/tier1 data
+    # Join with missed variants for type/length/raw ALT data
     joined = losses.join(
         missed.select("start", "ref", "alt", "type", "length",
-                       "tier1_alt_count", "classification")
+                       "raw_alt_count", "classification")
         .rename({"ref": "m_ref", "alt": "m_alt"}),
         left_on=["pos", "ref", "alt"],
         right_on=["start", "m_ref", "m_alt"],
@@ -871,12 +1021,12 @@ def render_top_loss_deep_dive(
             size_table.add_row(tier_name, f"{tier.height:,}", f"{pct:.1f}%", bar)
         console.print(size_table)
 
-        # ── Tier-1 read support distribution ──────────────────────────────
-        t1 = stage_data["tier1_alt_count"]
+        # ── Raw ALT read support distribution ─────────────────────────────
+        t1 = stage_data["raw_alt_count"]
         t1_numeric = t1.cast(pl.Int64, strict=False).fill_null(0)
 
         read_table = Table(
-            title="Tier-1 ALT Read Support", title_style="bold", border_style="dim",
+            title="Raw ALT Read Support", title_style="bold", border_style="dim",
         )
         read_table.add_column("Metric")
         read_table.add_column("Value", justify="right")
@@ -912,10 +1062,10 @@ def render_top_loss_deep_dive(
         console.print(cls_table)
 
         # ── Top 15 example variants ───────────────────────────────────────
-        examples = stage_data.sort("n_tier1_reads", descending=True).head(15)
+        examples = stage_data.sort("n_raw_alt_reads", descending=True).head(15)
 
         ex_table = Table(
-            title=f"Top 15 {stage} Variants (by tier-1 reads)",
+            title=f"Top 15 {stage} Variants (by raw ALT reads)",
             title_style="bold", border_style="dim",
         )
         ex_table.add_column("#", justify="right")
@@ -923,7 +1073,7 @@ def render_top_loss_deep_dive(
         ex_table.add_column("Pos", justify="right")
         ex_table.add_column("Type")
         ex_table.add_column("Size", justify="right")
-        ex_table.add_column("T1 reads", justify="right")
+        ex_table.add_column("Raw reads", justify="right")
         ex_table.add_column("Classification")
         ex_table.add_column("k", justify="right")
         ex_table.add_column("Tips", justify="right")
@@ -937,7 +1087,7 @@ def render_top_loss_deep_dive(
             ex_table.add_row(
                 str(i), row["chrom"], f"{row['pos']:,}",
                 vtype, str(abs(vlen)),
-                str(row.get("n_tier1_reads", 0)),
+                str(row.get("n_raw_alt_reads", 0)),
                 str(row.get("classification", "?")),
                 str(row.get("kmer_size", 0)),
                 str(row.get("n_surviving_tips", 0)),
@@ -1035,12 +1185,12 @@ def render_window_analysis(
             (pl.col("lost_at_stage") == "survived").sum().alias("n_survived"),
             (pl.col("lost_at_stage").is_in(
                 ["graph_has_cycle", "graph_too_complex", "no_anchor", "short_anchor"]
-            )).sum().alias("n_structural_failures"),
+            )).sum().alias("n_graph_construction_failures"),
         )
         .with_columns(
             (pl.col("n_survived") / pl.col("n_records") * 100).alias("survival_pct"),
         )
-        .sort("n_structural_failures", descending=True)
+        .sort("n_graph_construction_failures", descending=True)
     )
 
     if window_stats.height > 0:
@@ -1048,24 +1198,24 @@ def render_window_analysis(
         top_windows = window_stats.head(top_n)
 
         win_table = Table(
-            title=f"Top {top_n} Windows by Structural Failures",
+            title=f"Top {top_n} Windows by Graph Construction Failures",
             title_style="bold", border_style="dim",
         )
         win_table.add_column("Window")
         win_table.add_column("Records", justify="right")
         win_table.add_column("Probes", justify="right")
         win_table.add_column("Survived", justify="right")
-        win_table.add_column("Structural", justify="right")
+        win_table.add_column("Graph fail", justify="right")
         win_table.add_column("Surv%", justify="right")
 
         for row in top_windows.iter_rows(named=True):
-            style = "red" if row["n_structural_failures"] > 5 else "white"
+            style = "red" if row["n_graph_construction_failures"] > 5 else "white"
             win_table.add_row(
                 row["window"],
                 str(row["n_records"]),
                 str(row["n_probes"]),
                 str(row["n_survived"]),
-                Text(str(row["n_structural_failures"]), style=style),
+                Text(str(row["n_graph_construction_failures"]), style=style),
                 f"{row['survival_pct']:.0f}%",
             )
 
@@ -1086,9 +1236,9 @@ def write_stage_attribution_tsv(
     """Write per-probe final attribution TSV joined with variant metadata."""
     joined = attribution.select(
         "probe_id", "chrom", "pos", "ref", "alt",
-        "n_tier1_reads", "kmer_size", "lost_at_stage",
+        "n_raw_alt_reads", "kmer_size", "lost_at_stage",
         "n_surviving_tips", "is_msa_exact_match",
-        "n_geno_true_alt_reads", "n_geno_stolen_to_ref",
+        "n_geno_true_alt_reads", "n_geno_reassigned_to_ref",
     ).join(
         missed.select("start", "ref", "alt", "type", "length", "classification").rename({"ref": "m_ref", "alt": "m_alt"}),
         left_on=["pos", "ref", "alt"], right_on=["start", "m_ref", "m_alt"], how="left",
@@ -1177,6 +1327,11 @@ def main() -> None:
 
     # Select best record per probe (deepest stage, highest k on tie)
     attribution = select_best_per_probe(probes)
+
+    # Sub-classify not_processed probes using debug log window statuses
+    if window_statuses is not None and window_statuses.height > 0:
+        print("Sub-classifying not_processed probes...", file=sys.stderr)
+        attribution = subclassify_not_processed(attribution, window_statuses)
 
     # Setup output
     args.output_dir.mkdir(parents=True, exist_ok=True)

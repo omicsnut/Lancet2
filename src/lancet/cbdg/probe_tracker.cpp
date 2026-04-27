@@ -294,7 +294,7 @@ void ProbeTracker::GenerateAndTag(NodeTable const& nodes, Context const& ctx) {
 // Uses the precomputed ProbeIndex for O(1) hash lookups instead of re-deriving
 // ALT k-mers per window. Also builds the per-probe read ownership index
 // (mProbeReadIndex) mapping probe_id → set of qname hashes for reads that
-// carry ALT-unique k-mers. This enables S6 stolen-read analysis.
+// carry ALT-unique k-mers. This enables read reassignment analysis.
 // ============================================================================
 void ProbeTracker::CountInReads(absl::Span<Read const> reads, Context const& ctx) {
   if (mVariants.empty() || mActiveProbeIds.empty()) return;

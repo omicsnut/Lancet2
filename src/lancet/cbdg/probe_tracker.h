@@ -136,11 +136,11 @@ struct ProbeKRecord {
   i16 mMsaShiftBp = 0;  // 2B — signed shift from truth position (0 = exact or unmatched)
 
   // Genotyper read assignment analysis
-  u16 mGenoTrueAltReads = 0;      // 2B — reads correctly assigned to truth ALT allele
-  u16 mGenoTotalRefReads = 0;     // 2B — total reads assigned to REF at this variant
-  u16 mGenoStolenToRef = 0;       // 2B — ALT-carrying reads misassigned to REF
-  u16 mGenoStolenToWrongAlt = 0;  // 2B — ALT-carrying reads misassigned to wrong ALT
-  u16 mGenoNonOverlapping = 0;    // 2B — ALT-carrying reads that didn't overlap alignment
+  u16 mGenoTrueAltReads = 0;          // 2B — reads correctly assigned to truth ALT allele
+  u16 mGenoTotalRefReads = 0;         // 2B — total reads assigned to REF at this variant
+  u16 mGenoReassignedToRef = 0;       // 2B — ALT-carrying reads misassigned to REF
+  u16 mGenoReassignedToWrongAlt = 0;  // 2B — ALT-carrying reads misassigned to wrong ALT
+  u16 mGenoNonOverlapping = 0;        // 2B — ALT-carrying reads that didn't overlap alignment
 
   // ── 1B Align ────────────────────────────────────────────────────────────
   bool mIsTraversalLimited = false;  // 1B — BFS walk-tree budget exhausted during path enum
@@ -255,9 +255,9 @@ class ProbeTracker {
   void GenerateAndTag(NodeTable const& nodes, Context const& ctx);
 
   /// Count how many ALT-unique k-mers appear in the raw read set (before graph
-  /// construction). Uses the precomputed ProbeIndex for O(1) lookups. Also
-  /// builds the per-probe read ownership index (mProbeReadIndex) for downstream
-  /// stolen-read analysis.
+  /// construction). Uses the precomputed ProbeIndex for O(1) lookups.
+  /// Also builds the per-probe read ownership index (mProbeReadIndex)
+  /// for downstream read reassignment analysis.
   void CountInReads(absl::Span<Read const> reads, Context const& ctx);
 
   /// After MarkConnectedComponents: determine which component each probe's

@@ -430,32 +430,8 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Ignore datasets
-data/*.fa
-data/*.fa.gz
-data/*.fa.gz.gzi
-data/*.fasta
-data/*.fasta.gz
-data/*.fasta.gz.gzi
-data/*.fai
-data/*.bam
-data/*.bai
-data/*.cram
-data/*.crai
-data/*.bed
-data/*.bed.gz
-data/*.bed.gz.gzi
-data/*.vcf
-data/*.vcf.gz
-data/*.bcf
-data/*.tbi
-data/*.csi
-data/*.tsv
-data/*.tsv.gz
-data/*.txt
-data/chm13_giab_genome_stratifications
-data/chm13_repeat_annotations
-data/*out_graphs*
-data/*.log
+data/**
+!data/download_test_data.sh
 
 # profiling data
 profiling/*.bin

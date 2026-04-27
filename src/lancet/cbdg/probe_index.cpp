@@ -160,7 +160,9 @@ auto ProbeIndex::LoadVariantsFromFile(std::filesystem::path const& path)
     ++file_line;
     // missed_variants.txt columns (tab-separated):
     // chrom, start, end, ref, alt, type, length, classification,
-    // tier1_alt_count, tier2_alt_count, max_alt_count, engine, source
+    // raw_alt_count, raw_total_depth, passing_alt_count, passing_total_depth,
+    // alt_filt_duplicate, alt_filt_mapq, alt_filt_qcfail,
+    // tier2_alt_count, max_alt_count, engine, source
     std::vector<absl::string_view> const fields = absl::StrSplit(line, '\t');
     static constexpr usize MIN_FIELDS = 9;
     if (fields.size() < MIN_FIELDS) continue;
@@ -169,12 +171,12 @@ auto ProbeIndex::LoadVariantsFromFile(std::filesystem::path const& path)
     static constexpr usize START_IDX = 1;
     static constexpr usize REF_IDX = 3;
     static constexpr usize ALT_IDX = 4;
-    static constexpr usize TIER1_IDX = 8;
+    static constexpr usize RAW_ALT_IDX = 8;
 
-    u16 tier1_count = 0;
-    if (!absl::SimpleAtoi(fields[TIER1_IDX], &tier1_count)) {
-      LOG_WARN("ProbeIndex could not parse tier1_alt_count '{}' at line {} from file {}",
-               fields[TIER1_IDX], file_line, path.string());
+    u16 raw_alt_count = 0;
+    if (!absl::SimpleAtoi(fields[RAW_ALT_IDX], &raw_alt_count)) {
+      LOG_WARN("ProbeIndex could not parse raw_alt_count '{}' at line {} from file {}",
+               fields[RAW_ALT_IDX], file_line, path.string());
       continue;
     }
 
@@ -191,7 +193,7 @@ auto ProbeIndex::LoadVariantsFromFile(std::filesystem::path const& path)
         .mAlt = std::string(fields[ALT_IDX]),
         .mGenomeStart0 = genome_start,
         .mProbeId = probe_idx,
-        .mTier1AltCount = tier1_count,
+        .mRawAltCount = raw_alt_count,
     });
 
     ++probe_idx;
