@@ -365,3 +365,116 @@ with those partial results. In Python's cascade, it distinguishes two
 - `ProbeTracker` is per-thread (owned by each `VariantBuilder`).
 - `ProbeResultsWriter::Append` acquires `absl::Mutex` before writing.
 - `ProbeIndex` is `shared_ptr<const>` — immutable, lock-free reads.
+
+---
+
+## Running the Analysis
+
+Both scripts require the `hts-tools` pixi environment (provides Polars,
+Rich, pysam, edlib, tqdm).
+
+The end-to-end workflow has three steps:
+
+1. **Truth concordance** — identify which truth variants Lancet2 missed
+2. **Lancet2 probe run** — re-run Lancet2 with probe tracking on the missed set
+3. **Probe analysis** — attribute each missed variant to a pipeline stage
+
+### Step 1: Truth Concordance
+
+`scripts/truth_concordance.py` compares a truth VCF against a Lancet2
+output VCF and produces per-variant match levels (L0, LD, L1–L3, MISS).
+
+```bash
+pixi run -e hts-tools python3 scripts/truth_concordance.py \
+    --truth-small expected_snvs_indels.vcf.gz \
+    --lancet lancet_output.vcf.gz \
+    --ref reference.fa \
+    --samples normal.bam tumor.bam \
+    --output-dir data/ \
+    --mode small
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--truth-small` | one of small/large | Small variant truth VCF (GIAB SNVs + indels) |
+| `--truth-large` | one of small/large | Large variant truth VCF (Manta PASS INS/DEL) |
+| `--lancet` | yes | Lancet2 output VCF |
+| `--ref` | yes | Reference FASTA (required for CRAM and edit distance) |
+| `--samples` | yes | One or more BAM/CRAM alignment files |
+| `--mode` | no | `small`, `large`, or `all` (default: `all`) |
+| `--log` | no | Lancet2 debug log (enables §5 forensics) |
+| `--graphs` | no | Lancet2 `--graphs-dir` output (enables §6 MSA analysis) |
+| `--skip-forensics` | no | Skip §5–§6 pipeline forensics |
+| `--workers` | no | Parallel workers for read evidence (default: 16) |
+| `--output-dir` | no | Output directory (default: `data/`) |
+
+Key outputs:
+
+- `missed_variants.txt` — missed variants with read support counts
+  (**required input for step 2**)
+- `concordance_details.txt` — all truth variants with match levels
+  (optional enrichment for probe analysis §1)
+- `truth_concordance_report.txt` — rich diagnostic report (§1–§6)
+
+### Step 2: Lancet2 Probe Run
+
+Re-run Lancet2 with the missed variants file to collect forensic data:
+
+```bash
+Lancet2 pipeline \
+    -n normal.bam -t tumor.bam -r reference.fa -o out.vcf.gz \
+    --probe-variants data/missed_variants.txt \
+    --probe-results data/probe_results.tsv
+```
+
+Both `--probe-variants` and `--probe-results` must be provided together.
+Enable `--verbose` logging if you plan to use the `--log` flag in step 3.
+
+### Step 3: Probe Analysis
+
+```bash
+pixi run -e hts-tools python3 scripts/analyze_probe_results.py \
+    --probe-results data/probe_results.tsv \
+    --missed-variants data/missed_variants.txt \
+    --concordance-details data/concordance_details.txt \
+    --output-dir data/ \
+    --view all
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--probe-results` | yes | Raw TSV from Lancet2 `--probe-results` |
+| `--missed-variants` | yes | From step 1 (`missed_variants.txt`) |
+| `--concordance-details` | no | From step 1 (enriches §1 scorecard) |
+| `--log` | no | Lancet2 debug log (enables window status parsing) |
+| `--output-dir` | no | Output directory (default: `data/`) |
+| `--view` | no | Single section or `all` (default: `all`) |
+
+Output files:
+
+| File | Format | Content |
+|------|--------|---------|
+| `probe_analysis_report.txt` | Rich text | Full diagnostic report (§1–§8) |
+| `probe_stage_attribution.txt` | TSV | One row per probe: final `lost_at_stage`, type, size |
+| `probe_survival_matrix.txt` | TSV | One row per `(probe, window, comp, k)`: 6 survival counts |
+
+### Interpreting Results
+
+Start with **§1 Scorecard** — verify that the coverage gap is zero (every
+input variant produced at least one output row). A non-zero gap indicates
+probes in regions Lancet2 never processed.
+
+**§2 Funnel** shows the stage attribution distribution. The dominant loss
+stage identifies the primary pipeline bottleneck.
+
+**§6 Targets** lists the 30 variants closest to success (highest depth
+score) — the highest-value debugging targets.
+
+Use `--view` to render a single section during iterative debugging:
+
+```bash
+pixi run -e hts-tools python3 scripts/analyze_probe_results.py \
+    --probe-results data/probe_results.tsv \
+    --missed-variants data/missed_variants.txt \
+    --view funnel
+```
