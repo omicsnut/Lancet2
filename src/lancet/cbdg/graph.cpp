@@ -102,6 +102,12 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
     mSourceAndSinkIds = {0, 0};
     mNodes.reserve(DEFAULT_EST_NUM_NODES);
 
+    // Drop any FINAL snapshots buffered by a prior k-attempt. Each k iteration
+    // starts with a clean buffer so only the final attempt's snapshots reach
+    // disk — including the case where every component had haps.empty() and
+    // no retry was triggered.
+    mDotBuffer.Discard();
+
     // Skip this k if the reference itself has a repeated k-mer — the de Bruijn
     // graph would contain a cycle by construction, making assembly pointless.
     if (HasExactOrApproxRepeat(region_seq, mCurrK)) continue;
@@ -192,21 +198,31 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
         break;
       }
 
-      WriteDot(GraphState::FULLY_PRUNED_GRAPH, component_index);
-
       auto haps = BuildHaplotypes(component_index, traversal_index, ref_anchor_seq, probe_ctx);
       ProbeCheckPaths(absl::MakeConstSpan(haps), probe_ctx);
 
+      // Buffer one FINAL snapshot per component. The filename substring is
+      // chosen by walk presence: `enumerated_walks` when haps is non-empty,
+      // `fully_pruned` otherwise. Deferred to disk via mDotBuffer.Commit
+      // below so abandoned k-attempts leave no artifacts.
+      BufferFinalSnapshot(component_index, absl::MakeConstSpan(haps));
+
       if (haps.empty()) continue;
-      WriteDot(GraphState::ENUMERATED_WALKS, component_index, absl::MakeConstSpan(haps));
       results.emplace_back(std::move(haps), graph_complexity, static_cast<u32>(source.mRefOffset));
     }
 
     // If any component triggered a retry, discard partial results and try next k
     if (should_retry_kmer) {
       results.clear();
+      mDotBuffer.Discard();
       continue;
     }
+  }
+
+  // Flush any FINAL snapshots accumulated during the successful k-attempt.
+  // No-op when --graphs-dir is unset (mDotBuffer stays empty).
+  if (!mParams.mOutGraphsDir.empty()) {
+    mDotBuffer.Commit(mParams.mOutGraphsDir / "dbg_graph");
   }
 
   // Count ALT haplotypes per component (excluding the leading reference path at index 0).
@@ -895,23 +911,30 @@ auto Graph::BuildRefHaplotypePath(usize const comp_id, std::string_view ref_anch
 // Debug DOT Visualization
 // ============================================================================
 
-void Graph::WriteDot([[maybe_unused]] GraphState state, usize const comp_id,
-                     absl::Span<Path const> walks) {
+// Build the per-component DOT filename. Used by both eager (develop-mode)
+// stage writes and the deferred FINAL buffer.
+namespace {
+auto MakeDotFilename(hts::Reference::Region const& region, std::string_view stage_label,
+                     usize currk, usize comp_id) -> std::string {
+  auto const win_id =
+      fmt::format("{}_{}_{}", region.ChromName(), region.StartPos1(), region.EndPos1());
+  return fmt::format("dbg__{}__{}__k{}__comp{}.dot", win_id, stage_label, currk, comp_id);
+}
+}  // namespace
+
+void Graph::WriteDot([[maybe_unused]] GraphState state, usize const comp_id) {
   if (mParams.mOutGraphsDir.empty()) return;
 
 #ifdef LANCET_DEVELOP_MODE
   auto const graph_state = ToString(state);
 #else
-  auto const* graph_state =
-      state == GraphState::ENUMERATED_WALKS ? "enumerated_walks" : "fully_pruned";
+  // Production builds only call WriteDot from develop-mode WriteDotDevelop
+  // (a no-op outside LANCET_DEVELOP_MODE). The FINAL stage goes through
+  // BufferFinalSnapshot. Default the label to keep the function well-formed.
+  auto const* graph_state = "fully_pruned";
 #endif
 
-  using namespace std::string_view_literals;
-  auto const win_id =
-      fmt::format("{}_{}_{}", mRegion->ChromName(), mRegion->StartPos1(), mRegion->EndPos1());
-  auto const fname =
-      fmt::format("dbg__{}__{}__k{}__comp{}.dot", win_id, graph_state, mCurrK, comp_id);
-
+  auto const fname = MakeDotFilename(*mRegion, graph_state, mCurrK, comp_id);
   auto const out_path = mParams.mOutGraphsDir / "dbg_graph" / fname;
   std::filesystem::create_directories(mParams.mOutGraphsDir / "dbg_graph");
 
@@ -921,11 +944,33 @@ void Graph::WriteDot([[maybe_unused]] GraphState state, usize const comp_id,
     DotOverlaySets const probe_highlight{
         .mNodes = mProbeTrackerPtr->GetHighlightNodeIds(mNodes, comp_id)};
     DotOverlaySets const anchor_bg{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    SerializeToDot(mNodes, out_path, comp_id, probe_highlight, anchor_bg, walks);
+    SerializeToDot(mNodes, out_path, comp_id, probe_highlight, anchor_bg);
   } else {
     DotOverlaySets const highlight{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    SerializeToDot(mNodes, out_path, comp_id, highlight, {}, walks);
+    SerializeToDot(mNodes, out_path, comp_id, highlight);
   }
+}
+
+void Graph::BufferFinalSnapshot(usize const comp_id, absl::Span<Path const> walks) {
+  if (mParams.mOutGraphsDir.empty()) return;
+
+  auto const* stage_label = walks.empty() ? "fully_pruned" : "enumerated_walks";
+  auto fname = MakeDotFilename(*mRegion, stage_label, mCurrK, comp_id);
+  auto const subgraph_name = std::string_view{fname}.substr(0, fname.size() - 4);  // strip ".dot"
+
+  std::string contents;
+  if (HasProbeTracker()) {
+    DotOverlaySets const probe_highlight{
+        .mNodes = mProbeTrackerPtr->GetHighlightNodeIds(mNodes, comp_id)};
+    DotOverlaySets const anchor_bg{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
+    contents =
+        SerializeToDotString(mNodes, subgraph_name, comp_id, probe_highlight, anchor_bg, walks);
+  } else {
+    DotOverlaySets const highlight{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
+    contents = SerializeToDotString(mNodes, subgraph_name, comp_id, highlight, {}, walks);
+  }
+
+  mDotBuffer.Buffer(std::move(fname), std::move(contents));
 }
 
 // ============================================================================

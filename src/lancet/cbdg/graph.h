@@ -5,6 +5,7 @@
 #include "lancet/base/sliding.h"
 #include "lancet/base/types.h"
 #include "lancet/cbdg/component_result.h"
+#include "lancet/cbdg/dot_snapshot_buffer.h"
 #include "lancet/cbdg/edge.h"
 #include "lancet/cbdg/graph_complexity.h"
 #include "lancet/cbdg/graph_params.h"
@@ -70,6 +71,11 @@ class Graph {
 
   std::vector<NodeID> mRefNodeIds;
   NodeIDPair mSourceAndSinkIds = {0, 0};
+
+  /// In-memory accumulator for the per-component FINAL DOT snapshot of the
+  /// current k-attempt. Discarded on retry; flushed to disk after the outer
+  /// k-loop terminates. Empty when --graphs-dir was not specified.
+  DotSnapshotBuffer mDotBuffer;
 
   using EdgeSet = absl::flat_hash_set<Edge>;
   using NodeIdSet = absl::flat_hash_set<NodeID>;
@@ -230,11 +236,11 @@ class Graph {
   // Debug DOT Visualization
   // ============================================================================
 
-  /// Write the current graph state to a Graphviz DOT file for visual debugging.
-  /// If `walks` is non-empty (ENUMERATED_WALKS stage), the DOT file includes
-  /// per-walk edge color overlays appended after the normal graph rendering.
-  void WriteDot([[maybe_unused]] GraphState state, usize comp_id,
-                absl::Span<Path const> walks = {});
+  /// Write a DOT snapshot to disk eagerly for the develop-mode intermediate
+  /// pruning stages. These files persist across k-attempts (filename includes
+  /// the k value). Production builds compile WriteDotDevelop callers to a
+  /// no-op via the LANCET_DEVELOP_MODE gate.
+  void WriteDot([[maybe_unused]] GraphState state, usize comp_id);
 
 #ifdef LANCET_DEVELOP_MODE
   template <class... Args>
@@ -246,6 +252,13 @@ class Graph {
   // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
   constexpr void WriteDotDevelop([[maybe_unused]] Args&&... /*unused*/) {}
 #endif
+
+  /// Render the post-prune ("final") DOT for one component into mDotBuffer.
+  /// `walks` non-empty → file basename uses `enumerated_walks` and edge color
+  /// overlays are appended; empty → basename uses `fully_pruned` and only
+  /// the graph body is rendered. The actual disk write is deferred until
+  /// CommitDotBuffer() is called after the outer k-loop succeeds.
+  void BufferFinalSnapshot(usize comp_id, absl::Span<Path const> walks);
 
   // ============================================================================
   // ProbeTracker Forwarding Helpers (null-safe)

@@ -13,10 +13,8 @@
 
 #include <filesystem>
 #include <memory>
-#include <string_view>
-#ifdef LANCET_DEVELOP_MODE
 #include <string>
-#endif
+#include <string_view>
 
 namespace lancet::cbdg {
 
@@ -41,6 +39,16 @@ void SerializeToDot(absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& gr
                     std::filesystem::path const& out_path, usize comp_id = 0,
                     DotOverlaySets const& highlight = {}, DotOverlaySets const& background = {},
                     absl::Span<Path const> walks = {});
+
+/// Render a graph component to a DOT-formatted string for in-memory buffering.
+/// Same content as SerializeToDot but returns the body instead of writing to
+/// disk; the caller (typically DotSnapshotBuffer) handles the file I/O on
+/// commit. `subgraph_name` becomes the `subgraph` identifier — usually the
+/// stem of the eventual output filename.
+[[nodiscard]] auto SerializeToDotString(
+    absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph, std::string_view subgraph_name,
+    usize comp_id = 0, DotOverlaySets const& highlight = {}, DotOverlaySets const& background = {},
+    absl::Span<Path const> walks = {}) -> std::string;
 
 /// Pipeline stage tag for DOT graph debug snapshots.
 enum class GraphState : u8 {

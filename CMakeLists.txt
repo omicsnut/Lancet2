@@ -169,6 +169,7 @@ add_library(lancet_cbdg STATIC
 		src/lancet/cbdg/cycle_finder.cpp src/lancet/cbdg/cycle_finder.h
 		src/lancet/cbdg/traversal_index.cpp src/lancet/cbdg/traversal_index.h
 		src/lancet/cbdg/serialize_dot.cpp src/lancet/cbdg/serialize_dot.h
+		src/lancet/cbdg/dot_snapshot_buffer.cpp src/lancet/cbdg/dot_snapshot_buffer.h
 		src/lancet/cbdg/max_flow.cpp src/lancet/cbdg/max_flow.h
 		src/lancet/cbdg/graph_complexity.cpp src/lancet/cbdg/graph_complexity.h
 		# ── Per-component assembly output: paths + complexity metrics ─────

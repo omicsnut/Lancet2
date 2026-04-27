@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -139,7 +140,7 @@ auto SignChar(Kmer::Sign sign) -> char {
   return sign == Kmer::Sign::PLUS ? '+' : '-';
 }
 
-void WriteEdgeDot(std::ofstream& out, Edge const& conn, DotOverlaySets const& highlight,
+void WriteEdgeDot(std::ostream& out, Edge const& conn, DotOverlaySets const& highlight,
                   DotOverlaySets const& background) {
   fmt::print(out, EDGE_FMT, conn.SrcId(), conn.DstId(), SignChar(conn.SrcSign()),
              SignChar(conn.DstSign()),
@@ -147,7 +148,7 @@ void WriteEdgeDot(std::ofstream& out, Edge const& conn, DotOverlaySets const& hi
              highlight.mEdges.contains(conn) ? ATTR_HIGHLIGHT_COLOR : ATTR_NO_COLOR);
 }
 
-void WriteNodeDot(std::ofstream& out, Node const& node, NodeID node_id,
+void WriteNodeDot(std::ostream& out, Node const& node, NodeID node_id,
                   DotOverlaySets const& highlight, DotOverlaySets const& background) {
   auto const dflt_seq = node.SequenceFor(Kmer::Ordering::DEFAULT);
   auto const oppo_seq = node.SequenceFor(Kmer::Ordering::OPPOSITE);
@@ -179,7 +180,7 @@ void WriteNodeDot(std::ofstream& out, Node const& node, NodeID node_id,
 //   We iterate in reverse so the highest-confidence walk is written last.
 //   DOT's last-writer-wins semantics give it color priority on shared edges.
 // ============================================================================
-void AppendWalkEdgeOverrides(std::ofstream& out, absl::Span<Path const> walks) {
+void AppendWalkEdgeOverrides(std::ostream& out, absl::Span<Path const> walks) {
   if (walks.empty()) return;
 
   for (usize rev_idx = walks.size(); rev_idx > 0; --rev_idx) {
@@ -199,6 +200,33 @@ void AppendWalkEdgeOverrides(std::ofstream& out, absl::Span<Path const> walks) {
   }
 }
 
+// Bundled rendering knobs for the shared core. Pointers (not references)
+// because cppcoreguidelines-avoid-const-or-ref-data-members forbids reference
+// members on a struct (they break default copy/move semantics). Both
+// pointers must be non-null.
+struct RenderConfig {
+  // ── 8B Align ────────────────────────────────────────────────────────
+  DotOverlaySets const* mHighlight = nullptr;
+  DotOverlaySets const* mBackground = nullptr;
+  absl::Span<Path const> mWalks;
+};
+
+// Shared body for both file- and string-output variants.
+void RenderToOstream(std::ostream& out,
+                     absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
+                     std::string_view subgraph_name, usize const comp_id, RenderConfig const& cfg) {
+  out << DOT_PREAMBLE;
+  fmt::print(out, "subgraph {} {{\n", subgraph_name);
+
+  for (auto const& [node_id, node_ptr] : graph) {
+    if (node_ptr->GetComponentId() != comp_id) continue;
+    WriteNodeDot(out, *node_ptr, node_id, *cfg.mHighlight, *cfg.mBackground);
+  }
+
+  AppendWalkEdgeOverrides(out, cfg.mWalks);
+  out << DOT_FOOTER;
+}
+
 }  // namespace
 
 void SerializeToDot(absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
@@ -206,17 +234,18 @@ void SerializeToDot(absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& gr
                     DotOverlaySets const& highlight, DotOverlaySets const& background,
                     absl::Span<Path const> walks) {
   std::ofstream out_handle(out_path, std::ios::trunc);
-  out_handle << DOT_PREAMBLE;
-  fmt::print(out_handle, "subgraph {} {{\n", out_path.stem().string());
+  RenderConfig const cfg{.mHighlight = &highlight, .mBackground = &background, .mWalks = walks};
+  RenderToOstream(out_handle, graph, out_path.stem().string(), comp_id, cfg);
+}
 
-  for (auto const& [node_id, node_ptr] : graph) {
-    if (node_ptr->GetComponentId() != comp_id) continue;
-    WriteNodeDot(out_handle, *node_ptr, node_id, highlight, background);
-  }
-
-  AppendWalkEdgeOverrides(out_handle, walks);
-  out_handle << DOT_FOOTER;
-  out_handle.close();
+auto SerializeToDotString(absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
+                          std::string_view const subgraph_name, usize const comp_id,
+                          DotOverlaySets const& highlight, DotOverlaySets const& background,
+                          absl::Span<Path const> walks) -> std::string {
+  std::ostringstream stream;
+  RenderConfig const cfg{.mHighlight = &highlight, .mBackground = &background, .mWalks = walks};
+  RenderToOstream(stream, graph, subgraph_name, comp_id, cfg);
+  return std::move(stream).str();
 }
 
 }  // namespace lancet::cbdg
