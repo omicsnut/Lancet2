@@ -51,14 +51,13 @@ class ProbeDiagnostics {
   ///   1. Exact match — same position and alleles
   ///   2. Shifted match — same alleles but different position
   ///   3. Representation match — variant subsumed by larger MNV
-  void CheckMsaExtraction(caller::VariantSet const& variant_set, Window const& window,
-                          usize component_idx);
+  void CheckMsaExtraction(caller::VariantSet const& variant_set, Window const& window);
 
   /// Check whether each probe variant received correct genotyper read support.
   /// Tracks stolen reads (ALT-carrying reads misassigned to REF or wrong ALT),
   /// non-overlapping reads, and total ALT/REF coverage.
   void CheckGenotyperResult(caller::Genotyper::Result const& genotyped,
-                            caller::VariantSet const& variant_set, usize component_idx);
+                            caller::VariantSet const& variant_set);
 
  private:
   cbdg::ProbeTracker mTracker;

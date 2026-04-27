@@ -173,7 +173,7 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       if (HasCycle(traversal_index)) {
         LOG_TRACE("Cycle found in pruned graph for {} component {} with k={}", region_str,
                   component_index, mCurrK)
-        ProbeSetCycleRetry(probe_ctx);
+        ProbeSetGraphCycle(probe_ctx);
         should_retry_kmer = true;
         break;
       }
@@ -187,14 +187,14 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
         LOG_DEBUG("Graph too complex for {} comp={} k={}: CC={} branches={}", region_str,
                   component_index, mCurrK, graph_complexity.CyclomaticComplexity(),
                   graph_complexity.NumBranchPoints())
-        ProbeSetComplexRetry(probe_ctx);
+        ProbeSetGraphComplex(probe_ctx);
         should_retry_kmer = true;
         break;
       }
 
       WriteDot(GraphState::FULLY_PRUNED_GRAPH, component_index);
 
-      auto haps = EnumerateAndSortHaplotypes(component_index, traversal_index, ref_anchor_seq);
+      auto haps = BuildHaplotypes(component_index, traversal_index, ref_anchor_seq, probe_ctx);
       ProbeCheckPaths(absl::MakeConstSpan(haps), probe_ctx);
 
       if (haps.empty()) continue;
@@ -816,8 +816,9 @@ void Graph::RemoveTips(usize const component_id) {
 // Phase 5: Haplotype Enumeration
 // ============================================================================
 
-auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
-                                       std::string_view ref_anchor_seq) const -> std::vector<Path> {
+auto Graph::BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
+                            std::string_view ref_anchor_seq,
+                            ProbeTracker::Context const& probe_ctx) const -> std::vector<Path> {
   std::vector<Path> haplotypes;
   auto const reg_str = mRegion->ToSamtoolsRegion();
 
@@ -837,7 +838,7 @@ auto Graph::EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav
   if (max_flow.HitTraversalLimit()) {
     LOG_DEBUG("BFS traversal limit hit for {} comp={} k={} after {} paths", reg_str, comp_id,
               mCurrK, haplotypes.size())
-    ProbeSetTraversalLimit(Context{.mKmerSize = mCurrK});
+    ProbeSetTraversalLimit(probe_ctx);
   }
 
   if (haplotypes.empty()) return haplotypes;
@@ -944,7 +945,7 @@ void Graph::ProbeCountInReads(Context const& ctx) {
 
 void Graph::ProbeLogStatus(PruneStage stage, Context const& ctx) {
   if (!HasProbeTracker()) return;
-  mProbeTrackerPtr->LogStatus(stage, ctx);
+  mProbeTrackerPtr->LogStatus(stage, ctx, mNodes);
 }
 
 void Graph::ProbeOnNodeRemove(NodeID node_id) {
@@ -965,12 +966,12 @@ void Graph::ProbeRecordComponentInfo(absl::Span<ProbeTracker::ComponentInfo cons
 
 void Graph::ProbeSetNoAnchor(Context const& ctx) {
   if (!HasProbeTracker()) return;
-  mProbeTrackerPtr->SetNoAnchor(ctx);
+  mProbeTrackerPtr->SetNoAnchor(ctx, mNodes);
 }
 
 void Graph::ProbeSetShortAnchor(Context const& ctx) {
   if (!HasProbeTracker()) return;
-  mProbeTrackerPtr->SetShortAnchor(ctx);
+  mProbeTrackerPtr->SetShortAnchor(ctx, mNodes);
 }
 
 void Graph::ProbeCheckAnchorOverlap(RefAnchor const& source, RefAnchor const& sink,
@@ -983,14 +984,14 @@ void Graph::ProbeCheckAnchorOverlap(RefAnchor const& source, RefAnchor const& si
   mProbeTrackerPtr->CheckAnchorOverlap(src_info, snk_info, ctx);
 }
 
-void Graph::ProbeSetCycleRetry(Context const& ctx) {
+void Graph::ProbeSetGraphCycle(Context const& ctx) {
   if (!HasProbeTracker()) return;
-  mProbeTrackerPtr->SetCycleRetry(ctx);
+  mProbeTrackerPtr->SetGraphCycle(ctx);
 }
 
-void Graph::ProbeSetComplexRetry(Context const& ctx) {
+void Graph::ProbeSetGraphComplex(Context const& ctx) {
   if (!HasProbeTracker()) return;
-  mProbeTrackerPtr->SetComplexRetry(ctx);
+  mProbeTrackerPtr->SetGraphComplex(ctx);
 }
 
 void Graph::ProbeSetTraversalLimit(Context const& ctx) const {

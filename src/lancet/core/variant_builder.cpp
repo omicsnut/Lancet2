@@ -276,8 +276,9 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     auto extracted = ExtractVariants(component, component_idx, *window);
     if (extracted.IsEmpty()) continue;
 
-    mProbeDiagnostics.CheckMsaExtraction(extracted, *window, component_idx);
-
+    // Probes with paths in skipped (empty) components keep all MSA flags false.
+    // The Python attribution engine classifies these as msa_not_extracted.
+    mProbeDiagnostics.CheckMsaExtraction(extracted, *window);
     LOG_DEBUG("Found variant(s) in graph component {} for window {} with {} haplotypes",
               component_idx, region_string, component.NumPaths())
 
@@ -285,8 +286,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
     // Genotyper's minimap2 requires null-terminated c_str() pointers.
     auto const hap_seqs = component.HaplotypeSequences();
     auto geno_result = mGenotyper.Genotype(hap_seqs, reads, extracted);
-
-    mProbeDiagnostics.CheckGenotyperResult(geno_result, extracted, component_idx);
+    mProbeDiagnostics.CheckGenotyperResult(geno_result, extracted);
     CollectSupportedCalls(extracted, geno_result, samples, window->Length(), variant_calls);
   }
 

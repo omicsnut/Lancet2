@@ -5,10 +5,14 @@ Reads probe_results.tsv (from Lancet2 --probe-variants) cross-referenced
 against missed_variants.txt and concordance_details.txt (from truth_concordance.py)
 to answer: for every missed variant, exactly where and why did the pipeline lose it?
 
+The C++ side emits one raw fact row per (probe_id, window, comp_id, k) attempt
+with no attribution. This script is the sole source of lost_at_stage derivation,
+using a bottom-up cascade that checks the deepest pipeline evidence first.
+
 Output files:
-  probe_analysis_report.txt   Unified rich report (§1–§6, all tables)
+  probe_analysis_report.txt   Unified rich report (§1–§7, all tables)
   probe_stage_attribution.txt Per-probe TSV: final lost_at, type, size, tier1 reads
-  probe_survival_matrix.txt   Per-(probe, k) TSV: all 6 survival stage counts
+  probe_survival_matrix.txt   Per-(probe, window, comp, k) TSV: all 6 survival counts
 
 Usage:
     pixi run -e hts-tools python3 scripts/analyze_probe_results.py \\
@@ -25,7 +29,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -38,7 +41,7 @@ from rich.text import Text
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-VIEWS = ("scorecard", "funnel", "survival", "breakdown", "genotyper", "targets", "deepdive", "all")
+VIEWS = ("scorecard", "funnel", "survival", "breakdown", "genotyper", "targets", "deepdive", "windows", "all")
 
 VIEW_HELP = """\
 Views:
@@ -49,35 +52,36 @@ Views:
   genotyper    Genotyper forensics: stolen reads, MSA extraction
   targets      High-priority inspection targets (closest to success)
   deepdive     Deep dive into the top 2 most common loss stages
+  windows      Window coverage: cross-window attribution, boundary effects
   all          All of the above (default)
 """
 
-# All possible lost_at_stage values from DeriveLostAt (probe_results_writer.cpp)
+# All possible lost_at_stage values — computed in Python from raw TSV facts.
 # Ordered by pipeline position for display. Grouped into categories.
 STAGE_ORDER = [
     "not_processed",
     "variant_in_anchor", "no_anchor", "short_anchor",
-    "cycle_retry", "complex_retry",
+    "graph_has_cycle", "graph_too_complex",
     "pruned_at_build", "pruned_at_lowcov1", "pruned_at_compress1",
     "pruned_at_lowcov2", "pruned_at_compress2", "pruned_at_tips",
-    "traversal_limited", "no_path",
-    "msa_no_variant", "msa_shifted", "msa_representation",
-    "geno_no_result", "geno_no_support", "geno_stolen",
+    "bfs_exhausted", "no_path",
+    "msa_not_extracted", "msa_shifted", "msa_subsumed",
+    "geno_no_overlap", "geno_zero_alt_reads", "geno_stolen",
     "survived",
 ]
 
 STAGE_CATEGORY = {
     "not_processed": "Not processed",
     "variant_in_anchor": "Structural", "no_anchor": "Structural",
-    "short_anchor": "Structural", "cycle_retry": "Structural",
-    "complex_retry": "Structural",
+    "short_anchor": "Structural", "graph_has_cycle": "Structural",
+    "graph_too_complex": "Structural",
     "pruned_at_build": "Pruning", "pruned_at_lowcov1": "Pruning",
     "pruned_at_compress1": "Pruning", "pruned_at_lowcov2": "Pruning",
     "pruned_at_compress2": "Pruning", "pruned_at_tips": "Pruning",
-    "traversal_limited": "Path enum", "no_path": "Path enum",
-    "msa_no_variant": "MSA", "msa_shifted": "MSA",
-    "msa_representation": "MSA",
-    "geno_no_result": "Genotyper", "geno_no_support": "Genotyper",
+    "bfs_exhausted": "Path enum", "no_path": "Path enum",
+    "msa_not_extracted": "MSA", "msa_shifted": "MSA",
+    "msa_subsumed": "MSA",
+    "geno_no_overlap": "Genotyper", "geno_zero_alt_reads": "Genotyper",
     "geno_stolen": "Genotyper",
     "survived": "Survived",
 }
@@ -219,15 +223,87 @@ def load_debug_log_window_statuses(path: Path) -> pl.DataFrame:
     )
 
 
-def build_final_attribution(probes: pl.DataFrame) -> pl.DataFrame:
-    """Extract one row per probe_id: the record with the highest kmer_size.
+def derive_lost_at(df: pl.DataFrame) -> pl.DataFrame:
+    """Derive lost_at_stage for every row from observed diagnostic facts.
 
-    For probes with multiple k-value attempts, the final (highest-k) record
-    carries the definitive lost_at_stage attribution from DeriveLostAt.
+    Bottom-up cascade: check deepest pipeline evidence first. The first
+    matching condition wins. This replaces the old C++ DeriveLostAt which
+    used a top-down priority cascade and operated on a single "best" record.
+
+    Genotyper outcomes checked first (deepest), then MSA, paths, pruning
+    stages (in reverse pipeline order), and finally structural flags.
+    """
+    return df.with_columns(
+        # ── Genotyper (deepest) ──────────────────────────────────────
+        pl.when(pl.col("is_geno_has_alt_support") == 1)
+          .then(pl.lit("survived"))
+        .when((pl.col("is_msa_exact_match") == 1) & (pl.col("is_geno_no_overlap") == 1))
+          .then(pl.lit("geno_no_overlap"))
+        .when((pl.col("is_msa_exact_match") == 1) & (pl.col("is_geno_has_alt_support") == 0)
+              & (pl.col("n_geno_stolen_to_ref") + pl.col("n_geno_stolen_to_wrong_alt") > 0))
+          .then(pl.lit("geno_stolen"))
+        .when((pl.col("is_msa_exact_match") == 1) & (pl.col("is_geno_has_alt_support") == 0))
+          .then(pl.lit("geno_zero_alt_reads"))
+        # ── MSA extraction ───────────────────────────────────────────
+        .when((pl.col("hap_indices") != ".") & (pl.col("is_msa_shifted") == 1))
+          .then(pl.lit("msa_shifted"))
+        .when((pl.col("hap_indices") != ".") & (pl.col("is_msa_subsumed") == 1))
+          .then(pl.lit("msa_subsumed"))
+        .when(pl.col("hap_indices") != ".")
+          .then(pl.lit("msa_not_extracted"))
+        # ── Path enumeration ─────────────────────────────────────────
+        .when((pl.col("n_surviving_tips") > 0) & (pl.col("is_traversal_limited") == 1))
+          .then(pl.lit("bfs_exhausted"))
+        .when(pl.col("n_surviving_tips") > 0)
+          .then(pl.lit("no_path"))
+        # ── Pruning (reverse pipeline order: first stage that zeroed) ─
+        .when((pl.col("n_surviving_compress2") > 0) & (pl.col("n_surviving_tips") == 0))
+          .then(pl.lit("pruned_at_tips"))
+        .when((pl.col("n_surviving_lowcov2") > 0) & (pl.col("n_surviving_compress2") == 0))
+          .then(pl.lit("pruned_at_compress2"))
+        .when((pl.col("n_surviving_compress1") > 0) & (pl.col("n_surviving_lowcov2") == 0))
+          .then(pl.lit("pruned_at_lowcov2"))
+        .when((pl.col("n_surviving_lowcov1") > 0) & (pl.col("n_surviving_compress1") == 0))
+          .then(pl.lit("pruned_at_compress1"))
+        .when((pl.col("n_surviving_build") > 0) & (pl.col("n_surviving_lowcov1") == 0))
+          .then(pl.lit("pruned_at_lowcov1"))
+        .when((pl.col("n_expected_alt_kmers") > 0) & (pl.col("n_surviving_build") == 0))
+          .then(pl.lit("pruned_at_build"))
+        # ── Structural (shallowest — only when nothing above fired) ──
+        .when(pl.col("is_graph_cycle") == 1).then(pl.lit("graph_has_cycle"))
+        .when(pl.col("is_graph_complex") == 1).then(pl.lit("graph_too_complex"))
+        .when(pl.col("is_no_anchor") == 1).then(pl.lit("no_anchor"))
+        .when(pl.col("is_short_anchor") == 1).then(pl.lit("short_anchor"))
+        .when(pl.col("is_variant_in_anchor") == 1).then(pl.lit("variant_in_anchor"))
+        .otherwise(pl.lit("not_processed"))
+        .alias("lost_at_stage")
+    )
+
+
+# Depth scores: higher = deeper in the pipeline = more interesting.
+# Used to select the "best" record per probe_id.
+_DEPTH_MAP = {s: i for i, s in enumerate(STAGE_ORDER)}
+
+
+def compute_depth(df: pl.DataFrame) -> pl.DataFrame:
+    """Add _depth column: integer score for how deep each attempt reached."""
+    return df.with_columns(
+        pl.col("lost_at_stage")
+        .replace_strict(_DEPTH_MAP, default=0)
+        .alias("_depth")
+    )
+
+
+def select_best_per_probe(df: pl.DataFrame) -> pl.DataFrame:
+    """One row per probe_id — the attempt that reached the deepest stage.
+
+    When multiple records tie on depth, the highest kmer_size wins.
+    This replaces the old build_final_attribution which blindly took the
+    highest-k record regardless of how far it actually progressed.
     """
     return (
-        probes
-        .sort("kmer_size", descending=True)
+        df
+        .sort(["_depth", "kmer_size"], descending=[True, True])
         .group_by("probe_id")
         .first()
         .sort("probe_id")
@@ -487,8 +563,8 @@ def render_type_size_breakdown(
     # Per-type stage distribution
     types = ["SNV", "INS", "DEL", "MNP", "CPX"]
     all_stages = ["not_processed", "no_anchor", "variant_in_anchor",
-                  "cycle_retry", "pruned_at_build", "pruned_at_tips",
-                  "no_path", "msa_representation", "geno_no_support", "survived"]
+                  "graph_has_cycle", "pruned_at_build", "pruned_at_tips",
+                  "no_path", "msa_subsumed", "geno_zero_alt_reads", "survived"]
 
     for vtype in types:
         vt_data = joined.filter(pl.col("type") == vtype)
@@ -554,8 +630,8 @@ def render_genotyper_forensics(
     console.print("[bold]§5 Genotyper Forensics[/bold]\n")
 
     # MSA extraction outcomes
-    msa_stages = ["msa_no_variant", "msa_shifted", "msa_representation"]
-    geno_stages = ["geno_no_result", "geno_no_support", "geno_stolen", "survived"]
+    msa_stages = ["msa_not_extracted", "msa_shifted", "msa_subsumed"]
+    geno_stages = ["geno_no_overlap", "geno_zero_alt_reads", "geno_stolen", "survived"]
     relevant = attribution.filter(
         pl.col("lost_at_stage").is_in(msa_stages + geno_stages)
     )
@@ -873,6 +949,131 @@ def render_top_loss_deep_dive(
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# §8 Window Coverage Analysis
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+def render_window_analysis(
+    console: DualConsole,
+    probes: pl.DataFrame,
+    attribution: pl.DataFrame,
+) -> None:
+    """§8: Window coverage — cross-window attribution and boundary effects."""
+    console.print("[bold]§8 Window Coverage Analysis[/bold]\n")
+
+    if "window" not in probes.columns or probes.height == 0:
+        console.print("[dim]No window data in probe results.[/]")
+        return
+
+    # ── Attempt distribution per probe ────────────────────────────────────
+    attempts = probes.group_by("probe_id").agg(
+        pl.count().alias("n_attempts"),
+        pl.col("window").n_unique().alias("n_windows"),
+        pl.col("comp_id").n_unique().alias("n_components"),
+        pl.col("kmer_size").n_unique().alias("n_k_values"),
+        pl.col("_depth").max().alias("max_depth"),
+        pl.col("_depth").min().alias("min_depth"),
+    )
+
+    n_probes = attempts.height
+    table = Table(
+        title=f"Attempt Distribution ({n_probes:,} probes)",
+        title_style="bold", border_style="dim",
+    )
+    table.add_column("Metric", min_width=35)
+    table.add_column("Value", justify="right")
+
+    for col, label in [
+        ("n_attempts", "Attempts per probe"),
+        ("n_windows", "Distinct windows per probe"),
+        ("n_components", "Distinct components per probe"),
+        ("n_k_values", "Distinct k-values per probe"),
+    ]:
+        vals = attempts[col]
+        table.add_row(
+            f"  {label} (median / mean / max)",
+            f"{vals.median():.0f} / {vals.mean():.1f} / {vals.max()}",
+        )
+
+    console.print(table)
+    console.print()
+
+    # ── Boundary sensitivity: probes with mixed outcomes ──────────────────
+    # survived_depth is the depth score for "survived"
+    survived_depth = _DEPTH_MAP.get("survived", len(STAGE_ORDER) - 1)
+    mixed = attempts.filter(
+        (pl.col("max_depth") >= survived_depth) & (pl.col("min_depth") < survived_depth)
+    )
+    n_mixed = mixed.height
+
+    boundary_table = Table(
+        title="Boundary Sensitivity", title_style="bold", border_style="dim",
+    )
+    boundary_table.add_column("Metric", min_width=45)
+    boundary_table.add_column("Value", justify="right")
+    boundary_table.add_row(
+        "Probes that survived in ≥1 attempt but failed in another",
+        f"{n_mixed:,} ({pct_str(n_mixed, n_probes)})",
+    )
+    if n_mixed > 0:
+        boundary_table.add_row(
+            "  → These probes are boundary-sensitive",
+            "[yellow]window placement affects outcome[/]",
+        )
+
+    console.print(boundary_table)
+    console.print()
+
+    # ── Per-window pathology hotspots ─────────────────────────────────────
+    window_stats = (
+        probes
+        .filter(pl.col("window") != ".")
+        .group_by("window")
+        .agg(
+            pl.count().alias("n_records"),
+            pl.col("probe_id").n_unique().alias("n_probes"),
+            (pl.col("lost_at_stage") == "survived").sum().alias("n_survived"),
+            (pl.col("lost_at_stage").is_in(
+                ["graph_has_cycle", "graph_too_complex", "no_anchor", "short_anchor"]
+            )).sum().alias("n_structural_failures"),
+        )
+        .with_columns(
+            (pl.col("n_survived") / pl.col("n_records") * 100).alias("survival_pct"),
+        )
+        .sort("n_structural_failures", descending=True)
+    )
+
+    if window_stats.height > 0:
+        top_n = min(15, window_stats.height)
+        top_windows = window_stats.head(top_n)
+
+        win_table = Table(
+            title=f"Top {top_n} Windows by Structural Failures",
+            title_style="bold", border_style="dim",
+        )
+        win_table.add_column("Window")
+        win_table.add_column("Records", justify="right")
+        win_table.add_column("Probes", justify="right")
+        win_table.add_column("Survived", justify="right")
+        win_table.add_column("Structural", justify="right")
+        win_table.add_column("Surv%", justify="right")
+
+        for row in top_windows.iter_rows(named=True):
+            style = "red" if row["n_structural_failures"] > 5 else "white"
+            win_table.add_row(
+                row["window"],
+                str(row["n_records"]),
+                str(row["n_probes"]),
+                str(row["n_survived"]),
+                Text(str(row["n_structural_failures"]), style=style),
+                f"{row['survival_pct']:.0f}%",
+            )
+
+        console.print(win_table)
+        console.print()
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Output Writers
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -902,8 +1103,8 @@ def write_survival_matrix_tsv(
     probes: pl.DataFrame,
 ) -> None:
     """Write per-(probe_id, kmer_size) survival matrix TSV."""
-    cols = ["probe_id", "chrom", "pos", "ref", "alt", "kmer_size",
-            "n_expected_alt_kmers", "n_alt_kmers_in_reads",
+    cols = ["probe_id", "chrom", "pos", "ref", "alt", "window", "comp_id",
+            "kmer_size", "n_expected_alt_kmers", "n_alt_kmers_in_reads",
             "n_surviving_build", "n_surviving_lowcov1",
             "n_surviving_compress1", "n_surviving_lowcov2",
             "n_surviving_compress2", "n_surviving_tips",
@@ -968,8 +1169,14 @@ def main() -> None:
         print("Parsing debug log window statuses...", file=sys.stderr)
         window_statuses = load_debug_log_window_statuses(args.log)
 
-    # Build final attribution (one row per probe_id)
-    attribution = build_final_attribution(probes)
+    # Derive lost_at_stage for every row from observed diagnostic facts.
+    # This is the sole source of attribution — C++ emits raw data only.
+    print("Computing per-row attribution...", file=sys.stderr)
+    probes = derive_lost_at(probes)
+    probes = compute_depth(probes)
+
+    # Select best record per probe (deepest stage, highest k on tie)
+    attribution = select_best_per_probe(probes)
 
     # Setup output
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -998,6 +1205,9 @@ def main() -> None:
 
     if view in ("deepdive", "all"):
         render_top_loss_deep_dive(console, attribution, missed)
+
+    if view in ("windows", "all"):
+        render_window_analysis(console, probes, attribution)
 
     # Write TSV output files
     write_stage_attribution_tsv(args.output_dir, attribution, missed)

@@ -187,13 +187,46 @@ void ProbeTracker::SetProbeIndex(std::shared_ptr<ProbeIndex const> probe_index) 
   mProbeIndex = std::move(probe_index);
 }
 
-auto ProbeTracker::FindFinalKRecord(u16 const probe_id) -> ProbeKRecord& {
-  for (auto& record : std::views::reverse(mRecords)) {
-    if (record.mProbeId == probe_id) return record;
+// ============================================================================
+// FindRecordsWithPaths: return all records for a probe that found haplotype paths.
+//
+// Returns pointers to every record with non-empty mHapIndices for this probe.
+// Used by ProbeDiagnostics to annotate ALL matching records with MSA/genotyper
+// data, not just a single "best" record.
+//
+// InlinedVector<*, 4>: typical probes succeed in ≤4 (window × component)
+// combinations, so 4 inline pointer slots avoid heap allocation.
+// ============================================================================
+auto ProbeTracker::FindRecordsWithPaths(u16 const probe_id)
+    -> absl::InlinedVector<ProbeKRecord*, 4> {
+  absl::InlinedVector<ProbeKRecord*, 4> result;
+  for (auto& record : mRecords) {
+    if (record.mProbeId == probe_id && !record.mHapIndices.empty()) {
+      result.push_back(&record);
+    }
   }
+  return result;
+}
 
-  mRecords.emplace_back(ProbeKRecord{.mProbeId = probe_id});
-  return mRecords.back();
+// ============================================================================
+// HasTaggedNodesInComponent: check if a probe has any tagged graph nodes in
+// a specific connected component.
+//
+// Used by SetNoAnchor/SetShortAnchor to filter structural flags to only probes
+// that actually participate in the failing component. Without this filter,
+// structural flags are falsely broadcast to all active probes in the window.
+// ============================================================================
+auto ProbeTracker::HasTaggedNodesInComponent(u16 const probe_id, usize const comp_id,
+                                             NodeTable const& nodes) const -> bool {
+  auto const matches_probe = [probe_id](ProbeHit const& hit) { return hit.mProbeId == probe_id; };
+
+  return std::ranges::any_of(mNodeTags, [&](auto const& entry) {
+    auto const& [node_id, hits] = entry;
+    auto const node_it = nodes.find(node_id);
+    if (node_it == nodes.end()) return false;
+    if (node_it->second->GetComponentId() != comp_id) return false;
+    return std::ranges::any_of(hits, matches_probe);
+  });
 }
 
 // ============================================================================
@@ -290,7 +323,7 @@ void ProbeTracker::CountInReads(absl::Span<Read const> reads, Context const& ctx
   }
 
   for (auto const probe_id : mActiveProbeIds) {
-    auto& record = FindOrCreateRecord(probe_id, ctx.mKmerSize);
+    auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
     auto const iter = kmer_read_counts.find(probe_id);
     record.mAltKmersInReads = (iter != kmer_read_counts.end()) ? iter->second : u16{0};
   }
@@ -311,13 +344,13 @@ void ProbeTracker::RecordComponentInfo(NodeTable const& nodes,
     auto const majority_comp = std::ranges::max_element(comp_counts, BY_COUNT)->first;
     auto const comp_num_nodes = LookupComponentSize(components, majority_comp);
 
-    auto& record = FindOrCreateRecord(probe_id, ctx.mKmerSize);
+    auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
     record.mCompId = majority_comp;
     record.mCompNumNodes = comp_num_nodes;
     record.mSplitAcrossComps =
         comp_counts.size() > 1 ? static_cast<u16>(comp_counts.size()) : u16{0};
 
-    LOG_DEBUG("KMER_PROBE {} kmer_size={} probe={} {}:{} in comp={} ({} nodes) split={}",
+    LOG_DEBUG("ProbeTracker {} kmer_size={} probe={} {}:{} in comp={} ({} nodes) split={}",
               ctx.mRegStr, ctx.mKmerSize, probe_id, mVariants[probe_id].mChrom,
               mVariants[probe_id].mGenomeStart0, majority_comp, comp_num_nodes,
               record.mSplitAcrossComps)
@@ -344,7 +377,7 @@ void ProbeTracker::OnNodeRemove(NodeID node_id) {
   mNodeTags.erase(node_id);
 }
 
-void ProbeTracker::LogStatus(PruneStage stage, Context const& ctx) {
+void ProbeTracker::LogStatus(PruneStage stage, Context const& ctx, NodeTable const& nodes) {
   if (mActiveProbeIds.empty()) return;
 
   static constexpr std::array<u16 ProbeKRecord::*, NUM_PRUNE_STAGES> STAGE_FIELDS = {{
@@ -357,7 +390,10 @@ void ProbeTracker::LogStatus(PruneStage stage, Context const& ctx) {
   }};
 
   auto const stage_name = PRUNE_STAGE_NAMES[static_cast<usize>(stage)];
-  auto const profiles = CountSurvivingKmers();
+  // Pre-component stages (comp_id=0) count all surviving tags.
+  // Post-component stages filter to nodes in the current component only.
+  auto const* const node_filter = ctx.mCompId == 0 ? nullptr : &nodes;
+  auto const profiles = CountSurvivingKmers(node_filter, ctx.mCompId);
 
   for (auto const probe_id : mActiveProbeIds) {
     auto const prof_it = profiles.find(probe_id);
@@ -365,9 +401,9 @@ void ProbeTracker::LogStatus(PruneStage stage, Context const& ctx) {
     auto const total_it = mAltKmerCounts.find(probe_id);
     auto const total = total_it != mAltKmerCounts.end() ? total_it->second : u16{0};
     auto const& probe = mVariants[probe_id];
-    auto& record = FindOrCreateRecord(probe_id, ctx.mKmerSize);
+    auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
 
-    LOG_DEBUG("KMER_PROBE {} comp={} kmer_size={} probe={} {}:{}:{}>{} found={}/{} stage={} "
+    LOG_DEBUG("ProbeTracker {} comp={} kmer_size={} probe={} {}:{}:{}>{} found={}/{} stage={} "
               "probe_comp={} comp_nodes={}",
               ctx.mRegStr, ctx.mCompId, ctx.mKmerSize, probe_id, probe.mChrom, probe.mGenomeStart0,
               probe.mRef, probe.mAlt, found, total, stage_name, record.mCompId,
@@ -415,10 +451,11 @@ void ProbeTracker::CheckAnchorOverlap(AnchorInfo const& source, AnchorInfo const
     bool const overlaps_sink = sink.mFound && var_start < snk_end && var_end > snk_start;
 
     if (overlaps_source || overlaps_sink) {
-      auto& record = FindOrCreateRecord(probe_id, ctx.mKmerSize);
+      auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
       record.mIsVariantInAnchor = true;
-      LOG_DEBUG("KMER_PROBE {} comp={} kmer_size={} probe={} {}:{} VARIANT_IN_ANCHOR", ctx.mRegStr,
-                ctx.mCompId, ctx.mKmerSize, probe_id, probe.mChrom, probe.mGenomeStart0)
+      LOG_DEBUG("ProbeTracker {} comp={} kmer_size={} probe={} {}:{} VARIANT_IN_ANCHOR",
+                ctx.mRegStr, ctx.mCompId, ctx.mKmerSize, probe_id, probe.mChrom,
+                probe.mGenomeStart0)
     }
   }
 }
@@ -444,46 +481,62 @@ void ProbeTracker::CheckPaths(absl::Span<Path const> haplotypes, Context const& 
     auto const alt_context =
         BuildAltContext(ctx.mRefSeq, var_offset, ref_allele_len, probe.mAlt, ctx.mKmerSize);
 
-    auto& record = FindOrCreateRecord(probe_id, ctx.mKmerSize);
+    auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
     for (usize hap_idx = 0; hap_idx < haplotypes.size(); ++hap_idx) {
       if (haplotypes[hap_idx].Sequence().find(alt_context) != std::string_view::npos) {
         record.mHapIndices.push_back(static_cast<u8>(hap_idx));
       }
     }
 
-    LOG_DEBUG("KMER_PROBE {} comp={} kmer_size={} probe={} {}:{}:{}>{} haps=[{}] num_paths={}",
+    LOG_DEBUG("ProbeTracker {} comp={} kmer_size={} probe={} {}:{}:{}>{} haps=[{}] num_paths={}",
               ctx.mRegStr, ctx.mCompId, ctx.mKmerSize, probe_id, probe.mChrom, probe.mGenomeStart0,
               probe.mRef, probe.mAlt, fmt::join(record.mHapIndices, ","), haplotypes.size())
   }
 }
 
-void ProbeTracker::SetCycleRetry(Context const& ctx) {
+void ProbeTracker::SetGraphCycle(Context const& ctx) {
   for (auto const probe_id : mActiveProbeIds) {
-    FindOrCreateRecord(probe_id, ctx.mKmerSize).mIsCycleRetry = true;
+    FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize).mIsGraphCycle = true;
   }
 }
 
-void ProbeTracker::SetComplexRetry(Context const& ctx) {
+void ProbeTracker::SetGraphComplex(Context const& ctx) {
   for (auto const probe_id : mActiveProbeIds) {
-    FindOrCreateRecord(probe_id, ctx.mKmerSize).mIsComplexRetry = true;
+    FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize).mIsGraphComplex = true;
   }
 }
 
-void ProbeTracker::SetNoAnchor(Context const& ctx) {
+// ============================================================================
+// SetNoAnchor: flag probes with tagged nodes in this component as having no
+// valid source/sink anchor pair.
+//
+// CRITICAL: checks HasTaggedNodesInComponent before setting the flag. This
+// prevents cross-component contamination where a structural failure in one
+// component falsely marks probes whose k-mers are only in other components.
+// ============================================================================
+void ProbeTracker::SetNoAnchor(Context const& ctx, NodeTable const& nodes) {
   for (auto const probe_id : mActiveProbeIds) {
-    auto& record = FindOrCreateRecord(probe_id, ctx.mKmerSize);
+    if (!HasTaggedNodesInComponent(probe_id, ctx.mCompId, nodes)) continue;
+    auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
     record.mIsNoAnchor = true;
-    LOG_DEBUG("KMER_PROBE {} comp={} kmer_size={} probe={} {}:{} NO_ANCHOR", ctx.mRegStr,
+    LOG_DEBUG("ProbeTracker {} comp={} kmer_size={} probe={} {}:{} NO_ANCHOR", ctx.mRegStr,
               ctx.mCompId, ctx.mKmerSize, probe_id, mVariants[probe_id].mChrom,
               mVariants[probe_id].mGenomeStart0)
   }
 }
 
-void ProbeTracker::SetShortAnchor(Context const& ctx) {
+// ============================================================================
+// SetShortAnchor: flag probes with tagged nodes in this component as having
+// an anchor region too short for reliable assembly (<150bp).
+//
+// Same component-membership filter as SetNoAnchor.
+// ============================================================================
+void ProbeTracker::SetShortAnchor(Context const& ctx, NodeTable const& nodes) {
   for (auto const probe_id : mActiveProbeIds) {
-    auto& record = FindOrCreateRecord(probe_id, ctx.mKmerSize);
+    if (!HasTaggedNodesInComponent(probe_id, ctx.mCompId, nodes)) continue;
+    auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
     record.mIsShortAnchor = true;
-    LOG_DEBUG("KMER_PROBE {} comp={} kmer_size={} probe={} {}:{} SHORT_ANCHOR", ctx.mRegStr,
+    LOG_DEBUG("ProbeTracker {} comp={} kmer_size={} probe={} {}:{} SHORT_ANCHOR", ctx.mRegStr,
               ctx.mCompId, ctx.mKmerSize, probe_id, mVariants[probe_id].mChrom,
               mVariants[probe_id].mGenomeStart0)
   }
@@ -491,7 +544,8 @@ void ProbeTracker::SetShortAnchor(Context const& ctx) {
 
 void ProbeTracker::SetTraversalLimit(Context const& ctx) {
   for (auto const probe_id : mActiveProbeIds) {
-    FindOrCreateRecord(probe_id, ctx.mKmerSize).mIsTraversalLimited = true;
+    FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize).mIsTraversalLimited =
+        true;
   }
 }
 
@@ -509,19 +563,53 @@ auto ProbeTracker::GetHighlightNodeIds(NodeTable const& nodes, usize comp_id) co
   return result;
 }
 
-auto ProbeTracker::FindOrCreateRecord(u16 probe_id, usize kmer_size) -> ProbeKRecord& {
+// ============================================================================
+// FindOrCreateRecord: 4-key lookup for probe lifecycle records.
+//
+// Searches mRecords for a record matching (probe_id, region, comp_id, kmer_size).
+// If found, returns a reference to the existing record. If not found, creates a
+// new record with those key fields and appends it to mRecords.
+//
+// O(n) linear scan — acceptable for typical probe counts (<100 per window).
+// ============================================================================
+auto ProbeTracker::FindOrCreateRecord(u16 const probe_id, std::string_view const region,
+                                      usize const comp_id, usize const kmer_size) -> ProbeKRecord& {
   for (auto& record : mRecords) {
-    if (record.mProbeId == probe_id && record.mKmerSize == kmer_size) return record;
+    if (record.mProbeId == probe_id &&
+        record.mRegion == region &&
+        record.mCompId == comp_id &&
+        record.mKmerSize == kmer_size) {
+      return record;
+    }
   }
 
-  mRecords.push_back(ProbeKRecord{.mKmerSize = kmer_size, .mProbeId = probe_id});
+  mRecords.push_back(ProbeKRecord{.mRegion = std::string(region),
+                                  .mKmerSize = kmer_size,
+                                  .mCompId = comp_id,
+                                  .mProbeId = probe_id});
   return mRecords.back();
 }
 
-auto ProbeTracker::CountSurvivingKmers() const -> absl::flat_hash_map<u16, SurvivalProfile> {
-  // Collect surviving offsets per probe
+// ============================================================================
+// CountSurvivingKmers: count surviving tagged k-mers per probe with offset
+// analysis (edge vs interior position, gap detection).
+//
+// When nodes is non-null, only counts tags on nodes belonging to comp_id.
+// When nodes is null (pre-component stages like build/lowcov1), counts all
+// surviving tags across all nodes.
+// ============================================================================
+auto ProbeTracker::CountSurvivingKmers(NodeTable const* nodes, usize comp_id) const
+    -> absl::flat_hash_map<u16, SurvivalProfile> {
+  // Collect surviving offsets per probe, optionally filtered by component
   absl::flat_hash_map<u16, std::vector<u16>> offsets_per_probe;
   for (auto const& [node_id, hits] : mNodeTags) {
+    // Component filter: skip nodes not in the target component
+    if (nodes != nullptr) {
+      auto const node_it = nodes->find(node_id);
+      if (node_it == nodes->end()) continue;
+      if (node_it->second->GetComponentId() != comp_id) continue;
+    }
+
     for (auto const& hit : hits) {
       offsets_per_probe[hit.mProbeId].push_back(hit.mAltContextOffset);
     }

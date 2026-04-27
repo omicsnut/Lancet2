@@ -38,7 +38,7 @@ enum class PruneStage : u8 {
 
 static constexpr usize NUM_PRUNE_STAGES = 6;
 
-/// Human-readable names for each pruning stage (log output and lost_at_stage TSV values).
+/// Human-readable names for each pruning stage (log output and survival counting).
 static constexpr std::array<std::string_view, NUM_PRUNE_STAGES> PRUNE_STAGE_NAMES = {{
     "pruned_at_build",
     "pruned_at_lowcov1",
@@ -79,27 +79,41 @@ struct SurvivalProfile {
 };
 
 // ============================================================================
-// ProbeKRecord: per-probe, per-k lifecycle record.
+// ProbeKRecord: per-probe, per-attempt lifecycle record.
 //
-// Tracks the survival count of ALT-unique k-mers at each pruning stage,
-// plus boolean flags for structural failure modes (anchor overlap, cycle
-// retry, traversal limit, etc.). One record is created for each
-// (probe_id, k) pair encountered during assembly.
+// Each record captures the complete observed state for a single assembly
+// attempt, uniquely identified by the 4-tuple (probe_id, window, comp_id, k).
+// This granularity isolates each (window × component × k-value) attempt so
+// that structural failures in one component do not contaminate records from
+// another component.
 //
-// Extended fields (offset analysis, MSA extraction, genotyper read
-// assignment) are populated by ProbeDiagnostics through the
-// FindFinalKRecord accessor. All fields remain in this struct so
-// WriteResults can emit a single unified TSV line.
+// Record lifecycle:
+//   1. Created by FindOrCreateRecord when any probe tracking method first
+//      accesses a (probe_id, region, comp_id, k) combination.
+//   2. Survival counts populated by LogStatus at each pruning stage.
+//   3. Structural flags set by SetNoAnchor/SetGraphCycle/etc., filtered
+//      to only probes with tagged nodes in the failing component.
+//   4. Haplotype indices set by CheckPaths if variant found in walks.
+//   5. MSA/genotyper fields populated by ProbeDiagnostics, which annotates
+//      ALL records with non-empty mHapIndices via FindRecordsWithPaths.
+//   6. Written to TSV as raw facts — no attribution logic in C++.
+//
+// CRITICAL: comp_id = 0 is the sentinel for pre-component stages
+// (PRUNED_AT_BUILD, PRUNED_AT_LOWCOV1) that run before
+// MarkConnectedComponents. All real component IDs are >= 1.
 // ============================================================================
 struct ProbeKRecord {
   // ── 8B Align ────────────────────────────────────────────────────────────
-  usize mKmerSize = 0;      // 8B — kmer length for this assembly attempt
-  usize mCompId = 0;        // 8B — component ID the probe's nodes are in
-  usize mCompNumNodes = 0;  // 8B — number of nodes in that component
+  std::string mRegion;      // 24B — window region string (e.g. "chr1:1000-2000"), owned
+  usize mKmerSize = 0;      // 8B  — kmer length for this assembly attempt
+  usize mCompId = 0;        // 8B  — component ID (0 = pre-component sentinel, >= 1 = real)
+  usize mCompNumNodes = 0;  // 8B  — number of nodes in that component
 
   /// Indices of haplotype paths containing the variant's ALT context.
   /// Empty means variant was not found in any enumerated path.
-  absl::InlinedVector<u8, 8> mHapIndices;  // 8B inline — haplotype indices carrying variant
+  /// InlinedVector<u8, 8>: 8 inline slots fit within minimum InlinedVector
+  /// footprint (24B) — no wasted space. Typical count is 1–3 paths.
+  absl::InlinedVector<u8, 8> mHapIndices;  // 24B — haplotype indices carrying variant
 
   // ── 2B Align ────────────────────────────────────────────────────────────
   u16 mProbeId = 0;             // 2B — index into the variants vector
@@ -129,26 +143,30 @@ struct ProbeKRecord {
   u16 mGenoNonOverlapping = 0;    // 2B — ALT-carrying reads that didn't overlap alignment
 
   // ── 1B Align ────────────────────────────────────────────────────────────
-  bool mIsTraversalLimited = false;  // 1B — BFS budget exhausted during path enum
-  bool mIsCycleRetry = false;        // 1B — cycle detected, k was retried
-  bool mIsComplexRetry = false;      // 1B — graph too complex, k was retried
-  bool mIsNoAnchor = false;          // 1B — component had no valid source/sink
+  bool mIsTraversalLimited = false;  // 1B — BFS walk-tree budget exhausted during path enum
+  bool mIsGraphCycle = false;        // 1B — de Bruijn graph had a cycle in this component
+  bool mIsGraphComplex = false;      // 1B — graph exceeded complexity threshold for this component
+  bool mIsNoAnchor = false;          // 1B — component had no valid source/sink anchor pair
   bool mIsShortAnchor = false;       // 1B — anchor region too short (<150bp)
-  bool mIsVariantInAnchor = false;   // 1B — variant overlaps source/sink k-mer range
+  bool mIsVariantInAnchor = false;   // 1B — overlaps source/sink k-mer range (diagnostic only)
 
   // MSA extraction flags
-  bool mIsMsaExactMatch = false;      // 1B — exact position + allele match in VariantSet
-  bool mIsMsaShifted = false;         // 1B — same allele but shifted position
-  bool mIsMsaRepresentation = false;  // 1B — variant subsumed by larger MNV representation
+  bool mIsMsaExactMatch = false;  // 1B — exact position + allele match in VariantSet
+  bool mIsMsaShifted = false;     // 1B — same allele but shifted position
+  bool mIsMsaSubsumed = false;    // 1B — alleles absorbed into a larger MNV by MSA alignment
 
   // Genotyper outcome flags
   bool mIsGenoHasAltSupport = false;  // 1B — genotyper found >0 reads supporting truth ALT
-  bool mIsGenoNoResult = false;       // 1B — variant not found in genotyper result map
-  bool mIsNotProcessed = false;       // 1B — probe never activated in any window
+  bool mIsGenoNoOverlap = false;  // 1B — zero read alignments overlapped variant's haplotype coords
+  bool mIsNotProcessed = false;   // 1B — probe never activated in any window
 };
 
 // ============================================================================
 // ProbeTracker: zero-overhead diagnostic for tracing variant k-mer survival.
+//
+// Pure data emitter — captures every observed fact per (probe_id, window,
+// comp_id, k) attempt. No attribution logic. All stage attribution is
+// performed downstream in the Python analysis script.
 //
 // Architecture:
 //   - Always compiled, no #ifdef. All methods are no-ops when mVariants is
@@ -158,16 +176,23 @@ struct ProbeKRecord {
 //   - Node tagging uses a side-table (mNodeTags) keyed by NodeID, avoiding
 //     any modifications to the Node class itself.
 //
+// Record key: (probe_id, window, comp_id, k)
+//   A single probe may generate multiple records across overlapping windows,
+//   different connected components, and k-value iterations. Each record
+//   independently tracks survival counts, structural flags, path matches,
+//   MSA extraction results, and genotyper outcomes.
+//
 // Lifecycle per window × k:
 //   1. GenerateAndTag — clear side-table, find probes in this window,
 //      generate ALT k-mers at current k, tag matching nodes.
-//   2. LogStatus("after_build") — count surviving tags.
-//   3. Graph mutations (RemoveNode, CompressNode) trigger OnNodeRemove /
+//   2. CountInReads — count ALT-unique k-mers in raw reads.
+//   3. LogStatus(PRUNED_AT_BUILD) — count surviving tags (comp_id=0).
+//   4. Graph mutations (RemoveNode, CompressNode) trigger OnNodeRemove /
 //      OnNodeMerge to keep the side-table synchronized.
-//   4. LogStatus at each pruning boundary.
-//   5. CheckAnchorOverlap — flag probes whose variant overlaps anchors.
-//   6. CheckPaths — substring-check for variant in enumerated haplotypes.
-//   7. WriteResults — emit probe_results.tsv at pipeline completion.
+//   5. LogStatus at each pruning boundary (comp_id from Context).
+//   6. CheckAnchorOverlap — flag probes whose variant overlaps anchors.
+//   7. CheckPaths — substring-check for variant in enumerated haplotypes.
+//   8. SubmitCompleted — flush records to writer after each window.
 // ============================================================================
 class ProbeTracker {
  public:
@@ -247,7 +272,8 @@ class ProbeTracker {
   void OnNodeRemove(NodeID node_id);
 
   /// Count surviving tagged k-mers per probe and log + record at a pipeline stage.
-  void LogStatus(PruneStage stage, Context const& ctx);
+  /// Requires the node table for per-component filtering of survival counts.
+  void LogStatus(PruneStage stage, Context const& ctx, NodeTable const& nodes);
 
   /// Flag probes whose variant position overlaps the source/sink anchor k-mers.
   void CheckAnchorOverlap(AnchorInfo const& source, AnchorInfo const& sink, Context const& ctx);
@@ -255,11 +281,15 @@ class ProbeTracker {
   /// Check if any enumerated haplotype path contains each probe's ALT context.
   void CheckPaths(absl::Span<Path const> haplotypes, Context const& ctx);
 
-  /// Flag the current k-attempt as a cycle/complex/no-anchor/short-anchor retry.
-  void SetCycleRetry(Context const& ctx);
-  void SetComplexRetry(Context const& ctx);
-  void SetNoAnchor(Context const& ctx);
-  void SetShortAnchor(Context const& ctx);
+  /// Flag the current k-attempt as a graph cycle / graph too complex.
+  void SetGraphCycle(Context const& ctx);
+  void SetGraphComplex(Context const& ctx);
+
+  /// Flag probes with tagged nodes in this component as having no valid anchor.
+  /// Checks component membership before setting — only probes with tagged nodes
+  /// in ctx.mCompId are flagged, preventing cross-component contamination.
+  void SetNoAnchor(Context const& ctx, NodeTable const& nodes);
+  void SetShortAnchor(Context const& ctx, NodeTable const& nodes);
 
   /// Mark all active probes with the traversal limit flag.
   void SetTraversalLimit(Context const& ctx);
@@ -283,9 +313,11 @@ class ProbeTracker {
     return absl::MakeConstSpan(mActiveProbeIds);
   }
 
-  /// Record for the final k-value assembly attempt for a given probe.
-  /// Searches records in reverse order (highest k first) for the last entry.
-  [[nodiscard]] auto FindFinalKRecord(u16 probe_id) -> ProbeKRecord&;
+  /// All records for this probe that have non-empty haplotype path indices.
+  /// Returns pointers to each matching record for MSA/genotyper annotation.
+  /// InlinedVector<*, 4>: typical probes succeed in ≤4 (window × component)
+  /// combinations, so 4 inline slots avoid heap allocation in the common case.
+  [[nodiscard]] auto FindRecordsWithPaths(u16 probe_id) -> absl::InlinedVector<ProbeKRecord*, 4>;
 
   /// Per-probe read ownership index (populated by CountInReads).
   /// Maps probe_id → set of qname hashes that carry ALT-unique k-mers.
@@ -293,6 +325,12 @@ class ProbeTracker {
       -> absl::flat_hash_map<u16, absl::flat_hash_set<u32>> const& {
     return mProbeReadIndex;
   }
+
+  /// True if this probe has any tagged graph nodes in the specified component.
+  /// Used by SetNoAnchor/SetShortAnchor to filter structural flags to only
+  /// probes that actually participate in the failing component.
+  [[nodiscard]] auto HasTaggedNodesInComponent(u16 probe_id, usize comp_id,
+                                               NodeTable const& nodes) const -> bool;
 
  private:
   // ── 8B Align ────────────────────────────────────────────────────────────
@@ -306,11 +344,23 @@ class ProbeTracker {
   absl::flat_hash_map<u16, absl::flat_hash_set<u32>> mProbeReadIndex;
   absl::flat_hash_set<u16> mActiveProbeIdSet;
 
-  /// Find or create a ProbeKRecord for the given (probe_id, kmer_size) pair.
-  [[nodiscard]] auto FindOrCreateRecord(u16 probe_id, usize kmer_size) -> ProbeKRecord&;
+  // ============================================================================
+  // FindOrCreateRecord: 4-key lookup for probe lifecycle records.
+  //
+  // Searches mRecords for a record matching (probe_id, region, comp_id, kmer_size).
+  // If found, returns a reference to the existing record. If not found, creates
+  // a new record with those key fields and appends it to mRecords.
+  //
+  // O(n) linear scan — acceptable for typical probe counts (<100 per window).
+  // If profiling shows a hot spot, switch to a hash map of indices.
+  // ============================================================================
+  [[nodiscard]] auto FindOrCreateRecord(u16 probe_id, std::string_view region, usize comp_id,
+                                        usize kmer_size) -> ProbeKRecord&;
 
   /// Count surviving k-mers per probe from the side-table with offset analysis.
-  [[nodiscard]] auto CountSurvivingKmers() const -> absl::flat_hash_map<u16, SurvivalProfile>;
+  /// When nodes is non-null, only counts tags on nodes belonging to comp_id.
+  [[nodiscard]] auto CountSurvivingKmers(NodeTable const* nodes, usize comp_id) const
+      -> absl::flat_hash_map<u16, SurvivalProfile>;
 };
 
 }  // namespace lancet::cbdg

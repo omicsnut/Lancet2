@@ -155,18 +155,21 @@ void ProbeDiagnostics::Initialize(std::filesystem::path const& variants_path,
 // CheckMsaExtraction: classify how each truth probe appeared (or didn't)
 // in the MSA-extracted VariantSet.
 //
+// Annotates ALL records with non-empty haplotype path indices, not just one
+// "best" record. This ensures that each (probe, window, component, k) attempt
+// gets independent MSA classification.
+//
 // Three match tiers (in priority order):
 //   1. Exact match: same genomic position + same REF/ALT alleles.
 //   2. Shifted match: same REF/ALT alleles but different position (indel
 //      left-alignment artifact or flanking-sequence normalization).
-//   3. Representation match: variant position matches but truth allele was
-//      subsumed into a larger MNV representation.
+//   3. Subsumed match: variant position matches but truth allele was
+//      absorbed into a larger MNV by MSA realignment.
 //
-// If no match at any tier, the record's MSA flags all remain false, which
-// DeriveLostAt classifies as "msa_no_variant."
+// If no match at any tier, the record's MSA flags all remain false.
 // ============================================================================
 void ProbeDiagnostics::CheckMsaExtraction(caller::VariantSet const& variant_set,
-                                          Window const& window, usize /*component_idx*/) {
+                                          Window const& window) {
   auto const variants = mTracker.Variants();
   if (variants.empty()) return;
 
@@ -176,23 +179,24 @@ void ProbeDiagnostics::CheckMsaExtraction(caller::VariantSet const& variant_set,
     auto const& probe = variants[probe_id];
     if (probe.mChrom != chrom_name) continue;
 
-    auto& record = mTracker.FindFinalKRecord(probe_id);
-    if (record.mHapIndices.empty()) continue;
+    // Annotate EVERY record for this probe that has haplotype paths
+    auto records = mTracker.FindRecordsWithPaths(probe_id);
+    for (auto* record : records) {
+      // Tier 1: exact match (position + alleles)
+      auto const [matching_var, truth_alt_idx] = FindMatchingVariant(variant_set, probe);
+      if (matching_var != nullptr) {
+        record->mIsMsaExactMatch = true;
+        record->mMsaShiftBp = 0;
+        continue;
+      }
 
-    // Tier 1: exact match (position + alleles)
-    auto const [matching_var, truth_alt_idx] = FindMatchingVariant(variant_set, probe);
-    if (matching_var != nullptr) {
-      record.mIsMsaExactMatch = true;
-      record.mMsaShiftBp = 0;
-      continue;
+      // Tier 2: shifted match (same alleles, different position)
+      FindShiftedMatch(variant_set, probe, *record);
+      if (record->mIsMsaShifted) continue;
+
+      // Tier 3: subsumed match (variant absorbed into larger MNV)
+      CheckMsaRepresentationMatch(variant_set, probe, *record);
     }
-
-    // Tier 2: shifted match (same alleles, different position)
-    FindShiftedMatch(variant_set, probe, record);
-    if (record.mIsMsaShifted) continue;
-
-    // Tier 3: representation match (variant subsumed by MNV)
-    CheckMsaRepresentationMatch(variant_set, probe, record);
   }
 }
 
@@ -224,7 +228,7 @@ void ProbeDiagnostics::CheckMsaRepresentationMatch(caller::VariantSet const& var
       if (offset + probe.mAlt.size() > allele.mSequence.size()) continue;
       if (allele.mSequence.substr(offset, probe.mAlt.size()) != probe.mAlt) continue;
 
-      record.mIsMsaRepresentation = true;
+      record.mIsMsaSubsumed = true;
       return;
     }
   }
@@ -233,8 +237,11 @@ void ProbeDiagnostics::CheckMsaRepresentationMatch(caller::VariantSet const& var
 // ============================================================================
 // CheckGenotyperResult: verify genotyper read assignment for each probe.
 //
-// For each probe that achieved an exact MSA match (mIsMsaExactMatch==true),
-// finds the corresponding RawVariant in the genotyper result map and:
+// Annotates ALL records with paths that achieved an exact MSA match, not
+// just one "best" record. Each (probe, window, component, k) attempt gets
+// independent genotyper outcome classification.
+//
+// For each matching record:
 //   1. Records total ALT and REF coverage from the genotyper
 //   2. Counts "stolen reads" — ALT-carrying reads misassigned to REF or
 //      a different ALT allele
@@ -242,41 +249,43 @@ void ProbeDiagnostics::CheckMsaRepresentationMatch(caller::VariantSet const& var
 //      appear in the genotyper alignment window at all
 // ============================================================================
 void ProbeDiagnostics::CheckGenotyperResult(caller::Genotyper::Result const& genotyped,
-                                            caller::VariantSet const& variant_set,
-                                            usize /*component_idx*/) {
+                                            caller::VariantSet const& variant_set) {
   auto const variants = mTracker.Variants();
   if (variants.empty()) return;
 
   for (auto const probe_id : mTracker.ActiveProbeIds()) {
-    auto& record = mTracker.FindFinalKRecord(probe_id);
-    if (!record.mIsMsaExactMatch) continue;
+    auto records = mTracker.FindRecordsWithPaths(probe_id);
+    for (auto* record : records) {
+      if (!record->mIsMsaExactMatch) continue;
 
-    auto const [matching_var, truth_alt_idx] = FindMatchingVariant(variant_set, variants[probe_id]);
-    if (matching_var == nullptr) continue;
+      auto const [matching_var, truth_alt_idx] =
+          FindMatchingVariant(variant_set, variants[probe_id]);
+      if (matching_var == nullptr) continue;
 
-    auto const geno_it = genotyped.find(matching_var);
-    if (geno_it == genotyped.end()) {
-      record.mIsGenoNoResult = true;
-      continue;
+      auto const geno_it = genotyped.find(matching_var);
+      if (geno_it == genotyped.end()) {
+        record->mIsGenoNoOverlap = true;
+        continue;
+      }
+
+      auto const& read_index = mTracker.ReadOwnershipIndex();
+      auto const reads_it = read_index.find(probe_id);
+      auto const* probe_reads = reads_it != read_index.end() ? &reads_it->second : nullptr;
+
+      for (auto const& named_support : geno_it->second) {
+        if (!named_support.mData) continue;
+
+        auto const alt_support = named_support.mData->TotalAlleleCov(truth_alt_idx);
+        record->mGenoTrueAltReads += static_cast<u16>(alt_support);
+        record->mGenoTotalRefReads += static_cast<u16>(named_support.mData->TotalRefCov());
+
+        if (probe_reads == nullptr) continue;
+        CountStolenReads(*named_support.mData, *probe_reads, truth_alt_idx, *record);
+        CountNonOverlappingReads(*named_support.mData, *probe_reads, *record);
+      }
+
+      record->mIsGenoHasAltSupport = record->mGenoTrueAltReads > 0;
     }
-
-    auto const& read_index = mTracker.ReadOwnershipIndex();
-    auto const reads_it = read_index.find(probe_id);
-    auto const* probe_reads = reads_it != read_index.end() ? &reads_it->second : nullptr;
-
-    for (auto const& named_support : geno_it->second) {
-      if (!named_support.mData) continue;
-
-      auto const alt_support = named_support.mData->TotalAlleleCov(truth_alt_idx);
-      record.mGenoTrueAltReads += static_cast<u16>(alt_support);
-      record.mGenoTotalRefReads += static_cast<u16>(named_support.mData->TotalRefCov());
-
-      if (probe_reads == nullptr) continue;
-      CountStolenReads(*named_support.mData, *probe_reads, truth_alt_idx, record);
-      CountNonOverlappingReads(*named_support.mData, *probe_reads, record);
-    }
-
-    record.mIsGenoHasAltSupport = record.mGenoTrueAltReads > 0;
   }
 }
 

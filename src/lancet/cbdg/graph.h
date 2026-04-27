@@ -216,8 +216,9 @@ class Graph {
   /// Enumerate all source→sink walks via MaxFlow BFS, sort ALT haplotypes by
   /// descending MinWeight (weakest-link confidence), deduplicate, and prepend
   /// a confidence-weighted reference path.
-  [[nodiscard]] auto EnumerateAndSortHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
-                                                std::string_view ref_anchor_seq) const
+  [[nodiscard]] auto BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
+                                     std::string_view ref_anchor_seq,
+                                     ProbeTracker::Context const& probe_ctx) const
       -> std::vector<Path>;
 
   /// Build a reference haplotype Path weighted by the median Confidence of
@@ -271,9 +272,9 @@ class Graph {
   void ProbeSetShortAnchor(Context const& ctx);
   void ProbeCheckAnchorOverlap(RefAnchor const& source, RefAnchor const& sink, Context const& ctx);
 
-  // Pruning retries: flag probes when k is retried due to cycles or complexity.
-  void ProbeSetCycleRetry(Context const& ctx);
-  void ProbeSetComplexRetry(Context const& ctx);
+  // Graph structure: flag probes when assembly encounters cycles or complexity.
+  void ProbeSetGraphCycle(Context const& ctx);
+  void ProbeSetGraphComplex(Context const& ctx);
 
   // Path enumeration: flag traversal-limited probes and check path survival.
   void ProbeSetTraversalLimit(Context const& ctx) const;
