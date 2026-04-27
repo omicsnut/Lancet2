@@ -967,7 +967,7 @@ def render_window_analysis(
 
     # ── Attempt distribution per probe ────────────────────────────────────
     attempts = probes.group_by("probe_id").agg(
-        pl.count().alias("n_attempts"),
+        pl.len().alias("n_attempts"),
         pl.col("window").n_unique().alias("n_windows"),
         pl.col("comp_id").n_unique().alias("n_components"),
         pl.col("kmer_size").n_unique().alias("n_k_values"),
@@ -1030,7 +1030,7 @@ def render_window_analysis(
         .filter(pl.col("window") != ".")
         .group_by("window")
         .agg(
-            pl.count().alias("n_records"),
+            pl.len().alias("n_records"),
             pl.col("probe_id").n_unique().alias("n_probes"),
             (pl.col("lost_at_stage") == "survived").sum().alias("n_survived"),
             (pl.col("lost_at_stage").is_in(
