@@ -61,9 +61,10 @@ class VariantBuilder {
     SKIPPED_NONLY_REF_BASES = 1,
     SKIPPED_REF_REPEAT_SEEN = 2,
     SKIPPED_INACTIVE_REGION = 3,
-    SKIPPED_NOASM_HAPLOTYPE = 4,
-    MISSING_NO_MSA_VARIANTS = 5,
-    FOUND_GENOTYPED_VARIANT = 6
+    SKIPPED_LOW_COVERAGE = 4,
+    SKIPPED_NOASM_HAPLOTYPE = 5,
+    MISSING_NO_MSA_VARIANTS = 6,
+    FOUND_GENOTYPED_VARIANT = 7
   };
 
   [[nodiscard]] auto CurrentStatus() const noexcept -> StatusCode { return mCurrentCode; }
