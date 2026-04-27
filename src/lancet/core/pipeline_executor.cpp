@@ -54,7 +54,7 @@ namespace {
                                        {SKIPPED_NONLY_REF_BASES, 0},
                                        {SKIPPED_REF_REPEAT_SEEN, 0},
                                        {SKIPPED_INACTIVE_REGION, 0},
-                                       {SKIPPED_LOW_COVERAGE, 0},
+                                       {SKIPPED_ANCHOR_COVERAGE, 0},
                                        {SKIPPED_NOASM_HAPLOTYPE, 0},
                                        {MISSING_NO_MSA_VARIANTS, 0},
                                        {FOUND_GENOTYPED_VARIANT, 0}};

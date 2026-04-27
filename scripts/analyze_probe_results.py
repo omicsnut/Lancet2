@@ -122,7 +122,7 @@ _WINDOW_STATUS_TO_SUBSTAGE: dict[str, tuple[str, int]] = {
     "SKIPPED_NONLY_REF_BASES":  ("not_processed:ref_all_n",            0),
     "SKIPPED_REF_REPEAT_SEEN": ("not_processed:ref_repeat",           1),
     "SKIPPED_INACTIVE_REGION": ("not_processed:inactive",             2),
-    "SKIPPED_LOW_COVERAGE":    ("not_processed:low_coverage",         3),
+    "SKIPPED_ANCHOR_COVERAGE":    ("not_processed:low_coverage",         3),
     "SKIPPED_NOASM_HAPLOTYPE": ("not_processed:no_alt_haplotype",     4),
     "FOUND_GENOTYPED_VARIANT": ("not_processed:other_variant_called", 5),
 }

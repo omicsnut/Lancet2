@@ -248,7 +248,7 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
   if (cross_sample_cov < static_cast<f64>(mParamsPtr->mGraphParams.mMinAnchorCov)) {
     LOG_DEBUG("Skipping window {} with {:.2f}x total coverage as min. anchor coverage is {}x",
               region_string, cross_sample_cov, mParamsPtr->mGraphParams.mMinAnchorCov)
-    mCurrentCode = StatusCode::SKIPPED_LOW_COVERAGE;
+    mCurrentCode = StatusCode::SKIPPED_ANCHOR_COVERAGE;
     return {};
   }
 
@@ -326,8 +326,8 @@ auto ToString(VariantBuilder::StatusCode const status_code) -> std::string {
       return "SKIPPED_REF_REPEAT_SEEN";
     case SKIPPED_INACTIVE_REGION:
       return "SKIPPED_INACTIVE_REGION";
-    case SKIPPED_LOW_COVERAGE:
-      return "SKIPPED_LOW_COVERAGE";
+    case SKIPPED_ANCHOR_COVERAGE:
+      return "SKIPPED_ANCHOR_COVERAGE";
     case SKIPPED_NOASM_HAPLOTYPE:
       return "SKIPPED_NOASM_HAPLOTYPE";
     case MISSING_NO_MSA_VARIANTS:

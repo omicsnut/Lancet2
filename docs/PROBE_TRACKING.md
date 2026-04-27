@@ -292,7 +292,7 @@ When `--log` points to the Lancet2 debug log, probes attributed as
 | `not_processed:ref_all_n` | `SKIPPED_NONLY_REF_BASES` | Window reference is all N bases |
 | `not_processed:ref_repeat` | `SKIPPED_REF_REPEAT_SEEN` | Window has k-mer repeats (guaranteed graph cycle) |
 | `not_processed:inactive` | `SKIPPED_INACTIVE_REGION` | Window had no mutation evidence |
-| `not_processed:low_coverage` | `SKIPPED_LOW_COVERAGE` | Window coverage below MinAnchorCov (5×) |
+| `not_processed:low_coverage` | `SKIPPED_ANCHOR_COVERAGE` | Window coverage below MinAnchorCov (5×) |
 | `not_processed:no_alt_haplotype` | `SKIPPED_NOASM_HAPLOTYPE` | Assembly ran but found no variant haplotypes |
 | `not_processed:other_variant_called` | `FOUND_GENOTYPED_VARIANT` | Window called other variants, not this one |
 
