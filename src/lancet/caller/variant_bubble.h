@@ -29,6 +29,7 @@ namespace lancet::caller {
 // Encapsulates per-bubble allele sequences extracted from the SPOA DAG,
 // separate from graph traversal logic. Applies multi-allelic VCF parsimony
 // trimming (right-trim then left-trim) to normalize the REF/ALT strings.
+// https://genome.sph.umich.edu/wiki/Variant_Normalization
 // ============================================================================
 class VariantBubble {
  public:
