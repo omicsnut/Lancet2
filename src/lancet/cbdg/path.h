@@ -2,8 +2,10 @@
 #define SRC_LANCET_CBDG_PATH_H_
 
 #include "lancet/base/types.h"
+#include "lancet/cbdg/node.h"
 
 #include "absl/container/inlined_vector.h"
+#include "absl/types/span.h"
 
 #include <string>
 #include <string_view>
@@ -32,6 +34,14 @@ class Path {
   /// contributed to the haplotype string. Called alongside AddNodeCoverage
   /// during walk construction — one call per node in the walk.
   void AddNodeWeight(u32 weight, u32 num_bases);
+
+  /// Record a visited node's ID during walk construction.
+  /// Called alongside AddNodeCoverage/AddNodeWeight for each node in the walk.
+  void AddWalkNodeId(NodeID node_id);
+
+  /// Ordered list of NodeIDs visited by this walk (source -> sink).
+  /// Empty for the REF haplotype (which has no walk backing it).
+  [[nodiscard]] auto WalkNodeIds() const -> absl::Span<NodeID const>;
 
   /// Compute summary statistics (mean, median, CV, QCV) from accumulated node coverages.
   void Finalize();
@@ -73,6 +83,7 @@ class Path {
   std::string mSequence;
   absl::InlinedVector<u32, 256> mNodeCoverages;
   absl::InlinedVector<NodeWeightEntry, 256> mNodeWeights;
+  absl::InlinedVector<NodeID, 256> mWalkNodeIds;
   f64 mMeanCov = 0.0;
   f64 mMedianCov = 0.0;
   f64 mStdDevCov = 0.0;

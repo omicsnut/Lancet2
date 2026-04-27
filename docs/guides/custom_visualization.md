@@ -53,8 +53,8 @@ states (can only be visualized in `Debug` mode Lancet2 binary. ideal for small r
 
 !!! note "Note"
 
-    Only the `fully_pruned` graph will be serialized when the standard `Release` build is used.
-    The remaining 7 other states can only be visualized in the `Debug` build of Lancet2 (`LANCET_DEVELOP_MODE`).
+    Both `fully_pruned` and `enumerated_walks` graphs are always serialized when `--graphs-dir` is set.
+    The remaining 6 intermediate states can only be visualized in the `Debug` build of Lancet2 (`LANCET_DEVELOP_MODE`).
     The `Debug` build is much slower than the standard `Release` build and is only recommended
     to be used on small regions for inspection.
 
@@ -79,6 +79,14 @@ states (can only be visualized in `Debug` mode Lancet2 binary. ideal for small r
 
 #### `fully_pruned`
 ![fully_pruned](../assets/07_dbg__chr1_38506673_38507173__fully_pruned__k31__comp1.png){ align=left, loading=lazy }
+
+#### `enumerated_walks`
+
+This stage overlays the enumerated haplotype walks onto the fully-pruned graph with
+maximally-distinct edge colors. Each walk's edges are colored using a 64-entry palette
+pre-computed via k-means clustering in CIE L\*a\*b\* perceptual color space. Higher-confidence
+walks take color priority on shared edges (DOT last-writer-wins semantics). The REF haplotype
+is not colored because it has no MaxFlow walk backing it.
 
 ## Inspecting `GFA` formatted sequence graphs
 

@@ -198,6 +198,7 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       ProbeCheckPaths(absl::MakeConstSpan(haps), probe_ctx);
 
       if (haps.empty()) continue;
+      WriteDot(GraphState::ENUMERATED_WALKS, component_index, absl::MakeConstSpan(haps));
       results.emplace_back(std::move(haps), graph_complexity, static_cast<u32>(source.mRefOffset));
     }
 
@@ -894,13 +895,15 @@ auto Graph::BuildRefHaplotypePath(usize const comp_id, std::string_view ref_anch
 // Debug DOT Visualization
 // ============================================================================
 
-void Graph::WriteDot([[maybe_unused]] GraphState state, usize comp_id) {
+void Graph::WriteDot([[maybe_unused]] GraphState state, usize const comp_id,
+                     absl::Span<Path const> walks) {
   if (mParams.mOutGraphsDir.empty()) return;
 
 #ifdef LANCET_DEVELOP_MODE
   auto const graph_state = ToString(state);
 #else
-  auto const* graph_state = "fully_pruned";
+  auto const* graph_state =
+      state == GraphState::ENUMERATED_WALKS ? "enumerated_walks" : "fully_pruned";
 #endif
 
   using namespace std::string_view_literals;
@@ -918,10 +921,10 @@ void Graph::WriteDot([[maybe_unused]] GraphState state, usize comp_id) {
     DotOverlaySets const probe_highlight{
         .mNodes = mProbeTrackerPtr->GetHighlightNodeIds(mNodes, comp_id)};
     DotOverlaySets const anchor_bg{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    SerializeToDot(mNodes, out_path, comp_id, probe_highlight, anchor_bg);
+    SerializeToDot(mNodes, out_path, comp_id, probe_highlight, anchor_bg, walks);
   } else {
     DotOverlaySets const highlight{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    SerializeToDot(mNodes, out_path, comp_id, highlight);
+    SerializeToDot(mNodes, out_path, comp_id, highlight, {}, walks);
   }
 }
 

@@ -231,7 +231,10 @@ class Graph {
   // ============================================================================
 
   /// Write the current graph state to a Graphviz DOT file for visual debugging.
-  void WriteDot([[maybe_unused]] GraphState state, usize comp_id);
+  /// If `walks` is non-empty (ENUMERATED_WALKS stage), the DOT file includes
+  /// per-walk edge color overlays appended after the normal graph rendering.
+  void WriteDot([[maybe_unused]] GraphState state, usize comp_id,
+                absl::Span<Path const> walks = {});
 
 #ifdef LANCET_DEVELOP_MODE
   template <class... Args>

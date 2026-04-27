@@ -202,6 +202,15 @@ description = "Analyze a gperftools CPU profile (use -- for additional flags)"
 [feature.hts-tools]
 channels = ["conda-forge", "bioconda"]
 
+[feature.walk-palette]
+channels = ["conda-forge", "bioconda"]
+
+[feature.walk-palette.dependencies]
+numpy = "==2.4.3"
+scipy = "==1.17.1"
+scikit-image = "==0.26.0"
+scikit-learn = "==1.8.0"
+
 [feature.hts-tools.dependencies]
 samtools = "==1.23.1"
 bcftools = "==1.23.1"
@@ -215,3 +224,4 @@ polars = "==1.40.0"
 [environments]
 profiling = { features = ["profiling"], solve-group = "default" }
 hts-tools = { features = ["hts-tools"], solve-group = "hts-tools", no-default-feature = true }
+walk-palette = { features = ["walk-palette"], solve-group = "walk-palette", no-default-feature = true }
