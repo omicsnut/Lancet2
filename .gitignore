@@ -429,8 +429,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Ignore datasets
+# Ignore datasets and notes
 data/**
+notes/**
 !data/download_test_data.sh
 
 # profiling data
