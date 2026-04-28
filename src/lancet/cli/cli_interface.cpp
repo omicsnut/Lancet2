@@ -3,6 +3,7 @@
 #include "lancet/base/logging.h"
 #include "lancet/base/types.h"
 #include "lancet/base/version.h"
+#include "lancet/cbdg/dot_plan.h"
 #include "lancet/cbdg/graph_params.h"
 #include "lancet/cli/cli_params.h"
 #include "lancet/cli/pipeline_runner.h"
@@ -24,6 +25,7 @@ extern "C" {
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -263,6 +265,16 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
   AddOpt(sub, "--graphs-dir", var_params.mOutGraphsDir,
          "Output directory to write per window graphs", GRP_OPTIONAL)
       ->check(CLI::NonexistentPath | CLI::ExistingDirectory);
+  AddOpt(sub, "--graph-snapshots", graph_params.mSnapshotMode,
+         "DOT graph snapshot verbosity. 'final' (default) emits one DOT per "
+         "component per window; 'verbose' additionally emits intermediate-stage "
+         "snapshots after each pruning boundary (compress1, lowcov2, compress2, tips).",
+         GRP_OPTIONAL)
+      ->transform(CLI::CheckedTransformer(
+          std::map<std::string, cbdg::GraphSnapshotMode>{
+              {"final", cbdg::GraphSnapshotMode::FINAL},
+              {"verbose", cbdg::GraphSnapshotMode::VERBOSE}},
+          CLI::ignore_case));
   AddOpt(sub, "--genome-gc-bias", var_params.mGcFraction,
          "Global genome GC fraction for LongdustQ score correction. "
          "Default: 0.41 (human genome-wide average). "

@@ -6,6 +6,11 @@
 #include "lancet/base/timer.h"
 #include "lancet/base/types.h"
 #include "lancet/cbdg/cycle_finder.h"
+#include "lancet/cbdg/dot_layers.h"
+#include "lancet/cbdg/dot_overlay_factories.h"
+#include "lancet/cbdg/dot_plan.h"
+#include "lancet/cbdg/dot_renderer.h"
+#include "lancet/cbdg/dot_walk_layers.h"
 #include "lancet/cbdg/edge.h"
 #include "lancet/cbdg/kmer.h"
 #include "lancet/cbdg/max_flow.h"
@@ -29,6 +34,7 @@
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -126,7 +132,10 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
     ProbeLogStatus(PruneStage::PRUNED_AT_BUILD, probe_ctx);
 
     RemoveLowCovNodes(0);
-    WriteDotDevelop(GraphState::FIRST_LOW_COV_REMOVAL, 0);
+    // The pre-component pre-compression graph is intentionally not snapshot
+    // here; it has tens of thousands of nodes per window and is unusable as
+    // a rendered DOT. Verbose mode picks up at the first post-compression
+    // stage instead (see PruneComponent).
     ProbeLogStatus(PruneStage::PRUNED_AT_LOWCOV1, probe_ctx);
 
     auto const connected_components = MarkConnectedComponents();
@@ -166,7 +175,9 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       ProbeCheckAnchorOverlap(source, sink, probe_ctx);
       mSourceAndSinkIds = NodeIDPair{source.mAnchorId, sink.mAnchorId};
       ref_anchor_seq = region_seq.substr(source.mRefOffset, ref_anchor_len);
-      WriteDotDevelop(GraphState::FOUND_REF_ANCHORS, component_index);
+      // Anchor discovery snapshot dropped; the per-component pre-compression
+      // graph is still too large to render usefully. Subsequent compression
+      // stages within PruneComponent are the first usable snapshots.
       PruneComponent(component_index);
 
       // Build the flat traversal index on the frozen (fully-pruned) graph.
@@ -199,7 +210,7 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       }
 
       auto haps = BuildHaplotypes(component_index, traversal_index, ref_anchor_seq, probe_ctx);
-      ProbeCheckPaths(absl::MakeConstSpan(haps), probe_ctx);
+      ProbeCheckPaths(haps, probe_ctx);
 
       // Buffer one FINAL snapshot per component. The filename substring is
       // chosen by walk presence: `enumerated_walks` when haps is non-empty,
@@ -513,19 +524,19 @@ void Graph::PruneComponent(usize const component_id) {
   Context const prune_ctx{.mRegStr = reg_str, .mKmerSize = mCurrK, .mCompId = component_id};
 
   CompressGraph(component_id);
-  WriteDotDevelop(GraphState::FIRST_COMPRESSION, component_id);
+  BufferStageSnapshot(PruneStage::PRUNED_AT_COMPRESS1, component_id);
   ProbeLogStatus(PruneStage::PRUNED_AT_COMPRESS1, prune_ctx);
 
   RemoveLowCovNodes(component_id);
-  WriteDotDevelop(GraphState::SECOND_LOW_COV_REMOVAL, component_id);
+  BufferStageSnapshot(PruneStage::PRUNED_AT_LOWCOV2, component_id);
   ProbeLogStatus(PruneStage::PRUNED_AT_LOWCOV2, prune_ctx);
 
   CompressGraph(component_id);
-  WriteDotDevelop(GraphState::SECOND_COMPRESSION, component_id);
+  BufferStageSnapshot(PruneStage::PRUNED_AT_COMPRESS2, component_id);
   ProbeLogStatus(PruneStage::PRUNED_AT_COMPRESS2, prune_ctx);
 
   RemoveTips(component_id);
-  WriteDotDevelop(GraphState::SHORT_TIP_REMOVAL, component_id);
+  BufferStageSnapshot(PruneStage::PRUNED_AT_TIPS, component_id);
   ProbeLogStatus(PruneStage::PRUNED_AT_TIPS, prune_ctx);
 }
 
@@ -835,21 +846,22 @@ void Graph::RemoveTips(usize const component_id) {
 
 auto Graph::BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
                             std::string_view ref_anchor_seq,
-                            ProbeTracker::Context const& probe_ctx) const -> std::vector<Path> {
-  std::vector<Path> haplotypes;
+                            ProbeTracker::Context const& probe_ctx) const
+    -> std::vector<EnumeratedHaplotype> {
+  std::vector<EnumeratedHaplotype> haplotypes;
   auto const reg_str = mRegion->ToSamtoolsRegion();
 
   LOG_TRACE("Starting walk enumeration for {} with k={}, num_nodes={}", reg_str, mCurrK,
             mNodes.size())
 
   MaxFlow max_flow(&mNodes, mCurrK, &trav_idx, mParams.mNumSamples);
-  auto path_seq = max_flow.NextPath();
+  auto next_hap = max_flow.NextPath();
 
-  while (path_seq) {
+  while (next_hap) {
     LOG_DEBUG("Assembled {}bp path sequence for {} comp={} with k={}",
-              path_seq->Sequence().length(), reg_str, comp_id, mCurrK)
-    haplotypes.emplace_back(std::move(*path_seq));
-    path_seq = max_flow.NextPath();
+              next_hap->mPath.Sequence().length(), reg_str, comp_id, mCurrK)
+    haplotypes.emplace_back(std::move(*next_hap));
+    next_hap = max_flow.NextPath();
   }
 
   if (max_flow.HitTraversalLimit()) {
@@ -862,32 +874,88 @@ auto Graph::BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
 
   // Sort ALT haplotypes by descending MinWeight (weakest-link confidence).
   // A path is only as trustworthy as its least-supported node.
-  std::ranges::sort(haplotypes, [](Path const& lhs, Path const& rhs) -> bool {
-    return lhs.MinWeight() > rhs.MinWeight();
-  });
+  std::ranges::sort(haplotypes,
+                    [](EnumeratedHaplotype const& lhs, EnumeratedHaplotype const& rhs) -> bool {
+                      return lhs.mPath.MinWeight() > rhs.mPath.MinWeight();
+                    });
 
   // Deduplicate by sequence. Because the array is sorted by MinWeight,
   // this retains the highest-MinWeight copy for any duplicate sequence.
   absl::flat_hash_set<std::string_view> seen_seqs;
-  std::erase_if(haplotypes, [&seen_seqs, &ref_anchor_seq](Path const& path) -> bool {
-    auto const [_unused, inserted] = seen_seqs.insert(path.Sequence());
-    return !inserted || path.Sequence() == ref_anchor_seq;
+  std::erase_if(haplotypes, [&seen_seqs, &ref_anchor_seq](EnumeratedHaplotype const& hap) -> bool {
+    auto const [_unused, inserted] = seen_seqs.insert(hap.mPath.Sequence());
+    return !inserted || hap.mPath.Sequence() == ref_anchor_seq;
   });
 
-  haplotypes.emplace(haplotypes.begin(), BuildRefHaplotypePath(comp_id, ref_anchor_seq));
+  haplotypes.emplace(haplotypes.begin(), BuildRefHaplotype(comp_id, ref_anchor_seq));
 
   return haplotypes;
 }
 
 // ============================================================================
-// BuildRefHaplotypePath: construct a reference path weighted by the median
-// Confidence of surviving REFERENCE-tagged nodes in the component.
+// ReconstructRefWalk — Trace the surviving REF backbone in node-id space.
 //
-// This keeps the REF backbone on the same coverage-based scale as the ALT
-// per-node weights, preventing SPOA from ignoring the reference anchor.
+// `mRefNodeIds` was populated at graph construction (one canonical k-mer ID
+// per ref position). After pruning + compression, some IDs no longer appear
+// in the node table because:
+//   - their nodes were absorbed into a compressed unitig (the surviving
+//     unitig keeps the ID of whichever node started the absorbing chain),
+//   - their nodes were removed by low-coverage pruning or tip removal.
+//
+// We walk `mRefNodeIds` left-to-right keeping only IDs that survive in this
+// component. For each consecutive pair of survivors we look up the actual
+// `Edge` connecting them in the graph (there is at most one such edge along
+// a clean REF backbone — it carries `EdgeKind` + sign-pair information that
+// the renderer needs to disambiguate parallel hairpin edges). If any pair
+// has no connecting edge the backbone is considered fragmented and an empty
+// walk is returned.
 // ============================================================================
-auto Graph::BuildRefHaplotypePath(usize const comp_id, std::string_view ref_anchor_seq) const
-    -> Path {
+namespace {
+
+auto ReconstructRefWalk(absl::Span<NodeID const> ref_node_ids, Graph::NodeTable const& nodes,
+                        usize const comp_id) -> std::vector<Edge> {
+  std::vector<NodeID> surviving;
+  surviving.reserve(ref_node_ids.size());
+  for (NodeID const ref_id : ref_node_ids) {
+    auto const itr = nodes.find(ref_id);
+    if (itr == nodes.end()) continue;
+    if (itr->second->GetComponentId() != comp_id) continue;
+    if (!surviving.empty() && surviving.back() == ref_id) continue;  // collapse repeats
+    surviving.push_back(ref_id);
+  }
+
+  std::vector<Edge> walk;
+  if (surviving.size() < 2) return walk;
+  walk.reserve(surviving.size() - 1);
+
+  for (usize idx = 0; idx + 1 < surviving.size(); ++idx) {
+    auto const src_itr = nodes.find(surviving[idx]);
+    LANCET_ASSERT(src_itr != nodes.end())
+    auto const& edges = *src_itr->second;
+    auto const* const found =
+        std::ranges::find_if(edges, [next_id = surviving[idx + 1]](Edge const& edge) {
+          return edge.DstId() == next_id;
+        });
+    if (found == edges.end()) return {};  // backbone fragmented; abandon
+    walk.push_back(*found);
+  }
+
+  return walk;
+}
+
+}  // namespace
+
+// ============================================================================
+// BuildRefHaplotype: reference-anchor `Path` weighted by the median
+// Confidence of surviving REFERENCE-tagged nodes in the component, bundled
+// with the reconstructed REF walk through the post-prune compressed graph.
+//
+// The Path keeps REF on the same coverage-based scale as the ALT per-node
+// weights so SPOA does not ignore the reference anchor. The walk is what
+// the DOT renderer overlays as walk index 0.
+// ============================================================================
+auto Graph::BuildRefHaplotype(usize const comp_id, std::string_view ref_anchor_seq) const
+    -> EnumeratedHaplotype {
   absl::InlinedVector<u32, 256> ref_confidences;
   for (auto const& [nid, node_ptr] : mNodes) {
     if (node_ptr->GetComponentId() != comp_id) continue;
@@ -904,72 +972,105 @@ auto Graph::BuildRefHaplotypePath(usize const comp_id, std::string_view ref_anch
   ref_path.AppendSequence(ref_anchor_seq);
   ref_path.AddNodeWeight(ref_weight, static_cast<u32>(ref_anchor_seq.length()));
   ref_path.Finalize();
-  return ref_path;
+
+  return EnumeratedHaplotype{
+      .mPath = std::move(ref_path),
+      .mWalk = ReconstructRefWalk(absl::MakeConstSpan(mRefNodeIds), mNodes, comp_id)};
 }
 
 // ============================================================================
 // Debug DOT Visualization
 // ============================================================================
+//
+// Snapshot output goes through `mDotBuffer`: each rendered DOT is buffered
+// in memory and only written to disk once the outer `BuildComponentResults`
+// k-loop succeeds. Two entry points:
+//   • BufferFinalSnapshot — always-on per-component post-prune snapshot;
+//     the filename substring (`enumerated_walks` vs `fully_pruned`) tracks
+//     whether walk overlays were rendered.
+//   • BufferStageSnapshot — only fires under `--graph-snapshots=verbose`;
+//     emits one snapshot per pruning boundary (compress1, lowcov2,
+//     compress2, tips). Replaces the old `LANCET_DEVELOP_MODE`+
+//     WriteDotDevelop compile-time gate with a runtime check.
+// ============================================================================
 
-// Build the per-component DOT filename. Used by both eager (develop-mode)
-// stage writes and the deferred FINAL buffer.
 namespace {
+
+// Filename label for verbose-mode pruning-stage snapshots. Mirrors the
+// legacy GraphState filename strings so existing `dot -Tpdf` workflows
+// keep working when users opt into `--graph-snapshots=verbose`.
+auto StageFilenameLabel(PruneStage const stage) -> std::string_view {
+  switch (stage) {
+    case PruneStage::PRUNED_AT_COMPRESS1:
+      return "compression1";
+    case PruneStage::PRUNED_AT_LOWCOV2:
+      return "low_cov_removal2";
+    case PruneStage::PRUNED_AT_COMPRESS2:
+      return "compression2";
+    case PruneStage::PRUNED_AT_TIPS:
+      return "short_tip_removal";
+    case PruneStage::PRUNED_AT_BUILD:
+    case PruneStage::PRUNED_AT_LOWCOV1:
+      return "pre_compression";  // not emitted as DOT today; here for completeness
+  }
+  return "unknown";
+}
+
 auto MakeDotFilename(hts::Reference::Region const& region, std::string_view stage_label,
                      usize currk, usize comp_id) -> std::string {
   auto const win_id =
       fmt::format("{}_{}_{}", region.ChromName(), region.StartPos1(), region.EndPos1());
   return fmt::format("dbg__{}__{}__k{}__comp{}.dot", win_id, stage_label, currk, comp_id);
 }
+
 }  // namespace
 
-void Graph::WriteDot([[maybe_unused]] GraphState state, usize const comp_id) {
+void Graph::BufferFinalSnapshot(usize const comp_id,
+                                absl::Span<EnumeratedHaplotype const> haplotypes) {
   if (mParams.mOutGraphsDir.empty()) return;
 
-#ifdef LANCET_DEVELOP_MODE
-  auto const graph_state = ToString(state);
-#else
-  // Production builds only call WriteDot from develop-mode WriteDotDevelop
-  // (a no-op outside LANCET_DEVELOP_MODE). The FINAL stage goes through
-  // BufferFinalSnapshot. Default the label to keep the function well-formed.
-  auto const* graph_state = "fully_pruned";
-#endif
+  auto const* stage_label = haplotypes.empty() ? "fully_pruned" : "enumerated_walks";
+  auto fname = MakeDotFilename(*mRegion, stage_label, mCurrK, comp_id);
+  auto subgraph_name = fname.substr(0, fname.size() - 4);  // strip ".dot"
 
-  auto const fname = MakeDotFilename(*mRegion, graph_state, mCurrK, comp_id);
-  auto const out_path = mParams.mOutGraphsDir / "dbg_graph" / fname;
-  std::filesystem::create_directories(mParams.mOutGraphsDir / "dbg_graph");
-
-  // When probe tracking is active, highlight probe-tagged nodes (orchid) and
-  // demote source/sink anchors to background (gray). Otherwise, highlight anchors.
+  DotPlan plan;
+  plan.mKind = DotSnapshotKind::FINAL;
+  plan.mCompId = comp_id;
+  plan.mSubgraphName = std::move(subgraph_name);
+  plan.mNodeLayers.emplace_back(MakeAnchorLayer(mSourceAndSinkIds));
   if (HasProbeTracker()) {
-    DotOverlaySets const probe_highlight{
-        .mNodes = mProbeTrackerPtr->GetHighlightNodeIds(mNodes, comp_id)};
-    DotOverlaySets const anchor_bg{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    SerializeToDot(mNodes, out_path, comp_id, probe_highlight, anchor_bg);
-  } else {
-    DotOverlaySets const highlight{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    SerializeToDot(mNodes, out_path, comp_id, highlight);
+    plan.mNodeLayers.emplace_back(MakeProbeLayer(*mProbeTrackerPtr, comp_id, mNodes));
   }
+
+  if (!haplotypes.empty()) {
+    std::vector<std::vector<Edge>> walk_edges;
+    walk_edges.reserve(haplotypes.size());
+    for (auto const& hap : haplotypes) walk_edges.push_back(hap.mWalk);
+    plan.mEdgeLayers = MakeWalkLayers(absl::MakeConstSpan(walk_edges));
+  }
+
+  auto contents = SerializeToDotString(mNodes, plan);
+  mDotBuffer.Buffer(std::move(fname), std::move(contents));
 }
 
-void Graph::BufferFinalSnapshot(usize const comp_id, absl::Span<Path const> walks) {
+void Graph::BufferStageSnapshot(PruneStage const stage, usize const comp_id) {
   if (mParams.mOutGraphsDir.empty()) return;
+  if (mParams.mSnapshotMode != GraphSnapshotMode::VERBOSE) return;
 
-  auto const* stage_label = walks.empty() ? "fully_pruned" : "enumerated_walks";
-  auto fname = MakeDotFilename(*mRegion, stage_label, mCurrK, comp_id);
-  auto const subgraph_name = std::string_view{fname}.substr(0, fname.size() - 4);  // strip ".dot"
+  auto fname = MakeDotFilename(*mRegion, StageFilenameLabel(stage), mCurrK, comp_id);
+  auto subgraph_name = fname.substr(0, fname.size() - 4);  // strip ".dot"
 
-  std::string contents;
+  DotPlan plan;
+  plan.mKind = DotSnapshotKind::PRUNE_STAGE;
+  plan.mPruneStage = stage;
+  plan.mCompId = comp_id;
+  plan.mSubgraphName = std::move(subgraph_name);
+  plan.mNodeLayers.emplace_back(MakeAnchorLayer(mSourceAndSinkIds));
   if (HasProbeTracker()) {
-    DotOverlaySets const probe_highlight{
-        .mNodes = mProbeTrackerPtr->GetHighlightNodeIds(mNodes, comp_id)};
-    DotOverlaySets const anchor_bg{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    contents =
-        SerializeToDotString(mNodes, subgraph_name, comp_id, probe_highlight, anchor_bg, walks);
-  } else {
-    DotOverlaySets const highlight{.mNodes = {mSourceAndSinkIds[0], mSourceAndSinkIds[1]}};
-    contents = SerializeToDotString(mNodes, subgraph_name, comp_id, highlight, {}, walks);
+    plan.mNodeLayers.emplace_back(MakeProbeLayer(*mProbeTrackerPtr, comp_id, mNodes));
   }
 
+  auto contents = SerializeToDotString(mNodes, plan);
   mDotBuffer.Buffer(std::move(fname), std::move(contents));
 }
 
@@ -1047,7 +1148,7 @@ void Graph::ProbeSetTraversalLimit(Context const& ctx) const {
   mProbeTrackerPtr->SetTraversalLimit(ctx);
 }
 
-void Graph::ProbeCheckPaths(absl::Span<Path const> haplotypes, Context const& ctx) {
+void Graph::ProbeCheckPaths(absl::Span<EnumeratedHaplotype const> haplotypes, Context const& ctx) {
   if (!HasProbeTracker()) return;
   mProbeTrackerPtr->CheckPaths(haplotypes, ctx);
 }

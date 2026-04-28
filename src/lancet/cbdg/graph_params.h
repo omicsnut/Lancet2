@@ -2,6 +2,7 @@
 #define SRC_LANCET_CBDG_GRAPH_PARAMS_H_
 
 #include "lancet/base/types.h"
+#include "lancet/cbdg/dot_plan.h"
 
 #include <filesystem>
 
@@ -45,6 +46,12 @@ struct GraphParams {
 
   // ── 2B Align ────────────────────────────────────────────────────────────
   u16 mKmerStepLen = DEFAULT_KMER_STEP_LEN;  // 2B
+
+  // ── 1B Align ────────────────────────────────────────────────────────────
+  /// Controls DOT snapshot verbosity when `mOutGraphsDir` is set. FINAL
+  /// (default) emits one DOT per component per window. VERBOSE additionally
+  /// emits intermediate-stage snapshots after each pruning boundary.
+  GraphSnapshotMode mSnapshotMode = GraphSnapshotMode::FINAL;  // 1B
 };
 
 }  // namespace lancet::cbdg

@@ -13,9 +13,16 @@
 
 namespace lancet::cbdg {
 
-ComponentResult::ComponentResult(std::vector<Path> paths, GraphComplexity metrics,
-                                 u32 const anchor_start_offset)
-    : mPaths(std::move(paths)), mMetrics(metrics), mAnchorStartOffset(anchor_start_offset) {}
+ComponentResult::ComponentResult(std::vector<EnumeratedHaplotype> haplotypes,
+                                 GraphComplexity metrics, u32 const anchor_start_offset)
+    : mMetrics(metrics), mAnchorStartOffset(anchor_start_offset) {
+  mPaths.reserve(haplotypes.size());
+  mWalks.reserve(haplotypes.size());
+  for (auto& hap : haplotypes) {
+    mPaths.emplace_back(std::move(hap.mPath));
+    mWalks.emplace_back(std::move(hap.mWalk));
+  }
+}
 
 auto ComponentResult::HaplotypeSequenceViews() const -> std::vector<std::string_view> {
   std::vector<std::string_view> views;

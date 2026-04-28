@@ -469,7 +469,8 @@ void ProbeTracker::CheckAnchorOverlap(AnchorInfo const& source, AnchorInfo const
 // the definitive test: if the ALT context is in a path, the variant signal
 // survived the entire graph pipeline.
 // ============================================================================
-void ProbeTracker::CheckPaths(absl::Span<Path const> haplotypes, Context const& ctx) {
+void ProbeTracker::CheckPaths(absl::Span<EnumeratedHaplotype const> haplotypes,
+                              Context const& ctx) {
   if (mActiveProbeIds.empty()) return;
 
   for (auto const probe_id : mActiveProbeIds) {
@@ -483,7 +484,7 @@ void ProbeTracker::CheckPaths(absl::Span<Path const> haplotypes, Context const& 
 
     auto& record = FindOrCreateRecord(probe_id, ctx.mRegStr, ctx.mCompId, ctx.mKmerSize);
     for (usize hap_idx = 0; hap_idx < haplotypes.size(); ++hap_idx) {
-      if (haplotypes[hap_idx].Sequence().find(alt_context) != std::string_view::npos) {
+      if (haplotypes[hap_idx].mPath.Sequence().find(alt_context) != std::string_view::npos) {
         record.mHapIndices.push_back(static_cast<u8>(hap_idx));
       }
     }

@@ -143,15 +143,20 @@ endif ()
 #       ↓
 #   sample_mask → kmer                     k-mer encoding + sample tagging
 #       ↓
-#   node → edge → path                     graph topology
+#   node → edge → path                     graph topology (path bundles k-mers
+#                                          plus EnumeratedHaplotype = path+walk)
 #       ↓
 #   cycle_finder, traversal_index          graph algorithms
 #       ↓
 #   max_flow, graph_complexity             flow + complexity metrics
 #       ↓
-#   component_result                       per-component assembly output (paths + metrics)
+#   component_result                       per-component assembly output (paths + walks + metrics)
 #       ↓
 #   probe_index → probe_tracker → probe_results_writer   truth variant k-mer tracking
+#       ↓
+#   dot_layers / dot_walk_layers /         layered DOT renderer
+#   dot_overlay_factories / dot_plan /     (consumes probe_tracker for probe layer;
+#   dot_renderer / dot_snapshot_buffer      rendered output deferred via buffer)
 #       ↓
 #   graph                                  assembly orchestrator
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -168,16 +173,21 @@ add_library(lancet_cbdg STATIC
 		src/lancet/cbdg/path.cpp src/lancet/cbdg/path.h
 		src/lancet/cbdg/cycle_finder.cpp src/lancet/cbdg/cycle_finder.h
 		src/lancet/cbdg/traversal_index.cpp src/lancet/cbdg/traversal_index.h
-		src/lancet/cbdg/serialize_dot.cpp src/lancet/cbdg/serialize_dot.h
-		src/lancet/cbdg/dot_snapshot_buffer.cpp src/lancet/cbdg/dot_snapshot_buffer.h
 		src/lancet/cbdg/max_flow.cpp src/lancet/cbdg/max_flow.h
 		src/lancet/cbdg/graph_complexity.cpp src/lancet/cbdg/graph_complexity.h
-		# ── Per-component assembly output: paths + complexity metrics ─────
+		# ── Per-component assembly output: paths + walks + complexity ─────
 		src/lancet/cbdg/component_result.cpp src/lancet/cbdg/component_result.h
 		# ── Probe diagnostics: index → tracker → results writer ───────────
 		src/lancet/cbdg/probe_index.cpp src/lancet/cbdg/probe_index.h
 		src/lancet/cbdg/probe_results_writer.cpp src/lancet/cbdg/probe_results_writer.h
 		src/lancet/cbdg/probe_tracker.cpp src/lancet/cbdg/probe_tracker.h
+		# ── DOT visualization: layered overlays + deferred per-k buffer ───
+		src/lancet/cbdg/dot_layers.h
+		src/lancet/cbdg/dot_plan.h
+		src/lancet/cbdg/dot_walk_layers.h
+		src/lancet/cbdg/dot_overlay_factories.h
+		src/lancet/cbdg/dot_renderer.cpp src/lancet/cbdg/dot_renderer.h
+		src/lancet/cbdg/dot_snapshot_buffer.cpp src/lancet/cbdg/dot_snapshot_buffer.h
 		# ── Assembly orchestrator ─────────────────────────────────────────
 		src/lancet/cbdg/graph.cpp src/lancet/cbdg/graph.h)
 target_include_directories(lancet_cbdg PUBLIC "${CMAKE_SOURCE_DIR}/src")

@@ -75,7 +75,7 @@ class MaxFlow {
   explicit MaxFlow(Graph::NodeTable const* graph, usize currk, TraversalIndex const* trav_idx,
                    usize num_samples);
 
-  using Result = std::optional<Path>;
+  using Result = std::optional<EnumeratedHaplotype>;
 
   /// Find the next walk from source to sink that contains at least one
   /// edge not yet traversed by any previous walk. Returns nullopt when

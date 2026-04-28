@@ -15,7 +15,6 @@
 #include "lancet/cbdg/path.h"
 #include "lancet/cbdg/probe_tracker.h"
 #include "lancet/cbdg/read.h"
-#include "lancet/cbdg/serialize_dot.h"
 #include "lancet/cbdg/traversal_index.h"
 #include "lancet/hts/reference.h"
 
@@ -221,44 +220,39 @@ class Graph {
 
   /// Enumerate all source→sink walks via MaxFlow BFS, sort ALT haplotypes by
   /// descending MinWeight (weakest-link confidence), deduplicate, and prepend
-  /// a confidence-weighted reference path.
+  /// a confidence-weighted reference haplotype. Each result bundles the
+  /// assembled `Path` with its underlying source→sink edge walk; the walk is
+  /// empty for the REF haplotype when reconstruction fails.
   [[nodiscard]] auto BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
                                      std::string_view ref_anchor_seq,
                                      ProbeTracker::Context const& probe_ctx) const
-      -> std::vector<Path>;
+      -> std::vector<EnumeratedHaplotype>;
 
-  /// Build a reference haplotype Path weighted by the median Confidence of
-  /// surviving REFERENCE-tagged nodes in the given component.
-  [[nodiscard]] auto BuildRefHaplotypePath(usize comp_id, std::string_view ref_anchor_seq) const
-      -> Path;
+  /// Build the reference haplotype, bundling the median-confidence-weighted
+  /// `Path` with the surviving REF backbone walk traced through the
+  /// post-prune compressed graph. Returned walk is empty if the surviving
+  /// backbone is fragmented.
+  [[nodiscard]] auto BuildRefHaplotype(usize comp_id, std::string_view ref_anchor_seq) const
+      -> EnumeratedHaplotype;
 
   // ============================================================================
   // Debug DOT Visualization
   // ============================================================================
 
-  /// Write a DOT snapshot to disk eagerly for the develop-mode intermediate
-  /// pruning stages. These files persist across k-attempts (filename includes
-  /// the k value). Production builds compile WriteDotDevelop callers to a
-  /// no-op via the LANCET_DEVELOP_MODE gate.
-  void WriteDot([[maybe_unused]] GraphState state, usize comp_id);
-
-#ifdef LANCET_DEVELOP_MODE
-  template <class... Args>
-  constexpr void WriteDotDevelop(Args&&... args) {
-    WriteDot(std::forward<Args>(args)...);
-  }
-#else
-  template <class... Args>
-  // NOLINTNEXTLINE(cppcoreguidelines-missing-std-forward)
-  constexpr void WriteDotDevelop([[maybe_unused]] Args&&... /*unused*/) {}
-#endif
-
   /// Render the post-prune ("final") DOT for one component into mDotBuffer.
-  /// `walks` non-empty → file basename uses `enumerated_walks` and edge color
-  /// overlays are appended; empty → basename uses `fully_pruned` and only
-  /// the graph body is rendered. The actual disk write is deferred until
-  /// CommitDotBuffer() is called after the outer k-loop succeeds.
-  void BufferFinalSnapshot(usize comp_id, absl::Span<Path const> walks);
+  /// `haplotypes` non-empty → file basename uses `enumerated_walks` and per-
+  /// walk edge color overlays are appended; empty → basename uses
+  /// `fully_pruned` and only the graph body is rendered. The actual disk
+  /// write is deferred until mDotBuffer.Commit is called after the outer
+  /// k-loop succeeds.
+  void BufferFinalSnapshot(usize comp_id, absl::Span<EnumeratedHaplotype const> haplotypes);
+
+  /// Render an intermediate-stage DOT snapshot (post-pruning boundary) into
+  /// mDotBuffer. No-op unless `mParams.mSnapshotMode == VERBOSE` and an
+  /// output directory is configured. Replaces the old `WriteDotDevelop`
+  /// template + `LANCET_DEVELOP_MODE` compile-time gate with a runtime
+  /// check so the verbose mode is opt-in via `--graph-snapshots=verbose`.
+  void BufferStageSnapshot(PruneStage stage, usize comp_id);
 
   // ============================================================================
   // ProbeTracker Forwarding Helpers (null-safe)
@@ -294,7 +288,7 @@ class Graph {
 
   // Path enumeration: flag traversal-limited probes and check path survival.
   void ProbeSetTraversalLimit(Context const& ctx) const;
-  void ProbeCheckPaths(absl::Span<Path const> haplotypes, Context const& ctx);
+  void ProbeCheckPaths(absl::Span<EnumeratedHaplotype const> haplotypes, Context const& ctx);
 };
 
 }  // namespace lancet::cbdg

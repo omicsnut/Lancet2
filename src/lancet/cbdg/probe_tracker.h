@@ -279,7 +279,7 @@ class ProbeTracker {
   void CheckAnchorOverlap(AnchorInfo const& source, AnchorInfo const& sink, Context const& ctx);
 
   /// Check if any enumerated haplotype path contains each probe's ALT context.
-  void CheckPaths(absl::Span<Path const> haplotypes, Context const& ctx);
+  void CheckPaths(absl::Span<EnumeratedHaplotype const> haplotypes, Context const& ctx);
 
   /// Flag the current k-attempt as a graph cycle / graph too complex.
   void SetGraphCycle(Context const& ctx);

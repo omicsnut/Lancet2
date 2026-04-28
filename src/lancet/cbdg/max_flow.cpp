@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lancet::cbdg {
@@ -82,7 +83,6 @@ auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
       total_seq_len += src_uniq_len;
       path.AddNodeCoverage(src_itr->second->TotalReadSupport());
       path.AddNodeWeight(src_itr->second->Confidence(mNumSamples), src_uniq_len);
-      path.AddWalkNodeId(conn.SrcId());
     }
 
     auto const dst_itr = mGraph->find(conn.DstId());
@@ -96,7 +96,6 @@ auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
     total_seq_len += dst_uniq_len;
     path.AddNodeCoverage(dst_itr->second->TotalReadSupport());
     path.AddNodeWeight(dst_itr->second->Confidence(mNumSamples), dst_uniq_len);
-    path.AddWalkNodeId(conn.DstId());
   }
 
   if (uniq_seqs.empty()) return std::nullopt;
@@ -109,7 +108,8 @@ auto MaxFlow::BuildSequence(WalkView const walk) const -> Result {
   LANCET_ASSERT(path.Sequence().length() == total_seq_len)
 
   path.Finalize();
-  return path;
+  return EnumeratedHaplotype{.mPath = std::move(path),
+                             .mWalk = std::vector<Edge>(walk.begin(), walk.end())};
 }
 
 // ============================================================================

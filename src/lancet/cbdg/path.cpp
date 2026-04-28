@@ -32,14 +32,6 @@ void Path::AddNodeWeight(u32 const weight, u32 const num_bases) {
   mNodeWeights.push_back({.mWeight = weight, .mNumBases = num_bases});
 }
 
-void Path::AddWalkNodeId(NodeID const node_id) {
-  mWalkNodeIds.push_back(node_id);
-}
-
-auto Path::WalkNodeIds() const -> absl::Span<NodeID const> {
-  return absl::MakeConstSpan(mWalkNodeIds);
-}
-
 auto Path::PerBaseWeights() const -> BaseWeights {
   BaseWeights per_base;
   per_base.reserve(mSequence.size());
