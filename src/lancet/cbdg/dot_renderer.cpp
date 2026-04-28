@@ -311,4 +311,46 @@ auto MakeProbeLayer(ProbeTracker const& tracker, usize const comp_id,
   return layer;
 }
 
+// ============================================================================
+// ReconstructRefWalk (declared in dot_walk_layers.h)
+//
+// Walks `ref_node_ids` left-to-right keeping only canonical k-mer IDs that
+// survive in this component, deduplicates consecutive duplicates, then for
+// each consecutive pair looks up the connecting `Edge` (carrying EdgeKind
+// + sign pair the renderer needs). Returns an empty walk when any pair is
+// missing — a fragmented backbone yields no overlay rather than a partial
+// one to avoid misleading the reader.
+// ============================================================================
+auto ReconstructRefWalk(absl::Span<NodeID const> ref_node_ids,
+                        absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& nodes,
+                        usize const comp_id) -> std::vector<Edge> {
+  std::vector<NodeID> surviving;
+  surviving.reserve(ref_node_ids.size());
+  for (NodeID const ref_id : ref_node_ids) {
+    auto const itr = nodes.find(ref_id);
+    if (itr == nodes.end()) continue;
+    if (itr->second->GetComponentId() != comp_id) continue;
+    if (!surviving.empty() && surviving.back() == ref_id) continue;  // collapse repeats
+    surviving.push_back(ref_id);
+  }
+
+  std::vector<Edge> walk;
+  if (surviving.size() < 2) return walk;
+  walk.reserve(surviving.size() - 1);
+
+  for (usize idx = 0; idx + 1 < surviving.size(); ++idx) {
+    auto const src_itr = nodes.find(surviving[idx]);
+    if (src_itr == nodes.end()) return {};
+    auto const& edges = *src_itr->second;
+    auto const* const found =
+        std::ranges::find_if(edges, [next_id = surviving[idx + 1]](Edge const& edge) {
+          return edge.DstId() == next_id;
+        });
+    if (found == edges.end()) return {};  // backbone fragmented; abandon
+    walk.push_back(*found);
+  }
+
+  return walk;
+}
+
 }  // namespace lancet::cbdg

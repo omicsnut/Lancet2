@@ -34,7 +34,6 @@
 #include <memory>
 #include <numeric>
 #include <optional>
-#include <ranges>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -891,59 +890,6 @@ auto Graph::BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
 
   return haplotypes;
 }
-
-// ============================================================================
-// ReconstructRefWalk — Trace the surviving REF backbone in node-id space.
-//
-// `mRefNodeIds` was populated at graph construction (one canonical k-mer ID
-// per ref position). After pruning + compression, some IDs no longer appear
-// in the node table because:
-//   - their nodes were absorbed into a compressed unitig (the surviving
-//     unitig keeps the ID of whichever node started the absorbing chain),
-//   - their nodes were removed by low-coverage pruning or tip removal.
-//
-// We walk `mRefNodeIds` left-to-right keeping only IDs that survive in this
-// component. For each consecutive pair of survivors we look up the actual
-// `Edge` connecting them in the graph (there is at most one such edge along
-// a clean REF backbone — it carries `EdgeKind` + sign-pair information that
-// the renderer needs to disambiguate parallel hairpin edges). If any pair
-// has no connecting edge the backbone is considered fragmented and an empty
-// walk is returned.
-// ============================================================================
-namespace {
-
-auto ReconstructRefWalk(absl::Span<NodeID const> ref_node_ids, Graph::NodeTable const& nodes,
-                        usize const comp_id) -> std::vector<Edge> {
-  std::vector<NodeID> surviving;
-  surviving.reserve(ref_node_ids.size());
-  for (NodeID const ref_id : ref_node_ids) {
-    auto const itr = nodes.find(ref_id);
-    if (itr == nodes.end()) continue;
-    if (itr->second->GetComponentId() != comp_id) continue;
-    if (!surviving.empty() && surviving.back() == ref_id) continue;  // collapse repeats
-    surviving.push_back(ref_id);
-  }
-
-  std::vector<Edge> walk;
-  if (surviving.size() < 2) return walk;
-  walk.reserve(surviving.size() - 1);
-
-  for (usize idx = 0; idx + 1 < surviving.size(); ++idx) {
-    auto const src_itr = nodes.find(surviving[idx]);
-    LANCET_ASSERT(src_itr != nodes.end())
-    auto const& edges = *src_itr->second;
-    auto const* const found =
-        std::ranges::find_if(edges, [next_id = surviving[idx + 1]](Edge const& edge) {
-          return edge.DstId() == next_id;
-        });
-    if (found == edges.end()) return {};  // backbone fragmented; abandon
-    walk.push_back(*found);
-  }
-
-  return walk;
-}
-
-}  // namespace
 
 // ============================================================================
 // BuildRefHaplotype: reference-anchor `Path` weighted by the median

@@ -32,11 +32,12 @@ add_executable(TestLancet2
 		hts/reference_test.cpp
 		hts/alignment_test.cpp
 		hts/extractor_test.cpp
-		# Layer 3: cbdg — k-mer, graph, complexity, sample mask
+		# Layer 3: cbdg — k-mer, graph, complexity, sample mask, dot renderer
 		cbdg/kmer_test.cpp
 		cbdg/sample_mask_test.cpp
 		cbdg/graph_complexity_test.cpp
 		cbdg/graph_test.cpp
+		cbdg/dot_renderer_test.cpp
 		# Layer 4: caller — variant set, support metrics, VCF output
 		caller/variant_set_test.cpp
 		caller/variant_support_metrics_test.cpp

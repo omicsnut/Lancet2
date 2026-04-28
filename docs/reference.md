@@ -149,8 +149,16 @@ Use when contig naming conventions differ across files (e.g., `chr1` vs `1`). Wi
 
 #### `--graphs-dir`
 Output directory to write per-window graphs in DOT and GFA format.
-Must be a non-existing directory path that will be created. Produces two subdirectories: DOT files for Graphviz visualization (one per pruning stage) and GFA files for the SPOA POA graph.
+Must be a non-existing directory path that will be created. Produces two subdirectories: `dbg_graph` (DOT files for Graphviz visualization, one per connected component per window) and `poa_graph` (GFA files for the SPOA POA graph). Snapshots are written only for the k-attempt that succeeded — abandoned attempts (cycle / complexity retry) leave no artifacts on disk.
 See [Custom Visualization](guides/custom_visualization.md) for rendering instructions and interpretation.
+
+#### `--graph-snapshots`
+> [final|verbose]. Default value --> final
+
+Controls DOT snapshot verbosity when `--graphs-dir` is set.
+`final` (default) emits one DOT per component per window: filename substring is `enumerated_walks` if walks were enumerated, `fully_pruned` otherwise.
+`verbose` additionally emits intermediate-stage snapshots after each post-compression pruning boundary (`compression1`, `low_cov_removal2`, `compression2`, `short_tip_removal`). Replaces the legacy `LANCET_DEVELOP_MODE` compile-time gate — verbose snapshots are now an opt-in runtime feature, no rebuild required.
+See [Custom Visualization](guides/custom_visualization.md#dot-snapshot-verbosity) for the orthogonal styling axes (role / anchor / probe / walk-color overlays) and the multi-walk colorList composition.
 
 #### `--genome-gc-bias`
 > [0.0-1.0]. Default value --> 0.41

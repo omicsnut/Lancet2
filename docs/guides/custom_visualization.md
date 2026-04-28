@@ -4,8 +4,9 @@ For each window being processed, Lancet2 can optionally serialize two types of g
 This can be enabled by passing a non-existing directory to the `--graphs-dir` flag to write per window serialized graphs in the directory.
 
 1. the kmer-based colored de-bruijn overlap graph after the cleaning/pruning steps of the assembly
-   process serialized as `DOT` formatted [graphviz](https://www.graphviz.org/) files. One `DOT` file
-   is generated for every connected component for each window.
+   process serialized as `DOT` formatted [graphviz](https://www.graphviz.org/) files. **One DOT file per
+   connected component per window** — either `enumerated_walks` (when haplotype walks were
+   successfully enumerated) or `fully_pruned` (when assembly stopped before walks could be enumerated).
 
 2. the sequence graph generated from the multiple sequence alignment of all the assembled contigs
    from the de-bruijn graph assembly serialized as `GFA` formatted files.
@@ -18,22 +19,39 @@ Lancet2 pipeline --reference ref.fasta \
 
 The above command will create two directories named `dbg_graph` and `poa_graph` in the provided `output-graphs` directory.
 
-- In the `dbg_graph` directory, you will find the `DOT` files generated for each window –
-  `dbg__${CHROM}_${START}_${END}__fully_pruned__k${KMER_SIZE}__comp${COMP_ID}.dot`
+- In the `dbg_graph` directory, you will find the `DOT` files generated for each component –
+  `dbg__${CHROM}_${START}_${END}__${STAGE}__k${KMER_SIZE}__comp${COMP_ID}.dot`,
+  where `${STAGE}` is `enumerated_walks` (walks enumerated successfully) or
+  `fully_pruned` (graph pruned but no walks). Snapshots are written only for the
+  k-attempt that succeeded — abandoned attempts (cycle / complexity retry) leave
+  no artifacts on disk.
 
 - In the `poa_graph` directory, you will find the `GFA` files generated for each window –
   `msa__${CHROM}_${START}_${END}__c${COMP_ID}.gfa`
   The `poa_graph` also contains a `FASTA` file with the raw multiple sequence alignment output.
 
-!!! info "Info"
+## DOT snapshot verbosity
 
-    If you are interested to further debug the de-bruijn graph assembly process, you can generate DOT files for all the
-    intermediate steps before the `fully_pruned` graph is generated, by re-compiling the Lancet2 binary in `Debug` mode using
-    `-DCMAKE_BUILD_TYPE=Debug` instead of `-DCMAKE_BUILD_TYPE=Release` in the cmake step. This enables `LANCET_DEVELOP_MODE`
-    which serializes all intermediate graph states.
+The `--graph-snapshots` flag controls how much of the graph pruning pipeline gets
+serialized. Two values are accepted:
 
-    The intermediate states that can be inspected in their order of generation are as follows –
-    `low_cov_removal1`, `found_ref_anchors`, `compression1`, `low_cov_removal2`, `compression2`, `short_tip_removal`.
+- `final` (default) — emits exactly one DOT file per component per window:
+  `enumerated_walks` or `fully_pruned`.
+- `verbose` — additionally emits intermediate-stage snapshots after each post-
+  compression pruning boundary (`compression1`, `low_cov_removal2`, `compression2`,
+  `short_tip_removal`). Pre-compression stages are not snapshot — those graphs
+  have tens of thousands of nodes per window and are unusable as rendered DOT.
+
+```bash
+# Default: one DOT per component per window
+Lancet2 pipeline ... --graphs-dir output-graphs
+
+# Verbose: adds the four post-compression stages too
+Lancet2 pipeline ... --graphs-dir output-graphs --graph-snapshots verbose
+```
+
+This flag replaces the legacy `LANCET_DEVELOP_MODE` compile-time gate — verbose
+snapshots are now an opt-in *runtime* feature, no rebuild required.
 
 ## Inspecting `DOT` formatted assembly graphs
 
@@ -48,45 +66,59 @@ dot -Tpdf -o example_file.pdf example_file.dot
 
 The above command will create a example_file.pdf file that shows the de-bruijn assembly graph.
 
-Shown below are the renderings of the de-bruijn assembly graph through all of it's intermediate
-states (can only be visualized in `Debug` mode Lancet2 binary. ideal for small regions.).
+### Visual encoding
 
-!!! note "Note"
+Lancet2's DOT output uses **orthogonal styling axes** so multiple signals can stack
+on a single node without losing information:
 
-    Both `fully_pruned` and `enumerated_walks` graphs are always serialized when `--graphs-dir` is set.
-    The remaining 6 intermediate states can only be visualized in the `Debug` build of Lancet2 (`LANCET_DEVELOP_MODE`).
-    The `Debug` build is much slower than the standard `Release` build and is only recommended
-    to be used on small regions for inspection.
+| Concern                     | Source                                | Visual encoding                             |
+|:----------------------------|:--------------------------------------|:--------------------------------------------|
+| Sample role                 | `Node::IsCaseOnly` / `IsCtrlOnly` / `IsShared` / `HasTag(REFERENCE)` | `fillcolor` (indianred / mediumseagreen / steelblue / lightblue) |
+| Source/sink anchor          | `mSourceAndSinkIds`                   | heavy goldenrod border + double `peripheries` |
+| Probe-marked k-mer (`--probe-variants`) | `ProbeTracker::GetHighlightNodeIds`   | `style="filled,striped"` with orchid stripe accent |
+| Walk membership (per edge)  | enumerated haplotype walks            | graphviz native `colorList` (`color="#A:#B:#C"`) — parallel-color stripes |
 
+A probe-marked anchor in a CASE-only k-mer renders all three signals simultaneously:
+indianred fill + heavy goldenrod border + striped orchid accent. No signal is lost
+to overlay precedence.
 
-#### `low_cov_removal1`
-![low_cov_removal1](../assets/01_dbg__chr1_38506673_38507173__low_cov_removal1__k31__comp0.png){ align=left, loading=lazy }
+### Walk overlay (`enumerated_walks` files)
 
-#### `found_ref_anchors`
-![found_ref_anchors](../assets/02_dbg__chr1_38506673_38507173__found_ref_anchors__k31__comp1.png){ align=left, loading=lazy }
+Each enumerated haplotype walk is colored with a **maximally-distinct** hex color
+chosen from a 64-entry palette pre-computed via k-means clustering in CIE L\*a\*b\*
+perceptual color space (see `scripts/gen_walk_palette.py`). The reference walk
+(index 0) gets a fixed white accent (`#FFFFFF`) so it stands out as the backbone;
+ALT walks consume the LAB palette starting at index 1.
 
-#### `compression1`
-![compression1](../assets/03_dbg__chr1_38506673_38507173__compression1__k31__comp1.png){ align=left, loading=lazy }
+When multiple walks share an edge, graphviz's native `colorList` renders the edge
+as **parallel-color stripes** — the edge picks up all the walks that traverse it,
+not just the dominant one. The bidirected mirror of every walked edge is colored
+with the same style, so under the `neato` layout both anti-parallel splines carry
+the walk's color.
 
-#### `low_cov_removal2`
-![low_cov_removal2](../assets/04_dbg__chr1_38506673_38507173__low_cov_removal2__k31__comp1.png){ align=left, loading=lazy }
+### Verbose-mode intermediate stages
 
-#### `compression2`
-![compression2](../assets/05_dbg__chr1_38506673_38507173__compression2__k31__comp1.png){ align=left, loading=lazy }
+When `--graph-snapshots=verbose` is set, four additional DOT files per component
+trace the graph through the pruning pipeline:
 
-#### `short_tip_removal`
-![short_tip_removal](../assets/06_dbg__chr1_38506673_38507173__short_tip_removal__k31__comp1.png){ align=left, loading=lazy }
+| Stage filename label         | Captured after                                  |
+|:-----------------------------|:------------------------------------------------|
+| `compression1`               | First unitig compression                        |
+| `low_cov_removal2`           | Second pass low-coverage node removal           |
+| `compression2`               | Second unitig compression                       |
+| `short_tip_removal`          | Tip removal (recursive until stable)            |
 
-#### `fully_pruned`
-![fully_pruned](../assets/07_dbg__chr1_38506673_38507173__fully_pruned__k31__comp1.png){ align=left, loading=lazy }
+Pre-compression stages (initial build, first low-coverage removal, anchor
+discovery) are intentionally not snapshot — they have too many nodes to render
+usefully. The first usable snapshot is `compression1`, after the graph collapses
+into unitigs.
 
-#### `enumerated_walks`
-
-This stage overlays the enumerated haplotype walks onto the fully-pruned graph with
-maximally-distinct edge colors. Each walk's edges are colored using a 64-entry palette
-pre-computed via k-means clustering in CIE L\*a\*b\* perceptual color space. Higher-confidence
-walks take color priority on shared edges (DOT last-writer-wins semantics). The REF haplotype
-is not colored because it has no MaxFlow walk backing it.
+```bash
+# Render every snapshot to PDF
+for dot_file in output-graphs/dbg_graph/*.dot; do
+    dot -Tpdf -o "${dot_file%.dot}.pdf" "${dot_file}"
+done
+```
 
 ## Inspecting `GFA` formatted sequence graphs
 
