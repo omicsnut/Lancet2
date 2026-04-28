@@ -184,7 +184,7 @@ Lancet2 supports two additional operating modes beyond standard tumor-normal som
 
 - **Germline-only**: Omit the `--tumor` flag entirely. The VCF output contains no `SHARED`/`CTRL`/`CASE` INFO tags. All variants are reported without somatic classification.
 
-Additional samples can also be added using the [`--sample`](../reference.md#-s--sample) flag alongside `--normal`/`--tumor`.
+Additional samples can also be added using the [`--sample`](../reference.md#-s-sample) flag alongside `--normal`/`--tumor`.
 
 !!! note "Case/Control terminology"
     Lancet2 uses **case/control** terminology to generalize beyond tumor-normal analysis (e.g., treated vs. untreated, responder vs. non-responder). The `--normal` and `--tumor` CLI flags remain permanent first-class entry points — tumor-normal somatic calling is the primary supported workflow.

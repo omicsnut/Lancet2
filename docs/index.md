@@ -119,7 +119,7 @@ Lancet2 pipeline \
 
 ### Multi-Sample Mode
 
-Additional samples can be added using [`-s,--sample`](reference.md#-s--sample) alongside the standard flags. See [Multi-Sample & Germline Mode](guides/architecture.md#multi-sample-germline-mode) for details.
+Additional samples can be added using [`-s,--sample`](reference.md#-s-sample) alongside the standard flags. See [Multi-Sample & Germline Mode](guides/architecture.md#multi-sample-germline-mode) for details.
 
 !!! warning "Experimental — no pre-trained ML models"
     Single-sample and multi-sample modes produce raw variant candidates. No pre-trained ML models are currently provided for filtering in these modes — variant calls require custom downstream filtering. The only pre-trained model available is for the standard tumor-normal somatic workflow (v2.8.7 compatible). See [Scoring Somatic Variants](guides/scoring_somatic_variants.md) for details.
