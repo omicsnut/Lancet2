@@ -135,7 +135,7 @@ vg mod --unchop ${INPUT_GFA} > ${OUTPUT_GFA}
 ```
 
 #### BandageNG
-![vg_unchopped_gfa_bandageNG](../assets/08_vg_unchopped_gfa_bandageNG.png){ align=left, loading=lazy }
+![vg_unchopped_gfa_bandageNG](../assets/01_vg_unchopped_gfa_bandageNG.png){ align=left, loading=lazy }
 
 The image above shows a screenshot of an unchopped Lancet2 sequence graph in `GFA` format
 visualized using the BandageNG toolkit.
