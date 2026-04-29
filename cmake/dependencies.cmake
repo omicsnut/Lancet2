@@ -50,7 +50,7 @@ set(MI_OVERRIDE ON)
 if (CMAKE_HOST_SYSTEM_NAME MATCHES "Darwin")
 	set(MI_OVERRIDE OFF)
 endif ()
-FetchContent_Declare(mimalloc GIT_REPOSITORY https://github.com/microsoft/mimalloc.git GIT_TAG v3.3.1 SYSTEM)
+FetchContent_Declare(mimalloc GIT_REPOSITORY https://github.com/microsoft/mimalloc.git GIT_TAG v3.3.2 SYSTEM)
 FetchContent_MakeAvailable(mimalloc)
 
 FetchContent_Declare(abseil GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git GIT_TAG 6d6854b SYSTEM)
