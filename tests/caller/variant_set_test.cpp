@@ -1,10 +1,18 @@
 #include "lancet/caller/variant_set.h"
 
+#include "lancet/caller/alt_allele.h"
 #include "lancet/core/window.h"
 
-#include "absl/strings/string_view.h"
+#include "absl/container/btree_set.h"
 #include "catch_amalgamated.hpp"
-#include "spoa/spoa.hpp"
+#include "spoa/alignment_engine.hpp"
+#include "spoa/graph.hpp"
+
+#include <algorithm>
+#include <iterator>
+#include <memory>
+#include <string>
+#include <vector>
 
 // =========================================================================================
 // VariantSet constructor — algorithm test suite

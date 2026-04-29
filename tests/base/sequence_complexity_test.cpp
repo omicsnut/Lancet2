@@ -1,10 +1,8 @@
 #include "lancet/base/sequence_complexity.h"
 
-#include "lancet/base/types.h"
-
 #include "catch_amalgamated.hpp"
 
-#include <array>
+#include <algorithm>
 #include <string>
 
 #include <cmath>

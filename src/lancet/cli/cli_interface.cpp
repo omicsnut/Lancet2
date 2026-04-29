@@ -54,10 +54,7 @@ class CliExistingUriOrFile : public CLI::Validator {
   CliExistingUriOrFile() {
     name_ = "EXISTING_URI_OR_FILE";
     func_ = [](std::string const& str) -> std::string {
-      if (lancet::hts::IsCloudUri(str)) {
-        return lancet::hts::ValidateCloudAccess(str, "r");
-      }
-
+      if (lancet::hts::IsCloudUri(str)) return lancet::hts::ValidateCloudAccess(str, "r");
       return CLI::ExistingFile(str);
     };
   }
@@ -68,8 +65,27 @@ class CliNonexistentUriOrPath : public CLI::Validator {
   CliNonexistentUriOrPath() {
     name_ = "NONEXISTENT_URI_OR_PATH";
     func_ = [](std::string const& str) -> std::string {
-      if (lancet::hts::IsCloudUri(str)) return "";
+      if (lancet::hts::IsCloudUri(str)) return std::string{};
       return CLI::NonexistentPath(str);
+    };
+  }
+};
+
+// Custom validator: enforce a `.tar.gz` suffix. The path itself can be
+// any location (existing or not); the parent dir is created lazily by
+// PipelineRunner::SetupGraphOutputArchive.
+class CliTarGzSuffixValidator : public CLI::Validator {
+ private:
+  static constexpr std::string_view EXPECTED_SUFFIX = ".tar.gz";
+  static constexpr std::string_view ERR_MSG_FMT =
+      "--out-graphs-tgz path must end in `.tar.gz` (got: {})";
+
+ public:
+  CliTarGzSuffixValidator() {
+    name_ = "TAR_GZ_SUFFIX";
+    func_ = [](std::string const& str) -> std::string {
+      if (!str.ends_with(EXPECTED_SUFFIX)) return fmt::format(ERR_MSG_FMT, str);
+      return std::string{};
     };
   }
 };
@@ -262,38 +278,17 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
   // ============================================================================
   // Optional
   // ============================================================================
-  // Custom validator: enforce a `.tar.gz` suffix. The path itself can be
-  // any location (existing or not); the parent dir is created lazily by
-  // PipelineRunner::SetupGraphOutputArchive.
-  static auto const TAR_GZ_SUFFIX_VALIDATOR = CLI::Validator(
-      [](std::string const& path_value) -> std::string {
-        static constexpr std::string_view EXPECTED_SUFFIX = ".tar.gz";
-        if (!path_value.ends_with(EXPECTED_SUFFIX)) {
-          return fmt::format("--out-graphs-tgz path must end in `.tar.gz` (got: {})", path_value);
-        }
-        return std::string{};  // empty = OK
-      },
-      "TAR_GZ_SUFFIX");
+  static auto const SNAPSHOT_MAP = std::map<std::string, cbdg::GraphSnapshotMode>{
+      {"final", cbdg::GraphSnapshotMode::FINAL}, {"verbose", cbdg::GraphSnapshotMode::VERBOSE}};
+
   AddOpt(sub, "--out-graphs-tgz", var_params.mOutGraphsTgz,
-         "Output path for the gzipped TAR archive of per-window assembly graphs (must end in "
-         "`.tar.gz`). Extract with `tar -xzf` to recover the per-window directory tree.",
-         GRP_OPTIONAL)
-      ->check(TAR_GZ_SUFFIX_VALIDATOR);
+         "Output path for the tar.gz archive of per-window assembly graphs.", GRP_OPTIONAL)
+      ->check(CliTarGzSuffixValidator{});
   AddOpt(sub, "--graph-snapshots", graph_params.mSnapshotMode,
-         "DOT graph snapshot verbosity. 'final' (default) emits one DOT per "
-         "component per window; 'verbose' additionally emits intermediate-stage "
-         "snapshots after each pruning boundary (compress1, lowcov2, compress2, tips).",
-         GRP_OPTIONAL)
-      ->transform(CLI::CheckedTransformer(
-          std::map<std::string, cbdg::GraphSnapshotMode>{
-              {"final", cbdg::GraphSnapshotMode::FINAL},
-              {"verbose", cbdg::GraphSnapshotMode::VERBOSE}},
-          CLI::ignore_case));
+         "Control the verbosity of per-window assembly graph snapshots.", GRP_OPTIONAL)
+      ->transform(CLI::CheckedTransformer(SNAPSHOT_MAP, CLI::ignore_case));
   AddOpt(sub, "--genome-gc-bias", var_params.mGcFraction,
-         "Global genome GC fraction for LongdustQ score correction. "
-         "Default: 0.41 (human genome-wide average). "
-         "Set to 0.5 to disable GC correction (uniform model).",
-         GRP_OPTIONAL)
+         "Global genome GC fraction for LongdustQ score correction. Default 0.41", GRP_OPTIONAL)
       ->check(CLI::Range(0.0, 1.0));
 
   auto* probe_variants_opt =

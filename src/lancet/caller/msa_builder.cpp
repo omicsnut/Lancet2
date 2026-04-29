@@ -48,22 +48,27 @@ auto MsaBuilder::BuildGfaString() const -> std::string {
   fmt::format_to(std::back_inserter(gfa_buffer), "H\tVN:Z:1.0\n");
 
   // --- 1. Write Segments (Nodes) and Links (Edges) ---
+  static constexpr std::string_view SEGMENT_FORMAT = "S\t{}\t{}\n";
+  static constexpr std::string_view LINK_FORMAT = "L\t{}\t+\t{}\t+\t0M\n";
+
   for (std::unique_ptr<spoa::Graph::Node> const& node : mGraph.nodes()) {
     auto const node_id = node->id + 1;
     auto const node_seq_char = static_cast<char>(mGraph.decoder(node->code));
-    fmt::format_to(std::back_inserter(gfa_buffer), "S\t{}\t{}\n", node_id, node_seq_char);
+    fmt::format_to(std::back_inserter(gfa_buffer), SEGMENT_FORMAT, node_id, node_seq_char);
 
     for (spoa::Graph::Edge const* edge : node->outedges) {
       auto const dest_node_id = edge->head->id + 1;
-      fmt::format_to(std::back_inserter(gfa_buffer), "L\t{}\t+\t{}\t+\t0M\n", node_id,
-                     dest_node_id);
+      fmt::format_to(std::back_inserter(gfa_buffer), LINK_FORMAT, node_id, dest_node_id);
     }
   }
 
   // --- 2. Write Walks (Sequence Paths) ---
+  static constexpr std::string_view PATH_PREFIX_FORMAT = "P\t{}{}\t";
+  static constexpr std::string_view HAP_PREFIX = "hap";
+  static constexpr std::string_view REF_PREFIX = "ref";
   for (u32 seq_idx = 0; seq_idx < mGraph.sequences().size(); ++seq_idx) {
-    auto const* const hap_prefix = seq_idx == 0 ? "ref" : "hap";
-    fmt::format_to(std::back_inserter(gfa_buffer), "P\t{}{}\t", hap_prefix, seq_idx);
+    auto const hap_prefix = seq_idx == 0 ? REF_PREFIX : HAP_PREFIX;
+    fmt::format_to(std::back_inserter(gfa_buffer), PATH_PREFIX_FORMAT, hap_prefix, seq_idx);
 
     // Trace node successors to construct the sequence path.
     spoa::Graph::Node const* curr_node = mGraph.sequences()[seq_idx];
@@ -83,9 +88,14 @@ auto MsaBuilder::BuildGfaString() const -> std::string {
 
 auto MsaBuilder::BuildFastaString(absl::Span<std::string const> msa_alns) -> std::string {
   fmt::memory_buffer fasta_buffer;
+
+  static constexpr std::string_view FASTA_FORMAT = ">{}{}\n{}\n";
+  static constexpr std::string_view REF_PREFIX = "ref";
+  static constexpr std::string_view HAP_PREFIX = "hap";
+
   for (usize idx = 0; idx < msa_alns.size(); ++idx) {
-    auto const* const sequence_role_prefix = idx == 0 ? "ref" : "hap";
-    fmt::format_to(std::back_inserter(fasta_buffer), ">{}{}\n{}\n", sequence_role_prefix, idx,
+    auto const sequence_role_prefix = idx == 0 ? REF_PREFIX : HAP_PREFIX;
+    fmt::format_to(std::back_inserter(fasta_buffer), FASTA_FORMAT, sequence_role_prefix, idx,
                    msa_alns[idx]);
   }
   return fmt::to_string(fasta_buffer);

@@ -31,9 +31,7 @@ enum class DotSnapshotKind : u8 {
 // Plumbed from the `--graph-snapshots` CLI flag through GraphParams. FINAL
 // (default) emits one DOT per component per window. VERBOSE additionally
 // emits PRUNE_STAGE snapshots after each pruning boundary that survives the
-// pre-compression cull (compress1, lowcov2, compress2, tips). The verbose
-// mode replaces the old `LANCET_DEVELOP_MODE` compile-time gate; no rebuild
-// required.
+// pre-compression cull (compress1, lowcov2, compress2, tips).
 // ============================================================================
 enum class GraphSnapshotMode : u8 {
   FINAL = 0,
@@ -59,8 +57,8 @@ struct DotPlan {
 
   // ── 1B Align ────────────────────────────────────────────────────────────
   DotSnapshotKind mKind = DotSnapshotKind::FINAL;
-  PruneStage mPruneStage =
-      PruneStage::PRUNED_AT_BUILD;  ///< meaningful only when mKind == PRUNE_STAGE
+  /// meaningful only when mKind == PRUNE_STAGE
+  PruneStage mPruneStage = PruneStage::PRUNED_AT_BUILD;
 };
 
 }  // namespace lancet::cbdg

@@ -63,13 +63,12 @@ class VariantBuilder {
     bool mSkipActiveRegion = false;
   };
 
-  /// `worker_index` is assigned by PipelineExecutor when constructing
-  /// the worker pool (range `[0, num_threads)`). It is used to derive the
-  /// per-worker shard filename `worker_<idx>.tar.gz` under
-  /// `params->mShardsDir`. When `params->mShardsDir` is empty (i.e.
-  /// `--out-graphs-tgz` unset), no shard is opened and snapshot emission
-  /// is disabled entirely.
-  VariantBuilder(std::shared_ptr<Params const> params, u32 window_length, u32 worker_index);
+  /// `worker_index` is assigned by PipelineExecutor when constructing the worker pool
+  /// (range `[0, num_threads)`). It is used to derive the per-worker shard filename
+  /// `worker_<idx>.tar.gz` under `params->mShardsDir`. When `params->mShardsDir` is empty
+  /// (i.e. `--out-graphs-tgz` unset), no shard is opened and snapshot emission is disabled.
+  using ParamsPtr = std::shared_ptr<Params const>;
+  VariantBuilder(ParamsPtr params, u32 window_len, u32 worker_id);
 
   enum class StatusCode : u8 {
     UNKNOWN = 0,

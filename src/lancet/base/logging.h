@@ -50,7 +50,7 @@ inline void SetLancetLoggerLevel(spdlog::level::level_enum log_level) {
 }
 
 // NOLINTBEGIN(cppcoreguidelines-macro-usage)
-#ifdef LANCET_DEVELOP_MODE
+#ifdef LANCET_VERBOSE_MODE
 #define LOG_TRACE(...) spdlog::default_logger_raw()->trace(__VA_ARGS__);
 #else
 #define LOG_TRACE(...) ((void)0);

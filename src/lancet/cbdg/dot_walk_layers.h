@@ -25,9 +25,8 @@ namespace lancet::cbdg {
 // Indices beyond 64 cycle via modulo through the palette.
 // ============================================================================
 
-/// Hex color (`#RRGGBB`) for walk index `walk_index`. Index 0 is the REF
-/// accent (white); indices 1..N consume the LAB palette in farthest-first
-/// order.
+/// Hex color (`#RRGGBB`) for walk index `walk_index`. Index 0 is the REF accent
+/// (white); indices 1..N consume the LAB palette in farthest-first order.
 [[nodiscard]] auto WalkColor(usize walk_index) -> std::string_view;
 
 /// Build one EdgeLayer per walk, indexed in lock-step with the input span.
@@ -51,9 +50,9 @@ namespace lancet::cbdg {
 /// sign-pair information that the renderer needs to disambiguate parallel
 /// hairpin edges). Returns an empty walk when the surviving REF backbone
 /// is fragmented (consecutive surviving IDs without a connecting edge).
-[[nodiscard]] auto ReconstructRefWalk(
-    absl::Span<NodeID const> ref_node_ids,
-    absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& nodes, usize comp_id)
+using GraphNodeTable = absl::flat_hash_map<NodeID, std::unique_ptr<Node>>;
+[[nodiscard]] auto ReconstructRefWalk(absl::Span<NodeID const> ref_node_ids,
+                                      GraphNodeTable const& nodes, usize comp_id)
     -> std::vector<Edge>;
 
 }  // namespace lancet::cbdg

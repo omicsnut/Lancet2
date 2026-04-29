@@ -86,8 +86,8 @@ class Graph {
 
   /// In-memory accumulator for the per-component DOT snapshots emitted
   /// during the current k-attempt. Discarded on retry. On a successful
-  /// k-attempt, the buffer drains its contents into the per-worker TAR
-  /// shard via DotSnapshotBuffer::Commit.
+  /// k-attempt, the buffer drains its contents into the per-worker
+  /// tar.gz shard via DotSnapshotBuffer::Commit.
   DotSnapshotBuffer mDotBuffer;
 
   using EdgeSet = absl::flat_hash_set<Edge>;
@@ -126,7 +126,7 @@ class Graph {
   /// which would create a cycle by construction — making assembly at this k pointless.
   [[nodiscard]] static auto HasExactOrApproxRepeat(std::string_view seq, usize window) -> bool {
     auto const klen_seqs = lancet::base::SlidingView(seq, window);
-    static constexpr usize NUM_ALLOWED_MISMATCHES = 3;
+    static constexpr usize NUM_ALLOWED_MISMATCHES = 2;
     return lancet::base::HasRepeat(absl::MakeConstSpan(klen_seqs), NUM_ALLOWED_MISMATCHES);
   }
 
@@ -139,9 +139,7 @@ class Graph {
 
   /// Batch-remove nodes by ID (calls RemoveNode for each).
   void RemoveNodes(absl::Span<NodeID const> node_ids) {
-    for (auto const nid : node_ids) {
-      RemoveNode(mNodes.find(nid));
-    }
+    for (auto const nid : node_ids) RemoveNode(mNodes.find(nid));
   }
 
   /// Remove nodes with singleton or below-threshold coverage (sequencing errors).
@@ -202,6 +200,7 @@ class Graph {
   /// Find an edge from `src` that can be compressed (merged into src) in the given direction.
   [[nodiscard]] auto FindCompressibleEdge(Node const& src, Kmer::Ordering ord) const
       -> std::optional<Edge>;
+
   /// Check whether `conn`'s destination qualifies as a buddy node for compression.
   [[nodiscard]] auto IsPotentialBuddyEdge(Node const& src, Edge const& conn) const -> bool;
 
@@ -290,8 +289,8 @@ class Graph {
   void ProbeOnNodeMerge(NodeID absorbed_id, NodeID surviving_id) const;
 
   // Component analysis: record component membership and anchor failures.
-  void ProbeRecordComponentInfo(absl::Span<ProbeTracker::ComponentInfo const> probe_comps,
-                                Context const& ctx);
+  using ProbeCompInfo = ProbeTracker::ComponentInfo;
+  void ProbeRecordComponentInfo(absl::Span<ProbeCompInfo const> probe_comps, Context const& ctx);
   void ProbeSetNoAnchor(Context const& ctx);
   void ProbeSetShortAnchor(Context const& ctx);
   void ProbeCheckAnchorOverlap(RefAnchor const& source, RefAnchor const& sink, Context const& ctx);

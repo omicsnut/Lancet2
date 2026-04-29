@@ -3,12 +3,15 @@
 #include "lancet/base/types.h"
 #include "lancet/hts/cigar_unit.h"
 
+#include "absl/types/span.h"
 #include "catch_amalgamated.hpp"
 
 extern "C" {
 #include "htslib/sam.h"
 }
 
+#include <array>
+#include <string_view>
 #include <vector>
 
 using lancet::hts::CigarRefPosToQueryPos;

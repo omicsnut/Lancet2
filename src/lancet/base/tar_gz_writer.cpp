@@ -133,8 +133,8 @@ void SplitPathIntoNameAndPrefix(std::string_view const entry_path, std::string_v
   // Find the last '/' such that the name (everything after it) fits in
   // 100 chars AND the prefix (everything before it, exclusive) fits in
   // 155 chars. Iterate from the latest possible split toward the start.
-  for (usize split_index = std::min(entry_path.size() - 1, TAR_PREFIX_FIELD_BYTES); split_index > 0;
-       --split_index) {
+  auto const max_split_index = std::min(entry_path.size() - 1, TAR_PREFIX_FIELD_BYTES);
+  for (usize split_index = max_split_index; split_index > 0; --split_index) {
     if (entry_path[split_index] != '/') continue;
 
     auto const candidate_prefix_len = split_index;
@@ -147,10 +147,9 @@ void SplitPathIntoNameAndPrefix(std::string_view const entry_path, std::string_v
     }
   }
 
-  throw std::runtime_error(fmt::format(
-      "TarGzWriter: entry path > 100 chars cannot be split at a `/` boundary that respects "
-      "USTAR's 100/155 split: {}",
-      entry_path));
+  static constexpr auto ERROR_MSG = "TarGzWriter: entry path > 100 chars cannot be split "
+                                    "at a `/` boundary that respects USTAR's 100/155 split: {}";
+  throw std::runtime_error(fmt::format(ERROR_MSG, entry_path));
 }
 
 // Build a 512-byte USTAR header for a regular-file entry of size
@@ -199,8 +198,8 @@ TarGzWriter::~TarGzWriter() {
   // rationale: throwing during stack unwinding terminates.
   try {
     Close();
-  } catch (...) {  // NOLINT(bugprone-empty-catch)
-  }
+    // NOLINTNEXTLINE(bugprone-empty-catch)
+  } catch (...) {}
 }
 
 void TarGzWriter::AddRegularFileEntry(std::string_view const entry_path,

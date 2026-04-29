@@ -26,13 +26,13 @@ option(LANCET_BENCHMARKS "Builds the Lancet benchmarks executable" "OFF")
 option(LANCET_PROFILE_MODE "Enables CPU profiling for the Lancet executable" "OFF")
 option(LANCET_BUILD_STATIC "Build a statically linked Lancet executable" "ON")
 option(LANCET_NATIVE_BUILD "Optimize for this specific CPU. Faster but binary may not run on different hardware" "OFF")
-option(LANCET_DEVELOPER_MODE "Builds the Lancet executable in develop mode to enable even richer debugging" "OFF")
+option(LANCET_VERBOSE_LOGS "Enables TRACE level log messages when --verbose flag is provided at runtime" "OFF")
 set_property(CACHE LANCET_TESTS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_BENCHMARKS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_PROFILE_MODE PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_BUILD_STATIC PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_NATIVE_BUILD PROPERTY STRINGS "OFF" "ON")
-set_property(CACHE LANCET_DEVELOPER_MODE PROPERTY STRINGS "OFF" "ON")
+set_property(CACHE LANCET_VERBOSE_LOGS PROPERTY STRINGS "OFF" "ON")
 
 cmake_dependent_option(LANCET_ENABLE_CLOUD_IO
 	"Enables native S3 and GCS streaming via libcurl" OFF
@@ -415,8 +415,14 @@ set_target_properties(Lancet2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED O
 set_property(TARGET Lancet2 PROPERTY $<$<ENABLE_LTO>:INTERPROCEDURAL_OPTIMIZATION TRUE>)
 install(TARGETS Lancet2 DESTINATION bin)
 
-if (LANCET_DEVELOPER_MODE)
-	add_compile_definitions(LANCET_DEVELOP_MODE)
+if (LANCET_VERBOSE_LOGS)
+	add_compile_definitions(LANCET_VERBOSE_LOGS)
+	message(STATUS "Lancet2: Verbose logs ON")
+endif ()
+
+if (CMAKE_BUILD_TYPE MATCHES Debug)
+	add_compile_definitions(LANCET_DEBUG_MODE)
+	message(STATUS "Lancet2: Debug mode ON")
 endif ()
 
 # ── Optional: CPU profiling (RelWithDebInfo only) ─────────────────────────────
@@ -425,6 +431,7 @@ endif ()
 # https://gperftools.github.io/gperftools/cpuprofile.html
 if (LANCET_PROFILE_MODE AND ${CMAKE_BUILD_TYPE} MATCHES RelWithDebInfo)
 	add_compile_definitions(LANCET_PROFILE_MODE)
+	message(STATUS "Lancet2: Profile mode ON")
 	add_dependencies(lancet_core gperftools)
 	add_dependencies(lancet_cli gperftools)
 	target_include_directories(lancet_core SYSTEM PRIVATE ${GPERFTOOLS_INC_DIR})

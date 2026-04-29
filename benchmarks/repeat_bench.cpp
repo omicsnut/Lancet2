@@ -32,9 +32,12 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <functional>
 #include <random>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace {
 

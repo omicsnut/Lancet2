@@ -3,10 +3,12 @@
 #include "lancet/hts/alignment.h"
 #include "lancet/hts/reference.h"
 
+#include "absl/types/span.h"
 #include "catch_amalgamated.hpp"
 #include "lancet_test_config.h"
 
 #include <filesystem>
+#include <initializer_list>
 #include <iterator>
 #include <stdexcept>
 

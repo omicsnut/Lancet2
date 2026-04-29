@@ -10,6 +10,7 @@
 #include "catch_amalgamated.hpp"
 
 #include <array>
+#include <iterator>
 #include <random>
 #include <ranges>
 #include <string>

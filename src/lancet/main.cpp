@@ -7,6 +7,10 @@
 #include "spdlog/sinks/ansicolor_sink.h"
 #include "spdlog/spdlog.h"
 
+#ifndef __APPLE__
+#include "mimalloc-override.h"  // IWYU pragma: keep
+#endif
+
 #include <iostream>
 #include <memory>
 

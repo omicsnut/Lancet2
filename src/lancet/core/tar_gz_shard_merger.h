@@ -7,9 +7,8 @@
 namespace lancet::core {
 
 // ============================================================================
-// TarGzShardMerger — bytewise concatenation of per-worker tar.gz shards into
-// a single final archive, plus end-of-archive marker append and shards-dir
-// cleanup.
+// TarGzShardMerger: Bytewise concatenation of per-worker tar.gz shards into
+// a single final archive, plus end-of-archive marker append and shards-dir cleanup.
 //
 // Workers each write their own gzipped TAR shard during the compute phase
 // (each shard omits the trailing TAR end-of-archive zero blocks per RFC

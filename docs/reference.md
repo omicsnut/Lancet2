@@ -157,7 +157,7 @@ Extract with `tar -xzf <archive>.tar.gz -C <where>/` to recover the per-window d
 
 Controls DOT snapshot verbosity when `--out-graphs-tgz` is set.
 `final` (default) emits one DOT per component per window: filename substring is `enumerated_walks` if walks were enumerated, `fully_pruned` otherwise.
-`verbose` additionally emits intermediate-stage snapshots after each post-compression pruning boundary (`compression1`, `low_cov_removal2`, `compression2`, `short_tip_removal`). Replaces the legacy `LANCET_DEVELOP_MODE` compile-time gate — verbose snapshots are now an opt-in runtime feature, no rebuild required.
+`verbose` additionally emits intermediate-stage snapshots after each pruning step once reference anchors are identified. (`compression1`, `low_cov_removal2`, `compression2`, `short_tip_removal`).
 See [Custom Visualization](guides/custom_visualization.md#dot-snapshot-verbosity) for the orthogonal styling axes (role / anchor / probe / walk-color overlays) and the multi-walk colorList composition.
 
 #### `--genome-gc-bias`
@@ -165,7 +165,8 @@ See [Custom Visualization](guides/custom_visualization.md#dot-snapshot-verbosity
 
 Global genome GC fraction for LongdustQ score correction.
 Set to 0.5 to disable GC correction (uniform model).
-Default value (0.41) is the human genome-wide GC average. Adjust for non-human genomes or targeted panels with significantly different GC content.
+Default value (0.41) is the human genome-wide GC average.
+Adjust for non-human genomes or targeted panels with significantly different GC content.
 
 ```bash
 Lancet2 pipeline \

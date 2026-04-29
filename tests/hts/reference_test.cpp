@@ -3,6 +3,7 @@
 #include "lancet/base/types.h"
 
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "catch_amalgamated.hpp"
 #include "lancet_test_config.h"
 

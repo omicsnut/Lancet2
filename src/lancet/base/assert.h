@@ -1,14 +1,14 @@
 #ifndef SRC_LANCET_BASE_ASSERT_H_
 #define SRC_LANCET_BASE_ASSERT_H_
 
-#ifdef LANCET_DEVELOP_MODE
+#ifdef LANCET_DEBUG_MODE
 #include "spdlog/fmt/bundled/core.h"
 
 #include <source_location>
 #include <stdexcept>
 #endif
 
-#ifdef LANCET_DEVELOP_MODE
+#ifdef LANCET_DEBUG_MODE
 inline void ThrowIfAssertFail(
     bool condition, std::source_location const location = std::source_location::current()) {
   if (!condition) {

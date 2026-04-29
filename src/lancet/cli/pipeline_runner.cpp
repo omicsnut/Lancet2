@@ -67,7 +67,7 @@ PipelineRunner::PipelineRunner(std::shared_ptr<CliParams> params) : mParamsPtr(s
 void PipelineRunner::Run() {
   base::Timer timer;
   ValidateAndPopulateParams();
-  SetupGraphOutputArchive();
+  SetupPerWorkerGraphShards();
   SetupProbeTracking();
 
   hts::BgzfOstream output_vcf;
@@ -83,29 +83,12 @@ void PipelineRunner::Run() {
   window_builder.AddBatchRegions(mParamsPtr->mBedFile);
 
   if (window_builder.IsEmpty()) {
-    LOG_WARN("No input regions provided to build windows."
-             " Using contigs in reference as input regions")
+    LOG_WARN("No input regions provided to build windows. Using contigs in ref as input regions")
     window_builder.AddAllReferenceRegions();
   }
 
   // Sort input regions before batch emission to ensure deterministic genomic ordering
   window_builder.SortInputRegions();
-
-  // ── Per-worker shard layout for graph outputs (DOT + GFA + FASTA) ────
-  // When `--out-graphs-tgz` is set, each worker thread writes its own
-  // gzipped TAR shard into a hidden subdirectory next to the final
-  // archive. After all workers exit, TarGzShardMerger concatenates them and
-  // appends one end-of-archive marker. Bundling per-window graphs into a
-  // single archive avoids the per-file `mkdir`/`openat` metadata cost
-  // that serialises on the metadata server of shared filesystems.
-  auto const& archive_path = mParamsPtr->mVariantBuilder.mOutGraphsTgz;
-  if (!archive_path.empty()) {
-    auto const shards_subdir_name = fmt::format(".{}.shards", archive_path.filename().string());
-    auto const shards_dir = archive_path.parent_path() / shards_subdir_name;
-    std::filesystem::remove_all(shards_dir);  // clean any stale shards from a prior run
-    std::filesystem::create_directories(shards_dir);
-    mParamsPtr->mVariantBuilder.mShardsDir = shards_dir;
-  }
 
   core::PipelineExecutor executor(
       std::move(window_builder),
@@ -117,33 +100,8 @@ void PipelineRunner::Run() {
     mParamsPtr->mVariantBuilder.mProbeResultsWriter->EmitUnprocessedProbes();
   }
 
-  // ── Merge per-worker shards into the final archive ────────────────────
-  // PipelineExecutor::Execute has joined every worker thread by now, so
-  // each shard's TarGzWriter is destroyed (its gzip stream finalised). The
-  // TarGzShardMerger walks the shards directory in worker-index order, copies
-  // bytes verbatim into the user-visible final archive, appends a single
-  // gzipped end-of-archive marker, and removes the shards directory.
-  //
-  // On merge failure we exit non-zero with shards preserved (the failure
-  // log includes the shards path) so the user has a recovery handle.
-  if (!archive_path.empty()) {
-    auto const& shards_dir = mParamsPtr->mVariantBuilder.mShardsDir;
-    LOG_INFO("Compute phase complete; merging worker shards into {}", archive_path.string())
-    base::Timer merge_wallclock_timer;
-    try {
-      core::TarGzShardMerger merger(shards_dir, archive_path);
-      merger.Merge();
-    } catch (std::exception const& exc) {
-      LOG_CRITICAL("TarGzShardMerger failed: {}; shards preserved at {} for manual recovery",
-                   exc.what(), shards_dir.string())
-      std::exit(EXIT_FAILURE);
-    }
-    // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
-    auto const merge_elapsed = merge_wallclock_timer.HumanRuntime();
-    LOG_INFO("Merged graph output archive {} in {}", archive_path.string(), merge_elapsed)
-  }
-
   output_vcf.Close();
+  MergePerWorkerGraphShards();
   core::PipelineExecutor::LogWindowStats(stats);
 
   auto const total_rt = absl::FormatDuration(absl::Trunc(timer.Runtime(), absl::Milliseconds(1)));
@@ -153,34 +111,72 @@ void PipelineRunner::Run() {
 }
 
 // ============================================================================
-// SetupGraphOutputArchive — validate `--out-graphs-tgz` path semantics
+// SetupPerWorkerGraphShards — validate `--out-graphs-tgz` path semantics and
+//                             create per-worker shards directory
 //
-// The user-supplied archive path must end in `.tar.gz`. We additionally
-// ensure the *parent* directory exists (creating it if necessary) so the
-// per-worker shards subdir + final archive can be written without further
-// path setup. The archive file itself is opened later by the merge step;
-// any pre-existing file at `--out-graphs-tgz` is overwritten by the
-// merger's `O_TRUNC`.
+// The user-supplied archive path must end in `.tar.gz`. We additionally ensure the *parent*
+// directory and per-worker shards directory exists (creating it if necessary)
+// Any pre-existing file at `--out-graphs-tgz` is overwritten by the merger's `O_TRUNC`.
 // ============================================================================
 
-void PipelineRunner::SetupGraphOutputArchive() {
+void PipelineRunner::SetupPerWorkerGraphShards() {
   auto const& archive_path = mParamsPtr->mVariantBuilder.mOutGraphsTgz;
   if (archive_path.empty()) return;
 
-  static constexpr std::string_view EXPECTED_SUFFIX = ".tar.gz";
-  auto const archive_path_str = archive_path.string();
-  auto const has_required_suffix = archive_path_str.ends_with(EXPECTED_SUFFIX);
-  if (!has_required_suffix) {
-    LOG_CRITICAL("--out-graphs-tgz path must end in `.tar.gz`. Got: {} (use a path like "
-                 "`output-graphs.tar.gz`)",
-                 archive_path_str)
+  if (!archive_path.string().ends_with(".tar.gz")) {
+    LOG_CRITICAL("--out-graphs-tgz path must end with `.tar.gz`. Got: {}", archive_path.string())
     std::exit(EXIT_FAILURE);
   }
 
+  // Create the parent directory for the archive if it doesn't exist
   auto const archive_parent_dir = archive_path.parent_path();
   if (!archive_parent_dir.empty()) {
     std::filesystem::create_directories(archive_parent_dir);
   }
+
+  // ── Per-worker shard layout for graph outputs (DOT + GFA + FASTA) ────
+  // When `--out-graphs-tgz` is set, each worker thread writes its own
+  // gzipped TAR shard into a hidden subdirectory next to the final
+  // archive. After all workers exit, TarGzShardMerger concatenates them and
+  // appends one end-of-archive marker. Bundling per-window graphs into a
+  // single archive avoids the per-file `mkdir`/`openat` metadata cost
+  // that serialises on the metadata server of shared filesystems.
+  auto const shards_subdir_name = fmt::format(".{}.shards", archive_path.filename().string());
+  auto const shards_dir = archive_path.parent_path() / shards_subdir_name;
+  // Clean any stale shards from a prior run
+  std::filesystem::remove_all(shards_dir);
+  std::filesystem::create_directories(shards_dir);
+  mParamsPtr->mVariantBuilder.mShardsDir = shards_dir;
+}
+
+void PipelineRunner::MergePerWorkerGraphShards() {
+  auto const& archive_path = mParamsPtr->mVariantBuilder.mOutGraphsTgz;
+  if (archive_path.empty()) return;
+
+  // ── Merge per-worker shards into the final archive ────────────────────
+  // PipelineExecutor::Execute has joined every worker thread by now, so
+  // each shard's TarGzWriter is destroyed (its gzip stream finalised). The
+  // TarGzShardMerger walks the shards directory in worker-index order, copies
+  // bytes verbatim into the user-visible final archive, appends a single
+  // gzipped end-of-archive marker, and removes the shards directory.
+  //
+  // On merge failure we exit non-zero with shards preserved (the failure
+  // log includes the shards path) so the user has a recovery handle.
+  auto const& shards_dir = mParamsPtr->mVariantBuilder.mShardsDir;
+  LOG_INFO("Processing complete; merging per-worker graph shards to {}", archive_path.string());
+  base::Timer merge_wallclock_timer;
+
+  try {
+    core::TarGzShardMerger merger(shards_dir, archive_path);
+    merger.Merge();
+  } catch (std::exception const& exc) {
+    LOG_CRITICAL("Failed to merge per-worker graph shards due to error: {}", exc.what());
+    LOG_CRITICAL("Per-worker shards preserved at {} for manual recovery", shards_dir.string());
+    std::exit(EXIT_FAILURE);
+  }
+
+  auto const merge_elapsed = merge_wallclock_timer.HumanRuntime();
+  LOG_INFO("Merged per-worker graph shards into {} in {}", archive_path.string(), merge_elapsed);
 }
 
 // ============================================================================

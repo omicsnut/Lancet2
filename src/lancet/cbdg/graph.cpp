@@ -93,13 +93,8 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
   auto const region_seq = mRegion->SeqView();
   mCurrK = mParams.mMinKmerLen - mParams.mKmerStepLen;
 
-  // Per-window subdir under `dbg_graph/`. Each worker writes its window's
-  // DOT files into a directory inode no other worker is touching, so
-  // `openat(O_CREAT)` calls cannot serialize on the shared `dbg_graph/`
-  // parent inode.
-  auto const window_subdir_name =
-      fmt::format("{}_{}_{}", region_chrom, mRegion->StartPos1(), mRegion->EndPos1());
-  mDotBuffer.SetWindowSubdir(window_subdir_name);
+  mDotBuffer.SetWindowSubdir(
+      fmt::format("{}_{}_{}", region_chrom, mRegion->StartPos1(), mRegion->EndPos1()));
 
   Context probe_ctx{.mChrom = region_chrom,
                     .mRefSeq = region_seq,
@@ -129,8 +124,8 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
 
     mNodes.clear();
     BuildGraph(mate_mers);
-    LOG_TRACE("Done building graph for {} with k={}, nodes={}, reads={}", region_str, mCurrK,
-              mNodes.size(), mReads.size())
+    LOG_TRACE("Done building de Bruijn graph for {} with k={}, nodes={}, reads={}", region_str,
+              mCurrK, mNodes.size(), mReads.size())
 
     // Tag probe ALT-unique k-mers in the graph and count them in the raw reads.
     ProbeGenerateAndTag(probe_ctx);
@@ -141,12 +136,12 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
     // The pre-component pre-compression graph is intentionally not snapshot
     // here; it has tens of thousands of nodes per window and is unusable as
     // a rendered DOT. Verbose mode picks up at the first post-compression
-    // stage instead (see PruneComponent).
+    // stage after source/sink anchors are found (see PruneComponent).
     ProbeLogStatus(PruneStage::PRUNED_AT_LOWCOV1, probe_ctx);
 
     auto const connected_components = MarkConnectedComponents();
     results.reserve(connected_components.size());
-    LOG_TRACE("Found {} connected components in graph for {} with k={}",
+    LOG_TRACE("Found {} connected components in de Bruijn graph for {} with k={}",
               connected_components.size(), region_str, mCurrK)
 
     // Inner loop: process each connected component with valid source/sink anchors.
@@ -163,20 +158,22 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       auto const sink = FindSink(component_index);
 
       if (!source.mFoundAnchor || !sink.mFoundAnchor || source.mAnchorId == sink.mAnchorId) {
-        LOG_TRACE("Skipping component {} in graph for {} as source/sink not found", component_index,
-                  region_str)
+        LOG_TRACE("Skipping component {} in graph for {} as source/sink was not found",
+                  component_index, region_str)
         ProbeSetNoAnchor(probe_ctx);
         continue;
       }
 
       auto const ref_anchor_len = RefAnchorLength(source, sink, mCurrK);
       if (ref_anchor_len < DEFAULT_MIN_ANCHOR_LENGTH) {
+        LOG_TRACE("Skipping component {} in graph for {} as ref anchor ({}bp) is too short",
+                  component_index, region_str, ref_anchor_len);
         ProbeSetShortAnchor(probe_ctx);
         continue;
       }
 
-      LOG_TRACE("Found {}bp reference anchor for {} component {} with k={}", ref_anchor_len,
-                region_str, component_index, mCurrK)
+      LOG_TRACE("Found {}bp ref anchor for component {} in graph for {} with k={}", ref_anchor_len,
+                component_index, region_str, mCurrK)
 
       ProbeCheckAnchorOverlap(source, sink, probe_ctx);
       mSourceAndSinkIds = NodeIDPair{source.mAnchorId, sink.mAnchorId};
@@ -194,8 +191,8 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       // O(V+E) cycle detection using three-color DFS on the flat adjacency list.
       // See HasCycle() implementation for bidirected sign-continuity handling.
       if (HasCycle(traversal_index)) {
-        LOG_TRACE("Cycle found in pruned graph for {} component {} with k={}", region_str,
-                  component_index, mCurrK)
+        LOG_TRACE("Cycle detected in pruned graph for component {} in graph for {} with k={}",
+                  component_index, region_str, mCurrK)
         ProbeSetGraphCycle(probe_ctx);
         should_retry_kmer = true;
         break;
@@ -205,11 +202,12 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       // All metrics are O(V+E) to compute and help identify pathological windows.
       // Skip walk enumeration on pathological graphs — retry with larger k to
       // collapse branches. Same control flow as the HasCycle guard above.
-      auto const graph_complexity = ComputeComponentComplexity(component_index);
-      if (graph_complexity.IsComplex()) {
-        LOG_DEBUG("Graph too complex for {} comp={} k={}: CC={} branches={}", region_str,
-                  component_index, mCurrK, graph_complexity.CyclomaticComplexity(),
-                  graph_complexity.NumBranchPoints())
+      auto const gcplx = ComputeComponentComplexity(component_index);
+      if (gcplx.IsComplex()) {
+        LOG_DEBUG("Detected high complexity for component {} in graph for {} with k={}: "
+                  "cyclomatic-complexity={}, num-branch-points={}",
+                  component_index, region_str, mCurrK, gcplx.CyclomaticComplexity(),
+                  gcplx.NumBranchPoints())
         ProbeSetGraphComplex(probe_ctx);
         should_retry_kmer = true;
         break;
@@ -225,7 +223,7 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
       BufferFinalSnapshot(component_index, absl::MakeConstSpan(haps));
 
       if (haps.empty()) continue;
-      results.emplace_back(std::move(haps), graph_complexity, static_cast<u32>(source.mRefOffset));
+      results.emplace_back(std::move(haps), gcplx, static_cast<u32>(source.mRefOffset));
     }
 
     // If any component triggered a retry, discard partial results and try next k
@@ -291,7 +289,7 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
     auto const added_nodes = AddNodes(read.SeqView(), read.SrcLabel());
 
     for (auto* node : added_nodes) {
-      MateMer mm_pair{
+      MateMer mm_info{
           .mQname = read.QnameView(), .mKmerHash = node->Identifier(), .mTagKind = read.TagKind()};
 
       // Filter out low-quality kmers by expected error count (floor of summed Phred error
@@ -304,9 +302,9 @@ void Graph::BuildGraph(absl::flat_hash_set<MateMer>& mate_mers) {
       auto const expected_error = static_cast<i64>(std::floor(raw_expected_error));
       offset++;
 
-      if (expected_error > 0 || mate_mers.contains(mm_pair)) continue;
+      if (expected_error > 0 || mate_mers.contains(mm_info)) continue;
       node->IncrementReadSupport(read.SampleIndex(), read.TagKind());
-      mate_mers.emplace(mm_pair);
+      mate_mers.emplace(mm_info);
     }
   }
 }
@@ -333,12 +331,10 @@ auto Graph::AddNodes(std::string_view sequence, Label const label) -> std::vecto
 
     if (mer_idx == 0) result.emplace_back(first.get());
 
-    static constexpr auto DEFAULT_ORDER = Kmer::Ordering::DEFAULT;
-    auto const fwd_edge =
-        MakeFwdEdgeKind({first->SignFor(DEFAULT_ORDER), second->SignFor(DEFAULT_ORDER)});
-    first->EmplaceEdge(NodeIDPair{left_id, right_id}, fwd_edge);
-    second->EmplaceEdge(NodeIDPair{right_id, left_id}, RevEdgeKind(fwd_edge));
-
+    static constexpr auto DFLT_ORDER = Kmer::Ordering::DEFAULT;
+    auto const fwd = MakeFwdEdgeKind({first->SignFor(DFLT_ORDER), second->SignFor(DFLT_ORDER)});
+    first->EmplaceEdge(NodeIDPair{left_id, right_id}, fwd);
+    second->EmplaceEdge(NodeIDPair{right_id, left_id}, RevEdgeKind(fwd));
     result.emplace_back(second.get());
   }
 
@@ -366,8 +362,8 @@ void Graph::RemoveNode(NodeTable::iterator itr) {
 }
 
 void Graph::RemoveLowCovNodes(usize const component_id) {
-  std::vector<NodeID> remove_nids;
-  remove_nids.reserve(mNodes.size());
+  std::vector<NodeID> remove_node_ids;
+  remove_node_ids.reserve(mNodes.size());
 
   auto const [source_id, sink_id] = mSourceAndSinkIds;
   for (auto const& [nid, node_ptr] : mNodes) {
@@ -380,18 +376,18 @@ void Graph::RemoveLowCovNodes(usize const component_id) {
     auto const total_sample_cov = node_ptr->TotalReadSupport();
 
     if (all_singletons || total_sample_cov < mParams.mMinNodeCov) {
-      remove_nids.emplace_back(nid);
+      remove_node_ids.emplace_back(nid);
     }
   }
 
-  if (!remove_nids.empty()) {
+  if (!remove_node_ids.empty()) {
     // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
     auto const region_str = mRegion->ToSamtoolsRegion();
     LOG_TRACE("Removing {:.4f}% (or) {} low cov nodes for {} in comp{} with k={}",
-              100.0 * (static_cast<f64>(remove_nids.size()) / static_cast<f64>(mNodes.size())),
-              remove_nids.size(), region_str, component_id, mCurrK)
+              100.0 * (static_cast<f64>(remove_node_ids.size()) / static_cast<f64>(mNodes.size())),
+              remove_node_ids.size(), region_str, component_id, mCurrK)
 
-    RemoveNodes(absl::MakeConstSpan(remove_nids));
+    RemoveNodes(absl::MakeConstSpan(remove_node_ids));
   }
 }
 
@@ -399,7 +395,7 @@ auto Graph::MarkConnectedComponents() -> std::vector<ComponentInfo> {
   usize current_component = 0;
   std::vector<ComponentInfo> results_info;
 
-#ifdef LANCET_DEVELOP_MODE
+#ifdef LANCET_DEBUG_MODE
   static auto const IS_UNASSIGNED = [](NodeTable::const_reference item) {
     return item.second->GetComponentId() == 0;
   };
@@ -440,31 +436,31 @@ auto Graph::MarkConnectedComponents() -> std::vector<ComponentInfo> {
   }
 
   auto const total_num_nodes = static_cast<f64>(mNodes.size());
-  for (auto& cinfo : results_info) {
+  std::ranges::for_each(results_info, [&total_num_nodes](ComponentInfo& cinfo) {
     cinfo.mPctNodes = 100.0 * (static_cast<f64>(cinfo.mNumNodes) / total_num_nodes);
-  }
+  });
 
   std::ranges::sort(results_info, [](ComponentInfo const& lhs, ComponentInfo const& rhs) -> bool {
     return lhs.mNumNodes > rhs.mNumNodes;
   });
 
-  // ── Probe: record component info after component labeling ───────────────────────
-  if (HasProbeTracker()) {
-    auto const reg_str = mRegion->ToSamtoolsRegion();
-    std::vector<ProbeTracker::ComponentInfo> probe_comps;
-    probe_comps.reserve(results_info.size());
-
-    static constexpr auto TRANSLATE_CINFO = [](ComponentInfo const& comp) {
-      return ProbeTracker::ComponentInfo{.mCompId = comp.mCompId, .mNumNodes = comp.mNumNodes};
-    };
-
-    std::ranges::transform(results_info, std::back_inserter(probe_comps), TRANSLATE_CINFO);
-    ProbeRecordComponentInfo(absl::MakeConstSpan(probe_comps),
-                             Context{.mRegStr = reg_str, .mKmerSize = mCurrK});
-  }
-
   // Check that none of the nodes are component zero after we are done
   LANCET_ASSERT(static_cast<usize>(std::ranges::count_if(mNodes, IS_UNASSIGNED)) == 0)
+  if (!HasProbeTracker()) return results_info;
+
+  // ── Probe: record component info after component labeling ───────────────────────
+  auto const reg_str = mRegion->ToSamtoolsRegion();
+  std::vector<ProbeTracker::ComponentInfo> probe_comps;
+  probe_comps.reserve(results_info.size());
+
+  static constexpr auto TRANSLATE_CINFO = [](ComponentInfo const& comp) {
+    return ProbeTracker::ComponentInfo{.mCompId = comp.mCompId, .mNumNodes = comp.mNumNodes};
+  };
+
+  auto const probe_ctx = Context{.mRegStr = reg_str, .mKmerSize = mCurrK};
+  std::ranges::transform(results_info, std::back_inserter(probe_comps), TRANSLATE_CINFO);
+  ProbeRecordComponentInfo(absl::MakeConstSpan(probe_comps), probe_ctx);
+
   return results_info;
 }
 
@@ -480,10 +476,9 @@ auto Graph::FindSource(usize const component_id) const -> RefAnchor {
     if (itr == mNodes.end()) continue;
 
     LANCET_ASSERT(itr->second != nullptr)
-    if (itr->second->GetComponentId() != component_id ||
-        itr->second->TotalReadSupport() < mParams.mMinAnchorCov) {
-      continue;
-    }
+    auto const is_diff_component = itr->second->GetComponentId() != component_id;
+    auto const is_low_cov = itr->second->TotalReadSupport() < mParams.mMinAnchorCov;
+    if (is_diff_component || is_low_cov) continue;
 
     result.mAnchorId = itr->first;
     result.mRefOffset = ref_idx;
@@ -502,10 +497,9 @@ auto Graph::FindSink(usize const component_id) const -> RefAnchor {
     if (itr == mNodes.end()) continue;
 
     LANCET_ASSERT(itr->second != nullptr)
-    if (itr->second->GetComponentId() != component_id ||
-        itr->second->TotalReadSupport() < mParams.mMinAnchorCov) {
-      continue;
-    }
+    auto const is_diff_component = itr->second->GetComponentId() != component_id;
+    auto const is_low_cov = itr->second->TotalReadSupport() < mParams.mMinAnchorCov;
+    if (is_diff_component || is_low_cov) continue;
 
     result.mAnchorId = itr->first;
     result.mRefOffset = static_cast<usize>(ref_idx);
@@ -522,11 +516,10 @@ auto Graph::FindSink(usize const component_id) const -> RefAnchor {
 
 void Graph::PruneComponent(usize const component_id) {
   // Pruning pipeline: compress linear chains, remove low-coverage nodes, remove tips.
-  // NOTE: The pre-compression HasCycle call (old line 103) has been removed. Graph
-  // compression only merges degree-2 linear chain nodes — it cannot introduce or
-  // remove cycles. Therefore cycle detection before compression was redundant with
-  // the cycle detection after compression. We now check only once, on the smaller
-  // (compressed) graph, which is faster.
+  // NOTE: The pre-compression HasCycle call has been removed. Graph compression only merges
+  // degree-2 linear chain nodes — it cannot introduce or remove cycles. Therefore cycle
+  // detection before compression was redundant with the cycle detection after compression.
+  // We now check only once, on the smaller (compressed) graph, which is faster.
   // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
   auto const reg_str = mRegion->ToSamtoolsRegion();
   Context const prune_ctx{.mRegStr = reg_str, .mKmerSize = mCurrK, .mCompId = component_id};
@@ -558,30 +551,30 @@ void Graph::PruneComponent(usize const component_id) {
 //
 // Each node is compressed in both sign-directions (DEFAULT and OPPOSITE)
 // to capture unitigs that extend in either orientation of the bidirected
-// graph. Absorbed nodes are collected in `remove_nids` and deleted after
-// the full pass to avoid iterator invalidation.
+// graph. Absorbed nodes are collected in `remove_node_ids` and deleted
+// after the full pass to avoid iterator invalidation.
 //
 // Reference: BCALM2 bidirected graph compaction model
 // https://github.com/GATB/bcalm/blob/v2.2.3/bidirected-graphs-in-bcalm2/bidirected-graphs-in-bcalm2.md
 // ============================================================================
 void Graph::CompressGraph(usize const component_id) {
-  absl::flat_hash_set<NodeID> remove_nids;
-  remove_nids.reserve(mNodes.size());
+  absl::flat_hash_set<NodeID> remove_node_ids;
+  remove_node_ids.reserve(mNodes.size());
 
   for (NodeTable::const_reference item : mNodes) {
     if (item.second->GetComponentId() != component_id) continue;
-    if (remove_nids.contains(item.first)) continue;
+    if (remove_node_ids.contains(item.first)) continue;
 
-    CompressNode(item.first, Kmer::Ordering::DEFAULT, remove_nids);
-    CompressNode(item.first, Kmer::Ordering::OPPOSITE, remove_nids);
+    CompressNode(item.first, Kmer::Ordering::DEFAULT, remove_node_ids);
+    CompressNode(item.first, Kmer::Ordering::OPPOSITE, remove_node_ids);
   }
 
-  if (!remove_nids.empty()) {
+  if (!remove_node_ids.empty()) {
     // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
     auto const region_str = mRegion->ToSamtoolsRegion();
-    LOG_TRACE("Compressed {} nodes for {} in comp{} with k={}", remove_nids.size(), region_str,
-              component_id, mCurrK)
-    for (auto const nid : remove_nids) RemoveNode(mNodes.find(nid));
+    LOG_TRACE("Compressed {} nodes in component {} in graph for {} with k={}",
+              remove_node_ids.size(), component_id, region_str, mCurrK)
+    for (auto const nid : remove_node_ids) RemoveNode(mNodes.find(nid));
   }
 }
 
@@ -809,42 +802,44 @@ auto Graph::IsPotentialBuddyEdge(Node const& src, Edge const& conn) const -> boo
 }
 
 void Graph::RemoveTips(usize const component_id) {
-  usize total_tips = 0;
-  usize curr_tips = 1;
+  usize total_tips_removed = 0;
+  usize current_tips = 1;
 
-  std::vector<NodeID> remove_nids;
-  remove_nids.reserve(mNodes.size());
+  std::vector<NodeID> remove_node_ids;
+  remove_node_ids.reserve(mNodes.size());
   // remove tips and compress at least once. compression after tip removal
   // can produce new tips in the graph, so recursively remove tips from
   // the graph until there are no longer any tips left
-  while (curr_tips > 0) {
-    remove_nids.clear();
+  while (current_tips > 0) {
+    remove_node_ids.clear();
 
     auto const [source_id, sink_id] = mSourceAndSinkIds;
     for (auto const& [nid, node_ptr] : mNodes) {
-      if (node_ptr->GetComponentId() != component_id || node_ptr->NumOutEdges() > 1) continue;
-      if (nid == source_id || nid == sink_id) continue;
+      auto const is_anchor_node = nid == source_id || nid == sink_id;
+      auto const is_diff_component = node_ptr->GetComponentId() != component_id;
+      auto const is_branch_node = node_ptr->NumOutEdges() > 1;
+      if (is_diff_component || is_anchor_node || is_branch_node) continue;
 
       auto const uniq_sequence_length = node_ptr->SeqLength() - mCurrK + 1;
       if (uniq_sequence_length >= mCurrK) continue;
 
-      remove_nids.emplace_back(nid);
+      remove_node_ids.emplace_back(nid);
     }
 
-    if (!remove_nids.empty()) {
-      total_tips += curr_tips;
-      RemoveNodes(absl::MakeConstSpan(remove_nids));
+    if (!remove_node_ids.empty()) {
+      total_tips_removed += current_tips;
+      RemoveNodes(absl::MakeConstSpan(remove_node_ids));
       CompressGraph(component_id);
     }
 
-    curr_tips = remove_nids.size();
+    current_tips = remove_node_ids.size();
   }
 
-  if (total_tips > 0) {
+  if (total_tips_removed > 0) {
     // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
     auto const region_str = mRegion->ToSamtoolsRegion();
-    LOG_TRACE("Removed {} tips for {} in comp{} with k={}", total_tips, region_str, component_id,
-              mCurrK);
+    LOG_TRACE("Removed {} short tips from component {} in graph for {} with k={}",
+              total_tips_removed, component_id, region_str, mCurrK);
   }
 }
 
@@ -859,8 +854,8 @@ auto Graph::BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
   std::vector<EnumeratedHaplotype> haplotypes;
   auto const reg_str = mRegion->ToSamtoolsRegion();
 
-  LOG_TRACE("Starting walk enumeration for {} with k={}, num_nodes={}", reg_str, mCurrK,
-            mNodes.size())
+  LOG_TRACE("Starting walk enumeration in graph component {} for {} with k={}, num_nodes={}",
+            comp_id, reg_str, mCurrK, mNodes.size())
 
   MaxFlow max_flow(&mNodes, mCurrK, &trav_idx, mParams.mNumSamples);
   auto next_hap = max_flow.NextPath();
@@ -873,8 +868,8 @@ auto Graph::BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
   }
 
   if (max_flow.HitTraversalLimit()) {
-    LOG_DEBUG("BFS traversal limit hit for {} comp={} k={} after {} paths", reg_str, comp_id,
-              mCurrK, haplotypes.size())
+    LOG_DEBUG("BFS traversal limit hit in graph component {} for {} with k={} after {} paths",
+              comp_id, reg_str, mCurrK, haplotypes.size())
     ProbeSetTraversalLimit(probe_ctx);
   }
 
@@ -896,7 +891,6 @@ auto Graph::BuildHaplotypes(usize comp_id, TraversalIndex const& trav_idx,
   });
 
   haplotypes.emplace(haplotypes.begin(), BuildRefHaplotype(comp_id, ref_anchor_seq));
-
   return haplotypes;
 }
 
@@ -940,13 +934,11 @@ auto Graph::BuildRefHaplotype(usize const comp_id, std::string_view ref_anchor_s
 // Snapshot output goes through `mDotBuffer`: each rendered DOT is buffered
 // in memory and only written to disk once the outer `BuildComponentResults`
 // k-loop succeeds. Two entry points:
-//   • BufferFinalSnapshot — always-on per-component post-prune snapshot;
-//     the filename substring (`enumerated_walks` vs `fully_pruned`) tracks
+//   • BufferFinalSnapshot — always-on per-component post-prune snapshot; the
+//     filename substring (`enumerated_walks` vs `fully_pruned`) tracks
 //     whether walk overlays were rendered.
-//   • BufferStageSnapshot — only fires under `--graph-snapshots=verbose`;
-//     emits one snapshot per pruning boundary (compress1, lowcov2,
-//     compress2, tips). Replaces the old `LANCET_DEVELOP_MODE`+
-//     WriteDotDevelop compile-time gate with a runtime check.
+//   • BufferStageSnapshot — only fires under `--graph-snapshots=verbose`; emits
+//     one snapshot per pruning boundary (compress1, lowcov2, compress2, tips).
 // ============================================================================
 
 namespace {
@@ -966,7 +958,8 @@ auto StageFilenameLabel(PruneStage const stage) -> std::string_view {
       return "short_tip_removal";
     case PruneStage::PRUNED_AT_BUILD:
     case PruneStage::PRUNED_AT_LOWCOV1:
-      return "pre_compression";  // not emitted as DOT today; here for completeness
+      // not emitted as DOT today; here for completeness
+      return "pre_compression";
   }
   return "unknown";
 }
@@ -987,6 +980,8 @@ void Graph::BufferFinalSnapshot(usize const comp_id,
   // is set on the CLI. Null = production no-graphs run, zero overhead.
   if (mGraphShardWriter == nullptr) return;
 
+  // If no haplotypes were enumerated, the graph is fully pruned.
+  // Otherwise, walks were enumerated, so use "enumerated_walks".
   auto const* stage_label = haplotypes.empty() ? "fully_pruned" : "enumerated_walks";
   auto fname = MakeDotFilename(*mRegion, stage_label, mCurrK, comp_id);
   auto subgraph_name = fname.substr(0, fname.size() - 4);  // strip ".dot"
@@ -1065,7 +1060,7 @@ void Graph::ProbeOnNodeMerge(NodeID absorbed_id, NodeID surviving_id) const {
   mProbeTrackerPtr->OnNodeMerge(absorbed_id, surviving_id);
 }
 
-void Graph::ProbeRecordComponentInfo(absl::Span<ProbeTracker::ComponentInfo const> probe_comps,
+void Graph::ProbeRecordComponentInfo(absl::Span<ProbeCompInfo const> probe_comps,
                                      Context const& ctx) {
   if (!HasProbeTracker()) return;
   mProbeTrackerPtr->RecordComponentInfo(mNodes, probe_comps, ctx);
@@ -1084,11 +1079,10 @@ void Graph::ProbeSetShortAnchor(Context const& ctx) {
 void Graph::ProbeCheckAnchorOverlap(RefAnchor const& source, RefAnchor const& sink,
                                     Context const& ctx) {
   if (!HasProbeTracker()) return;
-  ProbeTracker::AnchorInfo const src_info{.mRefOffset = source.mRefOffset,
-                                          .mFound = source.mFoundAnchor};
-  ProbeTracker::AnchorInfo const snk_info{.mRefOffset = sink.mRefOffset,
-                                          .mFound = sink.mFoundAnchor};
-  mProbeTrackerPtr->CheckAnchorOverlap(src_info, snk_info, ctx);
+  using ProbeAnchorInfo = ProbeTracker::AnchorInfo;
+  ProbeAnchorInfo const src_info{.mRefOffset = source.mRefOffset, .mFound = source.mFoundAnchor};
+  ProbeAnchorInfo const sink_info{.mRefOffset = sink.mRefOffset, .mFound = sink.mFoundAnchor};
+  mProbeTrackerPtr->CheckAnchorOverlap(src_info, sink_info, ctx);
 }
 
 void Graph::ProbeSetGraphCycle(Context const& ctx) {

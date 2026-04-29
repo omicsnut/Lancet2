@@ -1,12 +1,11 @@
+#include "lancet/base/types.h"
+#include "lancet/caller/per_allele_data.h"
 #include "lancet/caller/sample_format_data.h"
-#include "lancet/caller/variant_call.h"
 #include "lancet/caller/variant_support.h"
 
 #include "catch_amalgamated.hpp"
 
 #include <optional>
-
-#include <cmath>
 
 namespace lancet::caller::tests {
 

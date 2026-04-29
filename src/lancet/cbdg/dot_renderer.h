@@ -27,8 +27,8 @@ namespace lancet::cbdg {
 ///   • Every overlayed `LogicalEdge` is emitted in BOTH directional DOT
 ///     statements (`lo->hi` and `hi->lo`) with the same style — bidirected
 ///     mirror coverage is a renderer invariant, not a per-call concern.
-[[nodiscard]] auto SerializeToDotString(
-    absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph, DotPlan const& plan)
+using GraphNodeTable = absl::flat_hash_map<NodeID, std::unique_ptr<Node>>;
+[[nodiscard]] auto SerializeToDotString(GraphNodeTable const& graph, DotPlan const& plan)
     -> std::string;
 
 }  // namespace lancet::cbdg

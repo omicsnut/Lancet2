@@ -11,10 +11,7 @@ configure_file(test_config.h.inc ${LANCET_TEST_CONFIG_H} @ONLY)
 # ── Longdust C sources for cross-validation of LongdustQScorer ────────────────
 # Longdust is a C library (no CMakeLists.txt), so FetchContent_Populate
 # downloads the sources; we compile just the files we need.
-FetchContent_Declare(longdust
-		GIT_REPOSITORY https://github.com/lh3/longdust
-		GIT_TAG v1.4
-		SYSTEM)
+FetchContent_Declare(longdust GIT_REPOSITORY https://github.com/lh3/longdust GIT_TAG v1.4 SYSTEM)
 FetchContent_GetProperties(longdust)
 if (NOT longdust_POPULATED)
 	FetchContent_Populate(longdust)
@@ -49,29 +46,22 @@ add_executable(TestLancet2
 		# External: longdust C sources for cross-validation
 		${longdust_SOURCE_DIR}/longdust.c
 		${longdust_SOURCE_DIR}/kalloc.c)
-target_include_directories(TestLancet2 PRIVATE
-		"${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}"
+target_include_directories(TestLancet2 PRIVATE "${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}"
 		"${PROJECT_SOURCE_DIR}/tests" "${longdust_SOURCE_DIR}")
 target_link_libraries(TestLancet2 PRIVATE Catch2 absl::strings lancet_cli zlibstatic)
 set_target_properties(TestLancet2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 set_property(TARGET TestLancet2 PROPERTY $<$<ENABLE_LTO>:INTERPROCEDURAL_OPTIMIZATION TRUE>)
 
-if (${CMAKE_BUILD_TYPE} MATCHES Debug)
-	target_compile_definitions(TestLancet2 PRIVATE -DLANCET_DEVELOP_MODE)
-endif ()
-
 # ── Standalone Longdust tools (calibration utilities) ─────────────────────────
 # Score computation tool: reads BAM regions, outputs scored TSV
 add_executable(ScoreRegionLongdust base/score_region_longdust.cpp)
-target_include_directories(ScoreRegionLongdust PRIVATE
-		"${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}")
-target_link_libraries(ScoreRegionLongdust PRIVATE lancet_hts concurrentqueue absl::btree
-		absl::fixed_array absl::strings absl::synchronization)
+target_include_directories(ScoreRegionLongdust PRIVATE "${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ScoreRegionLongdust
+		PRIVATE lancet_hts concurrentqueue absl::btree absl::fixed_array absl::strings absl::synchronization)
 set_target_properties(ScoreRegionLongdust PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
 # Score analysis tool: reads scored TSV, generates aggregate statistics
 add_executable(AnalyzeLongdustScores base/analyze_longdust_scores.cpp)
-target_include_directories(AnalyzeLongdustScores PRIVATE
-		"${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}")
+target_include_directories(AnalyzeLongdustScores PRIVATE "${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}")
 target_link_libraries(AnalyzeLongdustScores PRIVATE lancet_hts absl::btree absl::flat_hash_set absl::strings)
 set_target_properties(AnalyzeLongdustScores PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

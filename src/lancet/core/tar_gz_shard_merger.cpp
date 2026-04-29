@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -24,16 +23,10 @@
 
 namespace lancet::core {
 
-// 64 KiB buffer for the bytewise shard-to-final copy loop. Big enough that
-// each `read`/`write` call amortises syscall overhead, small enough to
-// stay in L2 cache on every CPU.
+// 64 KiB buffer for the bytewise shard-to-final copy loop.
+// Big enough that each `read`/`write` call amortises syscall overhead,
+// small enough to stay in L2 cache on every CPU.
 static constexpr usize SHARD_COPY_BUFFER_BYTES = 65'536;
-
-// Throttle progress logging during the copy loop. Workers may have produced
-// hundreds of shards so per-shard logging is noisy; 5 seconds between
-// updates matches the cadence of the per-window progress logs without
-// flooding the log file.
-static constexpr auto MERGE_PROGRESS_LOG_INTERVAL = std::chrono::seconds(5);
 
 namespace {
 
@@ -63,6 +56,7 @@ namespace {
   for (auto& [worker_index, shard_path] : indexed_shards) {
     shard_paths_in_order.push_back(std::move(shard_path));
   }
+
   return shard_paths_in_order;
 }
 
@@ -70,29 +64,31 @@ namespace {
 // fixed-size scratch buffer. Throws on read or write failure.
 void CopyShardBytesIntoOutput(std::filesystem::path const& source_path,
                               std::ofstream& output_stream) {
+  static constexpr auto OPEN_FMT = "TarGzShardMerger: failed to open shard for read: {}";
+  static constexpr auto WRITE_FMT = "TarGzShardMerger: write failure while merging shard {}";
+  static constexpr auto READ_FMT = "TarGzShardMerger: read failure on shard {}";
+
   std::ifstream input_stream(source_path, std::ios::binary);
   if (!input_stream.is_open()) {
-    throw std::runtime_error(
-        fmt::format("TarGzShardMerger: failed to open shard for read: {}", source_path.string()));
+    throw std::runtime_error(fmt::format(OPEN_FMT, source_path.string()));
   }
 
   std::array<char, SHARD_COPY_BUFFER_BYTES> copy_scratch_buffer{};
   while (input_stream) {
-    input_stream.read(copy_scratch_buffer.data(),
-                      static_cast<std::streamsize>(copy_scratch_buffer.size()));
+    auto const size_to_read = static_cast<std::streamsize>(copy_scratch_buffer.size());
+    input_stream.read(copy_scratch_buffer.data(), size_to_read);
     auto const bytes_read = static_cast<usize>(input_stream.gcount());
     if (bytes_read == 0) break;
 
-    output_stream.write(copy_scratch_buffer.data(), static_cast<std::streamsize>(bytes_read));
+    auto const size_to_write = static_cast<std::streamsize>(bytes_read);
+    output_stream.write(copy_scratch_buffer.data(), size_to_write);
     if (!output_stream.good()) {
-      throw std::runtime_error(fmt::format("TarGzShardMerger: write failure while merging shard {}",
-                                           source_path.string()));
+      throw std::runtime_error(fmt::format(WRITE_FMT, source_path.string()));
     }
   }
 
   if (input_stream.bad()) {
-    throw std::runtime_error(
-        fmt::format("TarGzShardMerger: read failure on shard {}", source_path.string()));
+    throw std::runtime_error(fmt::format(READ_FMT, source_path.string()));
   }
 }
 
@@ -113,43 +109,52 @@ void AppendEndOfArchiveMarker(std::ofstream& output_stream,
   static constexpr std::array<char, TAR_END_OF_ARCHIVE_BYTES> TAR_END_ZEROS{};
 
   {
+    // Close() runs in destructor; gzip trailer is written.
     base::GzipOstream trailer_gzip_stream(trailer_scratch_path);
     trailer_gzip_stream.Write(std::string_view(TAR_END_ZEROS.data(), TAR_END_ZEROS.size()));
-  }  // Close() runs in destructor; gzip trailer is written.
+  }
 
   CopyShardBytesIntoOutput(trailer_scratch_path, output_stream);
 
   std::error_code remove_error;
   std::filesystem::remove(trailer_scratch_path, remove_error);
+  static constexpr auto RM_FMT = "TarGzShardMerger: failed to remove temp. trailer file {}: {}";
   if (remove_error) {
-    LOG_WARN("TarGzShardMerger: failed to remove temporary trailer file {}: {}",
-             trailer_scratch_path.string(), remove_error.message())
+    LOG_WARN(RM_FMT, trailer_scratch_path.string(), remove_error.message())
   }
+}
+
+// Helper to format a truncated duration.
+auto FmtDuration(absl::Duration const duration, absl::Duration const precision) -> std::string {
+  return absl::FormatDuration(absl::Trunc(duration, precision));
 }
 
 }  // namespace
 
+// Throttle progress logging during the copy loop. Workers may have produced hundreds
+// of shards so per-shard logging is noisy; 1 second between updates matches the
+// cadence of the per-window progress logs and avoids flooding the log file.
+static constexpr auto MERGE_PROGRESS_LOG_INTERVAL = absl::Seconds(1);
+static constexpr auto ELAPSED_PRECISION = absl::Milliseconds(100);
+
 void TarGzShardMerger::Merge() {
   auto const shard_paths_in_order = CollectShardPathsInOrder(mShardsDir);
   if (shard_paths_in_order.empty()) {
-    LOG_WARN("TarGzShardMerger: no worker shards found under {}; producing an empty archive",
-             mShardsDir.string())
+    static constexpr auto NO_SHARDS_FMT =
+        "TarGzShardMerger: no worker shards found under {}; producing an empty archive";
+    LOG_WARN(NO_SHARDS_FMT, mShardsDir.string())
   }
 
   std::ofstream output_stream(mFinalArchivePath, std::ios::binary | std::ios::trunc);
   if (!output_stream.is_open()) {
-    throw std::runtime_error(
-        fmt::format("TarGzShardMerger: failed to open final archive for write: {}",
-                    mFinalArchivePath.string()));
+    static constexpr auto FINAL_ARCHIVE_OPEN_FMT =
+        "TarGzShardMerger: failed to open final archive for write: {}";
+    throw std::runtime_error(fmt::format(FINAL_ARCHIVE_OPEN_FMT, mFinalArchivePath.string()));
   }
 
-  // EtaTimer treats one shard as one unit. With ~96 shards on chr1 and
-  // ~250ms per shard at ~200 MB/s, the ETA stabilises after a handful of
-  // shards which is plenty for the user-facing progress format.
   base::EtaTimer merge_eta_timer(shard_paths_in_order.size());
   base::Timer merge_wallclock_timer;
   base::Timer last_log_throttle_timer;
-  static constexpr auto ELAPSED_PRECISION = absl::Seconds(1);
   bool first_iteration = true;
 
   for (usize shard_index = 0; shard_index < shard_paths_in_order.size(); ++shard_index) {
@@ -157,23 +162,23 @@ void TarGzShardMerger::Merge() {
     CopyShardBytesIntoOutput(shard_path, output_stream);
     merge_eta_timer.Increment();
 
-    auto const should_log_progress =
-        first_iteration ||
-        last_log_throttle_timer.Runtime() >= absl::FromChrono(MERGE_PROGRESS_LOG_INTERVAL);
-    if (should_log_progress) {
+    if (first_iteration || last_log_throttle_timer.Runtime() >= MERGE_PROGRESS_LOG_INTERVAL) {
       auto const completed_count = shard_index + 1;
-      auto const percent_complete =
-          100.0 * static_cast<f64>(completed_count) / static_cast<f64>(shard_paths_in_order.size());
-      // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
-      auto const elapsed_str =
-          absl::FormatDuration(absl::Trunc(merge_wallclock_timer.Runtime(), ELAPSED_PRECISION));
-      // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
-      auto const eta_str =
-          absl::FormatDuration(absl::Trunc(merge_eta_timer.EstimatedEta(), ELAPSED_PRECISION));
-      LOG_INFO("Merging graph output shards: {:>8.4f}% | Elapsed: {} | ETA: {} @ {:.2f} shards/s | "
-               "{} of {} shards merged",
-               percent_complete, elapsed_str, eta_str, merge_eta_timer.RatePerSecond(),
-               completed_count, shard_paths_in_order.size())
+
+      auto const completed_count_float = static_cast<f64>(completed_count);
+      auto const total_count_float = static_cast<f64>(shard_paths_in_order.size());
+      auto const percent_complete = 100.0 * completed_count_float / total_count_float;
+
+      auto const elapsed_str = FmtDuration(merge_wallclock_timer.Runtime(), ELAPSED_PRECISION);
+      auto const eta_str = FmtDuration(merge_eta_timer.EstimatedEta(), ELAPSED_PRECISION);
+
+      // clang-format off
+      static constexpr auto MERGE_PROGRESS_LOG_FMT = "Merging per-worker tar.gz shards: {:>8.4f}% | Elapsed: {} | ETA: {} @ {:.2f} ) shards/s | {} of {} shards merged";
+      // clang-format on
+
+      LOG_INFO(MERGE_PROGRESS_LOG_FMT, percent_complete, elapsed_str, eta_str,
+               merge_eta_timer.RatePerSecond(), completed_count, shard_paths_in_order.size())
+
       last_log_throttle_timer.Reset();
       first_iteration = false;
     }
@@ -183,18 +188,18 @@ void TarGzShardMerger::Merge() {
 
   output_stream.close();
   if (output_stream.fail() && !output_stream.eof()) {
-    throw std::runtime_error(fmt::format("TarGzShardMerger: ofstream close reported failure for {}",
-                                         mFinalArchivePath.string()));
+    static constexpr auto CLOSE_FMT = "TarGzShardMerger: ofstream close reported failure for {}";
+    throw std::runtime_error(fmt::format(CLOSE_FMT, mFinalArchivePath.string()));
   }
 
-  // Successful merge: remove the shards directory. If removal fails we
-  // log but don't propagate — the merged archive is good and orphan
-  // shards are recoverable.
+  // Successful merge: remove the shards directory. If removal fails,
+  // we log a warning, as the merged archive is otherwise valid.
   std::error_code remove_error;
   std::filesystem::remove_all(mShardsDir, remove_error);
   if (remove_error) {
-    LOG_WARN("TarGzShardMerger: merge succeeded but failed to remove shards dir {}: {}",
-             mShardsDir.string(), remove_error.message())
+    static constexpr auto RM_ERR_FMT =
+        "TarGzShardMerger: merge succeeded but failed to remove shards dir {}: {}";
+    LOG_WARN(RM_ERR_FMT, mShardsDir.string(), remove_error.message())
   }
 }
 

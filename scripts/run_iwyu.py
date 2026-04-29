@@ -361,7 +361,7 @@ def build_iwyu_cmd(build_dir: Path) -> list[str]:
         "iwyu_tool.py",
         "-p", str(build_dir),
         "--jobs", "0",
-        "src/",
+        "src/", "tests/", "benchmarks/",
     ]
 
     xiwyu: list[str] = []
@@ -395,7 +395,7 @@ def run_fix(build_dir: Path) -> int:
         "--noreorder",
         "--nosafe_headers",
         "--nokeep_iwyu_namespace_format",
-        "--only_re=src/lancet",
+        "--only_re=src/lancet|tests/|benchmarks/",
     ]
 
     for pass_num in (1, 2):

@@ -2,12 +2,17 @@
 
 #include "lancet/base/types.h"
 #include "lancet/hts/extractor.h"
+#include "lancet/hts/iterator.h"
 #include "lancet/hts/reference.h"
 
+#include "absl/status/statusor.h"
+#include "absl/types/span.h"
 #include "catch_amalgamated.hpp"
 #include "lancet_test_config.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <initializer_list>
 #include <iterator>
 #include <vector>
 

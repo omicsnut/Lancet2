@@ -2,6 +2,7 @@
 
 #include "lancet/caller/sample_format_data.h"
 
+#include "absl/container/inlined_vector.h"
 #include "catch_amalgamated.hpp"
 
 namespace lancet::caller::tests {

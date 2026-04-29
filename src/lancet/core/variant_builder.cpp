@@ -34,69 +34,6 @@ namespace lancet::core {
 
 namespace {
 
-/*
- * ============================================================================
- * SPOA MSA Parameter Rationale for Lancet2 Variant Extraction
- * ============================================================================
- * Values: Match: 0, Mismatch: -6, Gap1: -6,-2, Gap2: -26,-1
- *
- * **SIMD Lane Width Note**: All classical parameters (typically +2/-4) have
- * been shifted downwards by 2.  Setting the Match score to 0 keeps all
- * runtime scores non-positive, which keeps SPOA's WorstCaseAlignmentScore()
- * above the int16 threshold — so the engine selects the faster int16 SIMD
- * path (16 lanes per AVX2 register) instead of falling back to int32
- * (8 lanes, half throughput).  SPOA 4.1.5 dynamically dispatches between
- * int16 and int32 via WorstCaseAlignmentScore().
- * With Match=0 and our gap parameters, the worst-case score for typical
- * alignments (~-2300) is safely above int16 minimum (-32768).
- *
- * Unlike minimap2's `asm5` preset (which aggressively splits contigs at major
- * divergences for whole-genome synteny filtering), these parameters are tuned
- * to force end-to-end global alignment within a specific micro-assembly window
- * to capture dense somatic mutations and large Insertions/Deletions.
- *
- * 1. Why Convex (Dual-Affine) vs. Affine or Linear Scoring:
- *    - Linear Scoring applies a flat penalty per gap base, which is biologically
- *      inaccurate (one 50bp deletion is one biological event, not fifty 1bp
- *      independent events).
- *    - Single Affine Scoring forces a compromise: tune for small variants (strict
- *      extension) and you penalize/clip large insertions/deletions; tune for large
- *      insertions/deletions (loose extension) and sequencer noise creates messy,
- *      spurious small gaps.
- *    - Convex (Dual-Affine) Scoring solves this by taking the minimum of two
- *      intersecting models. It is strict for short gaps to suppress sequencer
- *      noise, but switches to a cheap extension penalty for large
- *      biological gaps.
- *
- * 2. Mismatch Tolerance (Multi-Nucleotide Variants / MNVs):
- *    asm5 uses a +1 match / -19 mismatch, which shatters alignments at dense
- *    mutation clusters. We use 0 / -6. The geometrical difference (6) keeps
- *    the MSA robustly intact while globally forcing alignments through complex variants.
- *
- * 3. Micro-Indel Sensitivity (Convex Model 1: -6, -2):
- *    asm5's -39 gap open penalty prevents small indels, forcing them to misalign
- *    as false-positive SNPs. Our -6 open / -2 extend penalty allows true small
- *    biological indels to open naturally while still applying enough friction
- *    to prevent 1bp sequencing errors (e.g., homopolymer stutters) from opening gaps.
- *
- * 4. Large Insertion/Deletion Continuity (Convex Model 2: -26, -1):
- *    asm5's -81 penalty for large gaps will soft-clip contigs right at an insertion/deletion
- *    breakpoint. Our parameters mathematically intersect at exactly 20bp (6 + 2L = 26 + 1L).
- *    For gaps > 20bp, the algorithm switches to Model 2 where the extension cost
- *    drops to -1. This "cheap extension" forces the DP matrix into mapping massive
- *    insertions/deletions as single, contiguous blocks in the MSA rather than
- *    dropping the alignment entirely.
- *
- *    https://curiouscoding.nl/posts/pairwise-alignment ->
- *    – Convex dual affine gap scoring -> min(g1+(i-1)*e1, g2+(i-1)*e2)
- */
-constexpr i8 MSA_MATCH_SCORE = 0;
-constexpr i8 MSA_MISMATCH_SCORE = -6;
-constexpr i8 MSA_OPEN1_SCORE = -6;
-constexpr i8 MSA_EXTEND1_SCORE = -2;
-constexpr i8 MSA_OPEN2_SCORE = -26;
-constexpr i8 MSA_EXTEND2_SCORE = -1;
-
 // ============================================================================
 // HasAltSupport: true if any sample has > 0 ALT-supporting reads.
 // ============================================================================
@@ -106,21 +43,43 @@ auto HasAltSupport(caller::SupportArray const& evidence) -> bool {
   });
 }
 
+// ============================================================================
+// SerializeSpoaState: Appends this component's GFA + FASTA to the per-worker
+// tar.gz shard when `--out-graphs-tgz` is set (shard_writer is non-null).
+// Both files for the component become regular-file TAR entries under the
+// `poa_graph/<window>/` archive subdir. When shard_writer is null,
+// the entire MSA-rendering path is skipped — zero overhead in production.
+// ============================================================================
+void SerializeSpoaState(caller::MsaBuilder& state, Window const& window, u32 component_id,
+                        base::TarGzWriter& shard_writer) {
+  auto const start1 = window.StartPos1();
+  auto const end1 = window.EndPos1();
+  auto const region_prefix = fmt::format("{}_{}_{}", window.ChromName(), start1, end1);
+  auto const window_subdir = std::filesystem::path{"poa_graph"} / region_prefix;
+
+  auto const gfa_contents = state.BuildGfaString();
+  auto const msa = state.mGraph.GenerateMultipleSequenceAlignment(false);
+  auto const fasta_contents = caller::MsaBuilder::BuildFastaString(absl::MakeConstSpan(msa));
+
+  auto const gfa_filename = fmt::format("msa__{}__c{}.gfa", region_prefix, component_id);
+  auto const fasta_filename = fmt::format("msa__{}__c{}.fasta", region_prefix, component_id);
+  auto const gfa_entry_path = window_subdir / gfa_filename;
+  auto const fasta_entry_path = window_subdir / fasta_filename;
+  shard_writer.AddRegularFileEntry(gfa_entry_path.string(), gfa_contents);
+  shard_writer.AddRegularFileEntry(fasta_entry_path.string(), fasta_contents);
+}
+
 }  // namespace
 
-VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const window_length,
-                               u32 const worker_index)
+VariantBuilder::VariantBuilder(ParamsPtr params, u32 window_len, u32 worker_id)
     : mDebruijnGraph(params->mGraphParams),
       mReadCollector(params->mRdCollParams, absl::MakeConstSpan(params->mSampleList)),
       mParamsPtr(std::move(params)),
-      mSpoaState{.mEngine = spoa::AlignmentEngine::Create(
-                     spoa::AlignmentType::kNW, MSA_MATCH_SCORE, MSA_MISMATCH_SCORE, MSA_OPEN1_SCORE,
-                     MSA_EXTEND1_SCORE, MSA_OPEN2_SCORE, MSA_EXTEND2_SCORE),
-                 .mGraph = spoa::Graph()},
+      mSpoaState(lancet::caller::MsaBuilder()),
       mAnnotator(mParamsPtr->mGcFraction) {
   static constexpr u8 DNA_ALPHABET_SIZE = 4;
   static constexpr u32 PREALLOC_MULTIPLIER = 3;
-  mSpoaState.mEngine->Prealloc(window_length * PREALLOC_MULTIPLIER, DNA_ALPHABET_SIZE);
+  mSpoaState.mEngine->Prealloc(window_len * PREALLOC_MULTIPLIER, DNA_ALPHABET_SIZE);
 
   // Initialize probe diagnostics and wire ProbeTracker into the graph.
   mProbeDiagnostics.Initialize(mParamsPtr->mProbeVariantsPath, mParamsPtr->mProbeResultsWriter,
@@ -134,7 +93,7 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
   // When `mShardsDir` is empty, the writer stays null and Graph's
   // snapshot-emission paths short-circuit on the null shard writer.
   if (!mParamsPtr->mShardsDir.empty()) {
-    auto const shard_filename = fmt::format("worker_{}.tar.gz", worker_index);
+    auto const shard_filename = fmt::format("worker_{}.tar.gz", worker_id);
     auto const shard_path = mParamsPtr->mShardsDir / shard_filename;
     mGraphShardWriter =
         std::make_unique<base::TarGzWriter>(shard_path, base::TarGzWriter::EndOfArchive::OMIT);
@@ -149,15 +108,14 @@ auto VariantBuilder::ShouldSkipWindow(Window const& window) -> bool {
   auto const region_string = window.AsRegionPtr()->ToSamtoolsRegion();
 
   if (std::ranges::all_of(window.SeqView(), [](char base) { return base == 'N'; })) {
-    LOG_DEBUG("Skipping window {} since it has only N bases in reference", region_string)
+    LOG_DEBUG("Skipping window {} as reference contains only N bases", region_string)
     mCurrentCode = StatusCode::SKIPPED_NONLY_REF_BASES;
     return true;
   }
 
-  if (lancet::base::HasExactRepeat(
-          lancet::base::SlidingView(window.SeqView(), mParamsPtr->mGraphParams.mMaxKmerLen))) {
-    LOG_DEBUG("Skipping window {} since reference has repeat {}-mers", region_string,
-              mParamsPtr->mGraphParams.mMaxKmerLen)
+  auto const max_k = mParamsPtr->mGraphParams.mMaxKmerLen;
+  if (lancet::base::HasExactRepeat(lancet::base::SlidingView(window.SeqView(), max_k))) {
+    LOG_DEBUG("Skipping window {} as reference contains {}-mer repeats", region_string, max_k)
     mCurrentCode = StatusCode::SKIPPED_REF_REPEAT_SEEN;
     return true;
   }
@@ -165,8 +123,7 @@ auto VariantBuilder::ShouldSkipWindow(Window const& window) -> bool {
   if (!mParamsPtr->mSkipActiveRegion &&
       !core::IsActiveRegion(mReadCollector.SampleList(), mReadCollector.Extractors(),
                             *window.AsRegionPtr())) {
-    LOG_DEBUG("Skipping window {} since it has no evidence of mutation in any sample",
-              region_string)
+    LOG_DEBUG("Skipping window {} as it has no evidence of mutation in any sample", region_string)
     mCurrentCode = StatusCode::SKIPPED_INACTIVE_REGION;
     return true;
   }
@@ -189,32 +146,12 @@ auto VariantBuilder::ExtractVariants(cbdg::ComponentResult const& component,
   auto const hap_views = component.HaplotypeSequenceViews();
   auto const weights = component.HaplotypeWeights();
 
-  LOG_DEBUG("Building MSA for graph component {} from window {} with {} haplotypes", component_id,
-            region_string, component.NumPaths())
+  LOG_DEBUG("Building MSA for graph component {} from window {} with {} assembled haplotypes",
+            component_id, region_string, component.NumPaths())
 
   mSpoaState.UpdateSpoaState(absl::MakeConstSpan(hap_views), absl::MakeConstSpan(weights));
-
-  // Append this component's GFA + FASTA to the per-worker TAR shard when
-  // `--out-graphs-tgz` is set (mGraphShardWriter is non-null). Both files
-  // for the component become regular-file TAR entries under the
-  // `poa_graph/<window>/` archive subdir. When mGraphShardWriter is null,
-  // the entire MSA-rendering path is skipped — zero overhead in production.
   if (mGraphShardWriter) {
-    auto const window_subdir_name =
-        fmt::format("{}_{}_{}", window.ChromName(), window.StartPos1(), window.EndPos1());
-    auto const poa_graph_window_subdir = std::filesystem::path{"poa_graph"} / window_subdir_name;
-    auto const msa_alignments = mSpoaState.mGraph.GenerateMultipleSequenceAlignment(false);
-    auto const gfa_contents = mSpoaState.BuildGfaString();
-    auto const fasta_contents =
-        caller::MsaBuilder::BuildFastaString(absl::MakeConstSpan(msa_alignments));
-    auto const gfa_filename = fmt::format("msa__{}_{}_{}__c{}.gfa", window.ChromName(),
-                                          window.StartPos1(), window.EndPos1(), component_id);
-    auto const fasta_filename = fmt::format("msa__{}_{}_{}__c{}.fasta", window.ChromName(),
-                                            window.StartPos1(), window.EndPos1(), component_id);
-    auto const gfa_entry_path = poa_graph_window_subdir / gfa_filename;
-    auto const fasta_entry_path = poa_graph_window_subdir / fasta_filename;
-    mGraphShardWriter->AddRegularFileEntry(gfa_entry_path.string(), gfa_contents);
-    mGraphShardWriter->AddRegularFileEntry(fasta_entry_path.string(), fasta_contents);
+    SerializeSpoaState(mSpoaState, window, component_id, *mGraphShardWriter);
   }
 
   caller::VariantSet vset(mSpoaState.mGraph, window, ref_anchor_pos1);

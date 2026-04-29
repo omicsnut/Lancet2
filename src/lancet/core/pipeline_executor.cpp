@@ -173,18 +173,24 @@ void PipelineExecutor::FeedNextBatch(moodycamel::ProducerToken const& token) {
 // ============================================================================
 void PipelineExecutor::LaunchWorkers() {
   mWorkerThreads.reserve(mNumThreads);
-  for (usize worker_idx = 0; worker_idx < mNumThreads; ++worker_idx) {
-    auto const worker_index_for_thread = static_cast<u32>(worker_idx);
-    mWorkerThreads.emplace_back([send_queue = mSendQueue, recv_queue = mRecvQueue,
-                                 variant_store = mVariantStore, var_bldr_params = mParams,
+  for (usize thread_idx = 0; thread_idx < mNumThreads; ++thread_idx) {
+    auto const worker_index_for_thread = static_cast<u32>(thread_idx);
+    mWorkerThreads.emplace_back([send_queue = mSendQueue, receive_queue = mRecvQueue,
+                                 variant_store = mVariantStore, variant_builder_params = mParams,
                                  window_length = mWindowLength,
                                  worker_index_for_thread](std::stop_token stop_token) {
 #ifdef LANCET_PROFILE_MODE
       if (ProfilingIsEnabledForAllThreads() != 0) ProfilerRegisterThread();
 #endif
-      auto worker =
-          std::make_unique<AsyncWorker>(send_queue, recv_queue, variant_store, var_bldr_params,
-                                        window_length, worker_index_for_thread);
+      // ─────────────────────────────────────────────────────────────────────────
+      // Create worker
+      // ─────────────────────────────────────────────────────────────────────────
+      auto worker = std::make_unique<AsyncWorker>(send_queue, receive_queue, variant_store,
+                                                  variant_builder_params, window_length,
+                                                  worker_index_for_thread);
+      // ─────────────────────────────────────────────────────────────────────────
+      // Process
+      // ─────────────────────────────────────────────────────────────────────────
       worker->Process(std::move(stop_token));
     });
   }

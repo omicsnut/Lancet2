@@ -3,9 +3,12 @@
 #include "lancet/hts/alignment.h"
 #include "lancet/hts/reference.h"
 
+#include "absl/types/span.h"
 #include "benchmark/benchmark.h"
 #include "lancet_benchmark_config.h"
 
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace {

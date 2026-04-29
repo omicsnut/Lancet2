@@ -71,9 +71,6 @@ Lancet2 pipeline ... --out-graphs-tgz output-graphs.tar.gz
 Lancet2 pipeline ... --out-graphs-tgz output-graphs.tar.gz --graph-snapshots verbose
 ```
 
-This flag replaces the legacy `LANCET_DEVELOP_MODE` compile-time gate — verbose
-snapshots are now an opt-in *runtime* feature, no rebuild required.
-
 ## Inspecting `DOT` formatted assembly graphs
 
 The `DOT` files can be rendered in the pdf format using the dot utility available in

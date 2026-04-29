@@ -1,14 +1,11 @@
 #include "lancet/cbdg/graph_complexity.h"
 
-#include "lancet/base/types.h"
 #include "lancet/caller/raw_variant.h"
 
-#include "absl/types/span.h"
 #include "catch_amalgamated.hpp"
 
-#include <vector>
-
-#include <cmath>
+#include <algorithm>
+#include <string>
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  GraphComplexity::IsComplex Thresholds                                   ║

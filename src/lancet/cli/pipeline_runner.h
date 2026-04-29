@@ -25,11 +25,11 @@ class PipelineRunner {
   /// Validates BAM/CRAM inputs and populates derived params (e.g. MD tag check).
   void ValidateAndPopulateParams();
 
-  /// Validates the `--out-graphs-tgz` archive path (must end in `.tar.gz`)
-  /// and ensures its parent directory exists. The archive itself is opened
-  /// later by the per-worker TarGzWriter shards + TarGzShardMerger; this only
-  /// guards the path semantics up front.
-  void SetupGraphOutputArchive();
+  /// Validates and sets up per-worker graph shards.
+  void SetupPerWorkerGraphShards();
+
+  /// Merges the per-worker graph shards into a single gzipped TAR archive.
+  void MergePerWorkerGraphShards();
 
   /// Propagates probe variant/results paths to GraphParams and clears stale output.
   /// Called only when --probe-variants is provided.

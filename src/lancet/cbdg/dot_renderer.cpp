@@ -68,16 +68,16 @@ constexpr auto REF_WALK_COLOR = "#FFFFFF"sv;
 // distinct): K=2: dE=191.7, K=8: 47.3, K=16: 29.8, K=64: 12.6.
 // Walk indices beyond 64 cycle through the palette via modulo.
 constexpr std::array<std::string_view, 64> ALT_WALK_COLORS = {
-    "#32C124"sv, "#7D28D9"sv, "#EB3B15"sv, "#2CB1E2"sv, "#70641A"sv, "#DE5E99"sv, "#379B71"sv,
-    "#3C56A8"sv, "#E59222"sv, "#EA2CC7"sv, "#8CAB27"sv, "#DC736C"sv, "#BA82E0"sv, "#EB2363"sv,
-    "#A42B19"sv, "#2A6F1A"sv, "#953690"sv, "#444EDB"sv, "#DD995B"sv, "#792FAC"sv, "#8C491E"sv,
-    "#8AAF5F"sv, "#21BCC9"sv, "#D16633"sv, "#A12D3D"sv, "#D462DF"sv, "#9C3762"sv, "#37BE55"sv,
-    "#4487E6"sv, "#A6943C"sv, "#E3259E"sv, "#938FDB"sv, "#BB78B5"sv, "#AC721D"sv, "#724B97"sv,
-    "#409F51"sv, "#3761D5"sv, "#DD2DE6"sv, "#CDA022"sv, "#657F25"sv, "#379620"sv, "#3371B2"sv,
-    "#DF297D"sv, "#AC227A"sv, "#A05AE5"sv, "#70B926"sv, "#B322AE"sv, "#B1AA24"sv, "#E22743"sv,
-    "#E07B99"sv, "#469FE4"sv, "#E27ED1"sv, "#3ABF81"sv, "#31B9A2"sv, "#D94C3F"sv, "#836FDD"sv,
-    "#E66E1C"sv, "#B97449"sv, "#2B703A"sv, "#403AE3"sv, "#DF54B9"sv, "#AA2BD7"sv, "#D23D60"sv,
-    "#D92120"sv,
+    // clang-format off
+    "#32C124"sv, "#7D28D9"sv, "#EB3B15"sv, "#2CB1E2"sv, "#70641A"sv, "#DE5E99"sv, "#379B71"sv, "#3C56A8"sv,
+    "#E59222"sv, "#EA2CC7"sv, "#8CAB27"sv, "#DC736C"sv, "#BA82E0"sv, "#EB2363"sv, "#A42B19"sv, "#2A6F1A"sv,
+    "#953690"sv, "#444EDB"sv, "#DD995B"sv, "#792FAC"sv, "#8C491E"sv, "#8AAF5F"sv, "#21BCC9"sv, "#D16633"sv,
+    "#A12D3D"sv, "#D462DF"sv, "#9C3762"sv, "#37BE55"sv, "#4487E6"sv, "#A6943C"sv, "#E3259E"sv, "#938FDB"sv,
+    "#BB78B5"sv, "#AC721D"sv, "#724B97"sv, "#409F51"sv, "#3761D5"sv, "#DD2DE6"sv, "#CDA022"sv, "#657F25"sv,
+    "#379620"sv, "#3371B2"sv, "#DF297D"sv, "#AC227A"sv, "#A05AE5"sv, "#70B926"sv, "#B322AE"sv, "#B1AA24"sv,
+    "#E22743"sv, "#E07B99"sv, "#469FE4"sv, "#E27ED1"sv, "#3ABF81"sv, "#31B9A2"sv, "#D94C3F"sv, "#836FDD"sv,
+    "#E66E1C"sv, "#B97449"sv, "#2B703A"sv, "#403AE3"sv, "#DF54B9"sv, "#AA2BD7"sv, "#D23D60"sv, "#D92120"sv,
+    // clang-format on
 };
 
 auto SignChar(Kmer::Sign sign) -> char {
@@ -293,8 +293,7 @@ void RenderToBuffer(fmt::memory_buffer& dot_buffer,
 
 }  // namespace
 
-auto SerializeToDotString(absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
-                          DotPlan const& plan) -> std::string {
+auto SerializeToDotString(GraphNodeTable const& graph, DotPlan const& plan) -> std::string {
   fmt::memory_buffer dot_buffer;
   RenderToBuffer(dot_buffer, graph, plan);
   return fmt::to_string(dot_buffer);
@@ -389,11 +388,10 @@ auto ReconstructRefWalk(absl::Span<NodeID const> ref_node_ids,
   if (surviving_ref_ids.size() < 2) return reconstructed_walk;
   reconstructed_walk.reserve(surviving_ref_ids.size() - 1);
 
-  // Second pass: for each consecutive (curr_id, next_id) pair, locate the
-  // outgoing edge from curr_id whose destination is next_id. If no such
-  // edge exists, the backbone has fragmented and we return an empty walk
-  // — a partial walk would mislead the renderer about which edges are
-  // backbone-confirmed.
+  // Second pass: for each consecutive (curr_id, next_id) pair, locate the outgoing edge
+  // from curr_id whose destination is next_id. If no such edge exists, the backbone
+  // has fragmented and we return an empty walk — a partial walk would mislead the
+  // renderer about which edges are backbone-confirmed.
   for (usize ref_idx = 0; ref_idx + 1 < surviving_ref_ids.size(); ++ref_idx) {
     auto const curr_node_id = surviving_ref_ids[ref_idx];
     auto const next_node_id = surviving_ref_ids[ref_idx + 1];

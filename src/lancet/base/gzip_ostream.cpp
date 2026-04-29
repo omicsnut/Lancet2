@@ -55,8 +55,9 @@ GzipOstream::~GzipOstream() {
   // want to observe close errors should call Close() explicitly.
   try {
     Close();
-  } catch (...) {  // NOLINT(bugprone-empty-catch)
-  }
+    // Catch-all to avoid destructor throwing during stack unwinding
+    // NOLINTNEXTLINE(bugprone-empty-catch)
+  } catch (...) {}
 }
 
 void GzipOstream::Write(std::string_view input_bytes) {

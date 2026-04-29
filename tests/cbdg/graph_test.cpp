@@ -6,10 +6,12 @@
 #include "lancet/cbdg/node.h"
 #include "lancet/cbdg/traversal_index.h"
 
+#include "absl/hash/hash.h"
 #include "catch_amalgamated.hpp"
 
+#include <algorithm>
+#include <initializer_list>
 #include <memory>
-#include <string>
 #include <vector>
 
 using lancet::cbdg::Edge;
