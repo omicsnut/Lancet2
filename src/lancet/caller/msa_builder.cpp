@@ -3,11 +3,12 @@
 #include "lancet/base/types.h"
 
 #include "absl/types/span.h"
-#include "spdlog/fmt/bundled/ostream.h"
+#include "spdlog/fmt/bundled/base.h"
+#include "spdlog/fmt/bundled/format.h"
 #include "spoa/alignment_engine.hpp"
 #include "spoa/graph.hpp"
 
-#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -40,59 +41,54 @@ void MsaBuilder::UpdateSpoaState(absl::Span<std::string_view const> sequences,
   }
 }
 
-void MsaBuilder::SerializeGraph(FsPath const& out_gfa_path) {
-  if (out_gfa_path.empty()) {
-    return;
-  }
-  auto const msa_alns = mGraph.GenerateMultipleSequenceAlignment(false);
-  WriteFasta(out_gfa_path, msa_alns);
-  WriteGfa(out_gfa_path);
-}
-
-void MsaBuilder::WriteFasta(FsPath const& gfa_path, absl::Span<std::string const> msa_alns) {
-  auto fa_path = gfa_path.parent_path() / gfa_path.stem();
-  fa_path += ".fasta";
-  std::ofstream out_handle(fa_path);
-  for (usize idx = 0; idx < msa_alns.size(); ++idx) {
-    fmt::print(out_handle, ">{}{}\n{}\n", idx == 0 ? "ref" : "hap", idx, msa_alns[idx]);
-  }
-  out_handle.close();
-}
-
-void MsaBuilder::WriteGfa(FsPath const& out_path) const {
+auto MsaBuilder::BuildGfaString() const -> std::string {
   // https://github.com/rvaser/spoa/pull/36
   // See PR for how to normalize & process the output GFA
-  std::ofstream out_handle(out_path, std::ios::trunc);
-  fmt::print(out_handle, "H\tVN:Z:1.0\n");
+  fmt::memory_buffer gfa_buffer;
+  fmt::format_to(std::back_inserter(gfa_buffer), "H\tVN:Z:1.0\n");
 
   // --- 1. Write Segments (Nodes) and Links (Edges) ---
   for (std::unique_ptr<spoa::Graph::Node> const& node : mGraph.nodes()) {
     auto const node_id = node->id + 1;
-    auto const node_seq = static_cast<char>(mGraph.decoder(node->code));
-    fmt::print(out_handle, "S\t{}\t{}\n", node_id, node_seq);
+    auto const node_seq_char = static_cast<char>(mGraph.decoder(node->code));
+    fmt::format_to(std::back_inserter(gfa_buffer), "S\t{}\t{}\n", node_id, node_seq_char);
 
     for (spoa::Graph::Edge const* edge : node->outedges) {
-      auto const dest_id = edge->head->id + 1;
-      fmt::print(out_handle, "L\t{}\t+\t{}\t+\t0M\n", node_id, dest_id);
+      auto const dest_node_id = edge->head->id + 1;
+      fmt::format_to(std::back_inserter(gfa_buffer), "L\t{}\t+\t{}\t+\t0M\n", node_id,
+                     dest_node_id);
     }
   }
 
   // --- 2. Write Walks (Sequence Paths) ---
   for (u32 seq_idx = 0; seq_idx < mGraph.sequences().size(); ++seq_idx) {
     auto const* const hap_prefix = seq_idx == 0 ? "ref" : "hap";
-    fmt::print(out_handle, "P\t{}{}\t", hap_prefix, seq_idx);
+    fmt::format_to(std::back_inserter(gfa_buffer), "P\t{}{}\t", hap_prefix, seq_idx);
 
-    // Trace node successors to construct the sequence path
+    // Trace node successors to construct the sequence path.
     spoa::Graph::Node const* curr_node = mGraph.sequences()[seq_idx];
-    bool is_first = true;
+    bool is_first_node_in_path = true;
     while (curr_node != nullptr) {
-      fmt::print(out_handle, "{}{}+", is_first ? "" : ",", curr_node->id + 1);
-      is_first = false;
+      auto const* const node_separator = is_first_node_in_path ? "" : ",";
+      fmt::format_to(std::back_inserter(gfa_buffer), "{}{}+", node_separator, curr_node->id + 1);
+      is_first_node_in_path = false;
       curr_node = curr_node->Successor(seq_idx);
     }
 
-    fmt::print(out_handle, "\t*\n");
+    fmt::format_to(std::back_inserter(gfa_buffer), "\t*\n");
   }
+
+  return fmt::to_string(gfa_buffer);
+}
+
+auto MsaBuilder::BuildFastaString(absl::Span<std::string const> msa_alns) -> std::string {
+  fmt::memory_buffer fasta_buffer;
+  for (usize idx = 0; idx < msa_alns.size(); ++idx) {
+    auto const* const sequence_role_prefix = idx == 0 ? "ref" : "hap";
+    fmt::format_to(std::back_inserter(fasta_buffer), ">{}{}\n{}\n", sequence_role_prefix, idx,
+                   msa_alns[idx]);
+  }
+  return fmt::to_string(fasta_buffer);
 }
 
 }  // namespace lancet::caller

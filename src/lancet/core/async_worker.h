@@ -34,12 +34,17 @@ class AsyncWorker {
   using VariantBuilderPtr = std::unique_ptr<VariantBuilder>;
   using BuilderParamsPtr = std::shared_ptr<VariantBuilder::Params const>;
 
+  /// `worker_index` identifies this worker within the pool; range is
+  /// `[0, num_threads)` and PipelineExecutor assigns indices in
+  /// construction order. Forwarded to VariantBuilder so each worker's
+  /// per-thread TAR shard gets a deterministic filename.
   AsyncWorker(InQueuePtr in_queue, OutQueuePtr out_queue, VariantStorePtr vstore,
-              BuilderParamsPtr prms, u32 window_length)
+              BuilderParamsPtr prms, u32 window_length, u32 worker_index)
       : mInPtr(std::move(in_queue)),
         mOutPtr(std::move(out_queue)),
         mStorePtr(std::move(vstore)),
-        mBuilderPtr(std::make_unique<VariantBuilder>(std::move(prms), window_length)) {}
+        mBuilderPtr(
+            std::make_unique<VariantBuilder>(std::move(prms), window_length, worker_index)) {}
 
   void Process(std::stop_token stop_token);
 

@@ -1,5 +1,6 @@
 #include "lancet/cbdg/dot_renderer.h"
 
+#include "lancet/base/tar_gz_writer.h"
 #include "lancet/base/types.h"
 #include "lancet/cbdg/dot_layers.h"
 #include "lancet/cbdg/dot_overlay_factories.h"
@@ -428,28 +429,47 @@ TEST_CASE("DotSnapshotBuffer Discard drops pending entries", "[lancet][cbdg][Sna
   CHECK(buf.IsEmpty());
 }
 
-TEST_CASE("DotSnapshotBuffer Commit flushes all entries to disk",
+TEST_CASE("DotSnapshotBuffer Commit appends per-window entries into the TAR shard",
           "[lancet][cbdg][SnapshotBuffer]") {
-  // Catch2 runs tests sequentially per process; no contention on a fixed name.
-  auto const tmp_dir = std::filesystem::temp_directory_path() / "lancet_dot_buffer_test";
-  std::filesystem::remove_all(tmp_dir);
+  auto const tmp_shard_dir =
+      std::filesystem::temp_directory_path() / "lancet_dot_snapshot_buffer_commit_test";
+  std::filesystem::remove_all(tmp_shard_dir);
+  std::filesystem::create_directories(tmp_shard_dir);
+  auto const shard_path = tmp_shard_dir / "shard.tar.gz";
 
-  DotSnapshotBuffer buf;
-  buf.Buffer("first.dot", "first contents\n");
-  buf.Buffer("second.dot", "second contents\n");
+  {
+    // Open a TarGzWriter with EOF marker EMITted so the round-trip below
+    // produces a self-contained, valid archive that system `tar -tzf`
+    // accepts without "lone zero block" warnings.
+    lancet::base::TarGzWriter shard_writer(shard_path,
+                                           lancet::base::TarGzWriter::EndOfArchive::EMIT);
 
-  buf.Commit(tmp_dir);
-  CHECK(buf.IsEmpty());
+    DotSnapshotBuffer buf;
+    buf.SetWindowSubdir("chr1_1234_5678");
+    buf.Buffer("first.dot", "first contents\n");
+    buf.Buffer("second.dot", "second contents\n");
+    REQUIRE_FALSE(buf.IsEmpty());
 
-  // Both files should exist and contain the buffered bytes verbatim.
-  auto const read_all = [](std::filesystem::path const& path) -> std::string {
-    std::ifstream const handle(path);
-    std::stringstream buf;
-    buf << handle.rdbuf();
-    return buf.str();
-  };
-  CHECK(read_all(tmp_dir / "first.dot") == "first contents\n");
-  CHECK(read_all(tmp_dir / "second.dot") == "second contents\n");
+    buf.Commit(shard_writer, "dbg_graph");
+    CHECK(buf.IsEmpty());  // buffer drained into the shard
+  }
 
-  std::filesystem::remove_all(tmp_dir);
+  // Verify the archive lists both entries with the dbg_graph/<window>/
+  // path prefix.
+  auto const list_command = "tar -tzf '" + shard_path.string() + "'";
+  std::array<char, 4096> shell_output{};
+  // Test deliberately shells out to system `tar -tzf` for round-trip
+  // verification of our USTAR + gzip writer; popen is the simplest way.
+  // NOLINTNEXTLINE(cert-env33-c,bugprone-command-processor)
+  auto* const list_pipe = popen(list_command.c_str(), "r");
+  REQUIRE(list_pipe != nullptr);
+  std::string archive_listing;
+  while (std::fgets(shell_output.data(), shell_output.size(), list_pipe) != nullptr) {
+    archive_listing.append(shell_output.data());
+  }
+  pclose(list_pipe);
+  CHECK(archive_listing.find("dbg_graph/chr1_1234_5678/first.dot") != std::string::npos);
+  CHECK(archive_listing.find("dbg_graph/chr1_1234_5678/second.dot") != std::string::npos);
+
+  std::filesystem::remove_all(tmp_shard_dir);
 }

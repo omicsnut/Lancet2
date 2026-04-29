@@ -12,6 +12,7 @@
 #include <array>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -131,6 +132,11 @@ class Node {
   [[nodiscard]] auto SequenceFor(Kmer::Ordering const ord) const -> std::string {
     return mKmer.SequenceFor(ord);
   }
+
+  /// Non-owning view of the canonical k-mer sequence (zero allocation).
+  /// Forwards to `Kmer::SeqView()`. Use on hot paths instead of
+  /// `SequenceFor(DEFAULT)` which allocates a fresh string per call.
+  [[nodiscard]] auto SeqView() const noexcept -> std::string_view { return mKmer.SeqView(); }
 
   void Merge(Node const& other, EdgeKind conn_kind, usize currk);
 

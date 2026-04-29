@@ -2,7 +2,7 @@
 # Lancet2 — Test Suite (Catch2 v3.14.0)
 #
 # Test sources grouped by module layer (matching the library dependency order):
-#   base → hts → cbdg → caller
+#   base → hts → cbdg → caller → core
 # ═══════════════════════════════════════════════════════════════════════════════
 set(LANCET_FULL_DATA_DIR "${PROJECT_SOURCE_DIR}/data")
 set(LANCET_TEST_CONFIG_H "${CMAKE_BINARY_DIR}/generated/lancet_test_config.h")
@@ -22,11 +22,13 @@ endif ()
 
 # ── Main test executable ──────────────────────────────────────────────────────
 add_executable(TestLancet2
-		# Layer 1: base — math, repeat, sequence complexity
+		# Layer 1: base — math, repeat, sequence complexity, gzip + tar.gz I/O
 		base/repeat_test.cpp
 		base/longdust_scorer_test.cpp
 		base/sequence_complexity_test.cpp
 		base/mann_whitney_test.cpp
+		base/gzip_ostream_test.cpp
+		base/tar_gz_writer_test.cpp
 		# Layer 2: hts — CIGAR, reference, alignment, extractor
 		hts/cigar_utils_test.cpp
 		hts/reference_test.cpp
@@ -42,13 +44,15 @@ add_executable(TestLancet2
 		caller/variant_set_test.cpp
 		caller/variant_support_metrics_test.cpp
 		caller/variant_call_test.cpp
+		# Layer 5: core — per-worker shard merge after compute phase
+		core/tar_gz_shard_merger_test.cpp
 		# External: longdust C sources for cross-validation
 		${longdust_SOURCE_DIR}/longdust.c
 		${longdust_SOURCE_DIR}/kalloc.c)
 target_include_directories(TestLancet2 PRIVATE
 		"${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}"
 		"${PROJECT_SOURCE_DIR}/tests" "${longdust_SOURCE_DIR}")
-target_link_libraries(TestLancet2 PRIVATE Catch2 absl::strings lancet_cli)
+target_link_libraries(TestLancet2 PRIVATE Catch2 absl::strings lancet_cli zlibstatic)
 set_target_properties(TestLancet2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 set_property(TARGET TestLancet2 PROPERTY $<$<ENABLE_LTO>:INTERPROCEDURAL_OPTIMIZATION TRUE>)
 

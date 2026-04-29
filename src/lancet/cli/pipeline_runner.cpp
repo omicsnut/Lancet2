@@ -19,6 +19,7 @@
 #include "lancet/core/pipeline_executor.h"
 #include "lancet/core/sample_header_reader.h"
 #include "lancet/core/sample_info.h"
+#include "lancet/core/tar_gz_shard_merger.h"
 #include "lancet/core/variant_builder.h"
 #include "lancet/core/window_builder.h"
 #include "lancet/hts/bgzf_ostream.h"
@@ -29,6 +30,7 @@
 #include "absl/types/span.h"
 
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -65,7 +67,7 @@ PipelineRunner::PipelineRunner(std::shared_ptr<CliParams> params) : mParamsPtr(s
 void PipelineRunner::Run() {
   base::Timer timer;
   ValidateAndPopulateParams();
-  SetupGraphOutputDir();
+  SetupGraphOutputArchive();
   SetupProbeTracking();
 
   hts::BgzfOstream output_vcf;
@@ -88,6 +90,23 @@ void PipelineRunner::Run() {
 
   // Sort input regions before batch emission to ensure deterministic genomic ordering
   window_builder.SortInputRegions();
+
+  // ── Per-worker shard layout for graph outputs (DOT + GFA + FASTA) ────
+  // When `--out-graphs-tgz` is set, each worker thread writes its own
+  // gzipped TAR shard into a hidden subdirectory next to the final
+  // archive. After all workers exit, TarGzShardMerger concatenates them and
+  // appends one end-of-archive marker. Bundling per-window graphs into a
+  // single archive avoids the per-file `mkdir`/`openat` metadata cost
+  // that serialises on the metadata server of shared filesystems.
+  auto const& archive_path = mParamsPtr->mVariantBuilder.mOutGraphsTgz;
+  if (!archive_path.empty()) {
+    auto const shards_subdir_name = fmt::format(".{}.shards", archive_path.filename().string());
+    auto const shards_dir = archive_path.parent_path() / shards_subdir_name;
+    std::filesystem::remove_all(shards_dir);  // clean any stale shards from a prior run
+    std::filesystem::create_directories(shards_dir);
+    mParamsPtr->mVariantBuilder.mShardsDir = shards_dir;
+  }
+
   core::PipelineExecutor executor(
       std::move(window_builder),
       std::make_shared<core::VariantBuilder::Params const>(mParamsPtr->mVariantBuilder),
@@ -96,6 +115,32 @@ void PipelineRunner::Run() {
   auto const stats = executor.Execute(output_vcf);
   if (mParamsPtr->mVariantBuilder.mProbeResultsWriter) {
     mParamsPtr->mVariantBuilder.mProbeResultsWriter->EmitUnprocessedProbes();
+  }
+
+  // ── Merge per-worker shards into the final archive ────────────────────
+  // PipelineExecutor::Execute has joined every worker thread by now, so
+  // each shard's TarGzWriter is destroyed (its gzip stream finalised). The
+  // TarGzShardMerger walks the shards directory in worker-index order, copies
+  // bytes verbatim into the user-visible final archive, appends a single
+  // gzipped end-of-archive marker, and removes the shards directory.
+  //
+  // On merge failure we exit non-zero with shards preserved (the failure
+  // log includes the shards path) so the user has a recovery handle.
+  if (!archive_path.empty()) {
+    auto const& shards_dir = mParamsPtr->mVariantBuilder.mShardsDir;
+    LOG_INFO("Compute phase complete; merging worker shards into {}", archive_path.string())
+    base::Timer merge_wallclock_timer;
+    try {
+      core::TarGzShardMerger merger(shards_dir, archive_path);
+      merger.Merge();
+    } catch (std::exception const& exc) {
+      LOG_CRITICAL("TarGzShardMerger failed: {}; shards preserved at {} for manual recovery",
+                   exc.what(), shards_dir.string())
+      std::exit(EXIT_FAILURE);
+    }
+    // NOLINTNEXTLINE(bugprone-unused-local-non-trivial-variable)
+    auto const merge_elapsed = merge_wallclock_timer.HumanRuntime();
+    LOG_INFO("Merged graph output archive {} in {}", archive_path.string(), merge_elapsed)
   }
 
   output_vcf.Close();
@@ -108,17 +153,34 @@ void PipelineRunner::Run() {
 }
 
 // ============================================================================
-// SetupGraphOutputDir — propagate and recreate graph debug output directory
+// SetupGraphOutputArchive — validate `--out-graphs-tgz` path semantics
+//
+// The user-supplied archive path must end in `.tar.gz`. We additionally
+// ensure the *parent* directory exists (creating it if necessary) so the
+// per-worker shards subdir + final archive can be written without further
+// path setup. The archive file itself is opened later by the merge step;
+// any pre-existing file at `--out-graphs-tgz` is overwritten by the
+// merger's `O_TRUNC`.
 // ============================================================================
 
-void PipelineRunner::SetupGraphOutputDir() {
-  if (mParamsPtr->mVariantBuilder.mOutGraphsDir.empty()) return;
+void PipelineRunner::SetupGraphOutputArchive() {
+  auto const& archive_path = mParamsPtr->mVariantBuilder.mOutGraphsTgz;
+  if (archive_path.empty()) return;
 
-  mParamsPtr->mVariantBuilder.mGraphParams.mOutGraphsDir =
-      mParamsPtr->mVariantBuilder.mOutGraphsDir;
+  static constexpr std::string_view EXPECTED_SUFFIX = ".tar.gz";
+  auto const archive_path_str = archive_path.string();
+  auto const has_required_suffix = archive_path_str.ends_with(EXPECTED_SUFFIX);
+  if (!has_required_suffix) {
+    LOG_CRITICAL("--out-graphs-tgz path must end in `.tar.gz`. Got: {} (use a path like "
+                 "`output-graphs.tar.gz`)",
+                 archive_path_str)
+    std::exit(EXIT_FAILURE);
+  }
 
-  std::filesystem::remove_all(mParamsPtr->mVariantBuilder.mOutGraphsDir);
-  std::filesystem::create_directories(mParamsPtr->mVariantBuilder.mOutGraphsDir);
+  auto const archive_parent_dir = archive_path.parent_path();
+  if (!archive_parent_dir.empty()) {
+    std::filesystem::create_directories(archive_parent_dir);
+  }
 }
 
 // ============================================================================

@@ -40,7 +40,7 @@ class Graph {
   using ReadList = absl::Span<Read const>;
   using ComponentResults = std::vector<ComponentResult>;
 
-  explicit Graph(GraphParams params) : mParams(std::move(params)) {}
+  explicit Graph(GraphParams params) : mParams(params) {}
 
   /// Current kmer length being used for this assembly attempt.
   [[nodiscard]] auto CurrentK() const noexcept -> usize { return mCurrK; }
@@ -56,6 +56,13 @@ class Graph {
   /// disables tracing (zero overhead in production).
   void SetProbeTracker(ProbeTracker* tracker) { mProbeTrackerPtr = tracker; }
 
+  /// Set the external per-worker TarGzWriter shard that buffered DOTs are
+  /// appended to. Null disables snapshot emission entirely (used when
+  /// `--out-graphs-tgz` is unset; zero overhead in production).
+  void SetGraphShardWriter(base::TarGzWriter* shard_writer) noexcept {
+    mGraphShardWriter = shard_writer;
+  }
+
  private:
   // ── 8B Align ────────────────────────────────────────────────────────────
   usize mCurrK = 0;
@@ -68,12 +75,19 @@ class Graph {
   /// Null when --probe-variants is not specified (zero overhead in production).
   ProbeTracker* mProbeTrackerPtr = nullptr;
 
+  /// Non-owning pointer to the per-worker TarGzWriter shard owned by
+  /// VariantBuilder. Null when `--out-graphs-tgz` is not specified (zero
+  /// overhead in production). On Commit, mDotBuffer appends each
+  /// buffered DOT into this shard as a regular-file TAR entry.
+  base::TarGzWriter* mGraphShardWriter = nullptr;
+
   std::vector<NodeID> mRefNodeIds;
   NodeIDPair mSourceAndSinkIds = {0, 0};
 
-  /// In-memory accumulator for the per-component FINAL DOT snapshot of the
-  /// current k-attempt. Discarded on retry; flushed to disk after the outer
-  /// k-loop terminates. Empty when --graphs-dir was not specified.
+  /// In-memory accumulator for the per-component DOT snapshots emitted
+  /// during the current k-attempt. Discarded on retry. On a successful
+  /// k-attempt, the buffer drains its contents into the per-worker TAR
+  /// shard via DotSnapshotBuffer::Commit.
   DotSnapshotBuffer mDotBuffer;
 
   using EdgeSet = absl::flat_hash_set<Edge>;

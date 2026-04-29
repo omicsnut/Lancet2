@@ -14,7 +14,6 @@
 #include "lancet/core/sample_info.h"
 #include "lancet/core/window.h"
 
-#include "absl/base/call_once.h"
 #include "absl/hash/hash.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/core.h"
@@ -109,7 +108,8 @@ auto HasAltSupport(caller::SupportArray const& evidence) -> bool {
 
 }  // namespace
 
-VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const window_length)
+VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const window_length,
+                               u32 const worker_index)
     : mDebruijnGraph(params->mGraphParams),
       mReadCollector(params->mRdCollParams, absl::MakeConstSpan(params->mSampleList)),
       mParamsPtr(std::move(params)),
@@ -126,6 +126,20 @@ VariantBuilder::VariantBuilder(std::shared_ptr<Params const> params, u32 const w
   mProbeDiagnostics.Initialize(mParamsPtr->mProbeVariantsPath, mParamsPtr->mProbeResultsWriter,
                                mParamsPtr->mProbeIndex);
   mDebruijnGraph.SetProbeTracker(mProbeDiagnostics.Tracker());
+
+  // Open this worker's per-thread gzipped TAR shard if `--out-graphs-tgz`
+  // is set (PipelineRunner populates `mShardsDir` only in that case). The
+  // shard is opened with EndOfArchive::OMIT — the shard merger appends a
+  // single end-of-archive marker once, after all shards are concatenated.
+  // When `mShardsDir` is empty, the writer stays null and Graph's
+  // snapshot-emission paths short-circuit on the null shard writer.
+  if (!mParamsPtr->mShardsDir.empty()) {
+    auto const shard_filename = fmt::format("worker_{}.tar.gz", worker_index);
+    auto const shard_path = mParamsPtr->mShardsDir / shard_filename;
+    mGraphShardWriter =
+        std::make_unique<base::TarGzWriter>(shard_path, base::TarGzWriter::EndOfArchive::OMIT);
+    mDebruijnGraph.SetGraphShardWriter(mGraphShardWriter.get());
+  }
 }
 
 // ============================================================================
@@ -179,9 +193,29 @@ auto VariantBuilder::ExtractVariants(cbdg::ComponentResult const& component,
             region_string, component.NumPaths())
 
   mSpoaState.UpdateSpoaState(absl::MakeConstSpan(hap_views), absl::MakeConstSpan(weights));
-  // SerializeGraph is a no-op when MakeGfaPath returns an empty path
-  // (i.e., --out-graphs-dir was not specified on the CLI).
-  mSpoaState.SerializeGraph(MakeGfaPath(window, component_id));
+
+  // Append this component's GFA + FASTA to the per-worker TAR shard when
+  // `--out-graphs-tgz` is set (mGraphShardWriter is non-null). Both files
+  // for the component become regular-file TAR entries under the
+  // `poa_graph/<window>/` archive subdir. When mGraphShardWriter is null,
+  // the entire MSA-rendering path is skipped — zero overhead in production.
+  if (mGraphShardWriter) {
+    auto const window_subdir_name =
+        fmt::format("{}_{}_{}", window.ChromName(), window.StartPos1(), window.EndPos1());
+    auto const poa_graph_window_subdir = std::filesystem::path{"poa_graph"} / window_subdir_name;
+    auto const msa_alignments = mSpoaState.mGraph.GenerateMultipleSequenceAlignment(false);
+    auto const gfa_contents = mSpoaState.BuildGfaString();
+    auto const fasta_contents =
+        caller::MsaBuilder::BuildFastaString(absl::MakeConstSpan(msa_alignments));
+    auto const gfa_filename = fmt::format("msa__{}_{}_{}__c{}.gfa", window.ChromName(),
+                                          window.StartPos1(), window.EndPos1(), component_id);
+    auto const fasta_filename = fmt::format("msa__{}_{}_{}__c{}.fasta", window.ChromName(),
+                                            window.StartPos1(), window.EndPos1(), component_id);
+    auto const gfa_entry_path = poa_graph_window_subdir / gfa_filename;
+    auto const fasta_entry_path = poa_graph_window_subdir / fasta_filename;
+    mGraphShardWriter->AddRegularFileEntry(gfa_entry_path.string(), gfa_contents);
+    mGraphShardWriter->AddRegularFileEntry(fasta_entry_path.string(), fasta_contents);
+  }
 
   caller::VariantSet vset(mSpoaState.mGraph, window, ref_anchor_pos1);
 
@@ -302,18 +336,6 @@ auto VariantBuilder::ProcessWindow(std::shared_ptr<Window const> const& window) 
   LOG_DEBUG("Genotyped {} variant(s) for window {} by re-aligning sample reads",
             variant_calls.size(), region_string)
   return variant_calls;
-}
-
-auto VariantBuilder::MakeGfaPath(Window const& win, usize const comp_id) const
-    -> std::filesystem::path {
-  if (mParamsPtr->mOutGraphsDir.empty()) return {};
-
-  auto const graph_dir = mParamsPtr->mOutGraphsDir / "poa_graph";
-  static absl::once_flag dir_created;
-  absl::call_once(dir_created, [&] { std::filesystem::create_directories(graph_dir); });
-
-  return graph_dir / fmt::format("msa__{}_{}_{}__c{}.gfa", win.ChromName(), win.StartPos1(),
-                                 win.EndPos1(), comp_id);
 }
 
 auto ToString(VariantBuilder::StatusCode const status_code) -> std::string {

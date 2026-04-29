@@ -262,9 +262,23 @@ void CliInterface::PipelineSubcmd(CLI::App* app, std::shared_ptr<CliParams>& par
   // ============================================================================
   // Optional
   // ============================================================================
-  AddOpt(sub, "--graphs-dir", var_params.mOutGraphsDir,
-         "Output directory to write per window graphs", GRP_OPTIONAL)
-      ->check(CLI::NonexistentPath | CLI::ExistingDirectory);
+  // Custom validator: enforce a `.tar.gz` suffix. The path itself can be
+  // any location (existing or not); the parent dir is created lazily by
+  // PipelineRunner::SetupGraphOutputArchive.
+  static auto const TAR_GZ_SUFFIX_VALIDATOR = CLI::Validator(
+      [](std::string const& path_value) -> std::string {
+        static constexpr std::string_view EXPECTED_SUFFIX = ".tar.gz";
+        if (!path_value.ends_with(EXPECTED_SUFFIX)) {
+          return fmt::format("--out-graphs-tgz path must end in `.tar.gz` (got: {})", path_value);
+        }
+        return std::string{};  // empty = OK
+      },
+      "TAR_GZ_SUFFIX");
+  AddOpt(sub, "--out-graphs-tgz", var_params.mOutGraphsTgz,
+         "Output path for the gzipped TAR archive of per-window assembly graphs (must end in "
+         "`.tar.gz`). Extract with `tar -xzf` to recover the per-window directory tree.",
+         GRP_OPTIONAL)
+      ->check(TAR_GZ_SUFFIX_VALIDATOR);
   AddOpt(sub, "--graph-snapshots", graph_params.mSnapshotMode,
          "DOT graph snapshot verbosity. 'final' (default) emits one DOT per "
          "component per window; 'verbose' additionally emits intermediate-stage "

@@ -34,6 +34,14 @@ class Kmer {
   [[nodiscard]] auto SignFor(Ordering order) const noexcept -> Sign;
   [[nodiscard]] auto SequenceFor(Ordering order) const -> std::string;
 
+  /// Non-owning view of the canonical (DEFAULT-orientation) k-mer
+  /// sequence. Use this on hot paths (e.g. the DOT renderer) to avoid the
+  /// per-call `std::string` allocation that `SequenceFor(DEFAULT)`
+  /// returns. Only the canonical view is offered as a string_view; the
+  /// OPPOSITE orientation requires reverse-complement and so must
+  /// continue to allocate via `SequenceFor(OPPOSITE)`.
+  [[nodiscard]] auto SeqView() const noexcept -> std::string_view { return mDfltSeq; }
+
   [[nodiscard]] auto Identifier() const noexcept -> u64 { return mIdentifier; }
   [[nodiscard]] auto Length() const -> usize { return mDfltSeq.length(); }
   [[nodiscard]] auto IsEmpty() const noexcept -> bool {

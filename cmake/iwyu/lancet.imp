@@ -6,5 +6,8 @@
     { "include": ["@\"spdlog/details/.*\"",           "private", "\"spdlog/spdlog.h\"",      "public"] },
     { "include": ["@\"fmt/.*\"",                      "private", "\"spdlog/spdlog.h\"",      "public"] },
 
-    { "include": ["\"mimalloc-override.h\"",          "public", "\"mimalloc.h\"",             "public"] }
+    { "include": ["\"mimalloc-override.h\"",          "public", "\"mimalloc.h\"",             "public"] },
+
+    { "include": ["<zlib.h>",                         "public", "\"zlib.h\"",                 "public"] },
+    { "include": ["<zconf.h>",                        "public", "\"zconf.h\"",                "public"] }
 ]

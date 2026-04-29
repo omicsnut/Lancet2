@@ -4,8 +4,6 @@
 #include "lancet/base/types.h"
 #include "lancet/cbdg/dot_plan.h"
 
-#include <filesystem>
-
 namespace lancet::cbdg {
 
 /// Minimum kmer length. Must be odd (de Bruijn node identity requires canonical orientation).
@@ -30,7 +28,6 @@ static constexpr u16 DEFAULT_KMER_STEP_LEN = 6;
 /// Parameters controlling de Bruijn graph construction and pruning.
 struct GraphParams {
   // ── 8B Align ────────────────────────────────────────────────────────────
-  std::filesystem::path mOutGraphsDir;       // 8B+
   usize mMinKmerLen = DEFAULT_MIN_KMER_LEN;  // 8B
   usize mMaxKmerLen = DEFAULT_MAX_KMER_LEN;  // 8B
 
@@ -48,9 +45,10 @@ struct GraphParams {
   u16 mKmerStepLen = DEFAULT_KMER_STEP_LEN;  // 2B
 
   // ── 1B Align ────────────────────────────────────────────────────────────
-  /// Controls DOT snapshot verbosity when `mOutGraphsDir` is set. FINAL
-  /// (default) emits one DOT per component per window. VERBOSE additionally
-  /// emits intermediate-stage snapshots after each pruning boundary.
+  /// Controls DOT snapshot verbosity when `--out-graphs-tgz` is set.
+  /// FINAL (default) emits one DOT per component per window. VERBOSE
+  /// additionally emits intermediate-stage snapshots after each pruning
+  /// boundary. Has no effect when the per-worker shard writer is null.
   GraphSnapshotMode mSnapshotMode = GraphSnapshotMode::FINAL;  // 1B
 };
 

@@ -1,5 +1,6 @@
 #include "lancet/cbdg/dot_renderer.h"
 
+#include "lancet/base/rev_comp.h"
 #include "lancet/base/types.h"
 #include "lancet/cbdg/dot_layers.h"
 #include "lancet/cbdg/dot_overlay_factories.h"
@@ -15,14 +16,12 @@
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
 #include "spdlog/fmt/bundled/format.h"
-#include "spdlog/fmt/bundled/ostream.h"
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <memory>
-#include <ostream>
 #include <ranges>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -153,74 +152,120 @@ auto BuildEdgeOverlays(absl::Span<EdgeLayer const> layers)
   return result;
 }
 
-void RenderNodeDot(std::ostream& out, Node const& node, NodeID node_id,
-                   absl::flat_hash_map<NodeID, NodeStyle> const& overlays) {
-  // Compose: role default + layer overrides.
-  NodeStyle style = RoleStyle(node);
-  if (auto const itr = overlays.find(node_id); itr != overlays.end()) {
-    NodeStyle const& over = itr->second;
-    if (!over.mFillColor.empty()) style.mFillColor = over.mFillColor;
-    if (!over.mBorderColor.empty()) style.mBorderColor = over.mBorderColor;
-    if (!over.mStripeAccent.empty()) style.mStripeAccent = over.mStripeAccent;
-    if (over.mPenWidth != 0) style.mPenWidth = over.mPenWidth;
-    if (over.mPeripheries != 0) style.mPeripheries = over.mPeripheries;
+// Compose role default + layer overrides into a single resolved NodeStyle
+// without mutating the input. Pulled out of RenderNodeDot so the per-node
+// hot path reads as a sequence of named, well-typed steps.
+auto ResolveNodeStyle(Node const& node, NodeID node_id,
+                      absl::flat_hash_map<NodeID, NodeStyle> const& node_overlays) -> NodeStyle {
+  NodeStyle resolved_style = RoleStyle(node);
+  auto const overlay_iter = node_overlays.find(node_id);
+  if (overlay_iter == node_overlays.end()) return resolved_style;
+
+  NodeStyle const& overlay_style = overlay_iter->second;
+  if (!overlay_style.mFillColor.empty()) resolved_style.mFillColor = overlay_style.mFillColor;
+  if (!overlay_style.mBorderColor.empty()) resolved_style.mBorderColor = overlay_style.mBorderColor;
+  if (!overlay_style.mStripeAccent.empty()) {
+    resolved_style.mStripeAccent = overlay_style.mStripeAccent;
   }
-
-  // Build attribute string. fillcolor uses a colon-pair when a stripe
-  // accent is set; style toggles between "filled" and "filled,striped".
-  std::string fill;
-  if (style.mStripeAccent.empty()) {
-    fill = std::string(style.mFillColor);
-  } else {
-    fill = fmt::format("{}:{}", style.mFillColor, style.mStripeAccent);
-  }
-  std::string_view const style_attr = style.mStripeAccent.empty() ? "filled"sv : "filled,striped"sv;
-
-  auto const dflt_seq = node.SequenceFor(Kmer::Ordering::DEFAULT);
-  auto const oppo_seq = node.SequenceFor(Kmer::Ordering::OPPOSITE);
-  auto const rev_oppo_seq = std::string(oppo_seq.crbegin(), oppo_seq.crend());
-
-  // Required attributes: shape, fillcolor, style, label.
-  fmt::print(out,
-             R"({} [shape=circle fillcolor="{}" style="{}")"
-             R"( label="{}\n{}\n {}:{}\nlength={}\ncoverage={}")",
-             node_id, fill, style_attr, dflt_seq, rev_oppo_seq, node_id,
-             SignChar(node.SignFor(Kmer::Ordering::DEFAULT)), node.Length(),
-             node.TotalReadSupport());
-
-  // Optional attributes: border color, penwidth, peripheries.
-  if (!style.mBorderColor.empty()) fmt::print(out, R"( color="{}")", style.mBorderColor);
-  if (style.mPenWidth != 0) fmt::print(out, " penwidth={}", style.mPenWidth);
-  if (style.mPeripheries != 0) fmt::print(out, " peripheries={}", style.mPeripheries);
-  out << "]\n";
+  if (overlay_style.mPenWidth != 0) resolved_style.mPenWidth = overlay_style.mPenWidth;
+  if (overlay_style.mPeripheries != 0) resolved_style.mPeripheries = overlay_style.mPeripheries;
+  return resolved_style;
 }
 
-void RenderBaseEdgeDot(std::ostream& out, Edge const& conn) {
+// Fill the per-thread complement buffer with the base-by-base complement of
+// `canonical_seq`. The DOT label displays this as the second strand under
+// the canonical sequence. Mathematically `reverse(RevComp(seq)) ==
+// Complement(seq)` so we walk forward and complement each base directly,
+// avoiding the two-string allocation dance the legacy code used.
+void FillComplementBuffer(std::string_view canonical_seq, std::string& complement_buffer) {
+  complement_buffer.clear();
+  complement_buffer.reserve(canonical_seq.size());
+  for (char const dna_base : canonical_seq) {
+    complement_buffer.push_back(lancet::base::RevComp(dna_base));
+  }
+}
+
+void RenderNodeDot(fmt::memory_buffer& dot_buffer, Node const& node, NodeID node_id,
+                   absl::flat_hash_map<NodeID, NodeStyle> const& node_overlays) {
+  auto const resolved_style = ResolveNodeStyle(node, node_id, node_overlays);
+
+  // Per-thread reusable buffer for the complement-strand display string.
+  // Single amortised allocation per worker thread for the entire run; no
+  // per-node heap allocation on the hot path.
+  static thread_local std::string complement_strand_buffer;
+  auto const canonical_seq_view = node.SeqView();
+  FillComplementBuffer(canonical_seq_view, complement_strand_buffer);
+
+  auto const default_orientation_sign = SignChar(node.SignFor(Kmer::Ordering::DEFAULT));
+  auto const node_seq_length = node.Length();
+  auto const node_total_read_support = node.TotalReadSupport();
+
+  // Required attributes branch on stripe accent: with-accent emits the
+  // colon-paired fillcolor and the "filled,striped" style; without-accent
+  // emits the plain fillcolor and "filled" style. Two paths, no
+  // intermediate `std::string fill` allocation either way.
+  if (resolved_style.mStripeAccent.empty()) {
+    fmt::format_to(std::back_inserter(dot_buffer),
+                   R"({} [shape=circle fillcolor="{}" style="filled")"
+                   R"( label="{}\n{}\n {}:{}\nlength={}\ncoverage={}")",
+                   node_id, resolved_style.mFillColor, canonical_seq_view, complement_strand_buffer,
+                   node_id, default_orientation_sign, node_seq_length, node_total_read_support);
+  } else {
+    fmt::format_to(std::back_inserter(dot_buffer),
+                   R"({} [shape=circle fillcolor="{}:{}" style="filled,striped")"
+                   R"( label="{}\n{}\n {}:{}\nlength={}\ncoverage={}")",
+                   node_id, resolved_style.mFillColor, resolved_style.mStripeAccent,
+                   canonical_seq_view, complement_strand_buffer, node_id, default_orientation_sign,
+                   node_seq_length, node_total_read_support);
+  }
+
+  // Optional attributes: border color, penwidth, peripheries.
+  if (!resolved_style.mBorderColor.empty()) {
+    fmt::format_to(std::back_inserter(dot_buffer), R"( color="{}")", resolved_style.mBorderColor);
+  }
+  if (resolved_style.mPenWidth != 0) {
+    fmt::format_to(std::back_inserter(dot_buffer), " penwidth={}", resolved_style.mPenWidth);
+  }
+  if (resolved_style.mPeripheries != 0) {
+    fmt::format_to(std::back_inserter(dot_buffer), " peripheries={}", resolved_style.mPeripheries);
+  }
+  fmt::format_to(std::back_inserter(dot_buffer), "]\n");
+}
+
+void RenderBaseEdgeDot(fmt::memory_buffer& dot_buffer, Edge const& conn) {
   // Base edges carry sign-pair labels and inherit `color=gray` from the
   // graph-level edge default. Overlay statements emitted in the second
   // pass merge into these via DOT strict-mode semantics, supplying color
   // and penwidth overrides without touching the labels.
-  fmt::print(out,
-             R"({} -> {} [taillabel="{}" headlabel="{}"])"
-             "\n",
-             conn.SrcId(), conn.DstId(), SignChar(conn.SrcSign()), SignChar(conn.DstSign()));
+  auto const src_sign_char = SignChar(conn.SrcSign());
+  auto const dst_sign_char = SignChar(conn.DstSign());
+  fmt::format_to(std::back_inserter(dot_buffer),
+                 R"({} -> {} [taillabel="{}" headlabel="{}"])"
+                 "\n",
+                 conn.SrcId(), conn.DstId(), src_sign_char, dst_sign_char);
 }
 
-void RenderOverlayEdgeStatement(std::ostream& out, NodeID src, NodeID dst,
-                                OverlayEdge const& overlay) {
+void RenderOverlayEdgeStatement(fmt::memory_buffer& dot_buffer, NodeID src_node_id,
+                                NodeID dst_node_id, OverlayEdge const& overlay) {
   if (overlay.mColors.empty()) return;
-  auto const color_list = absl::StrJoin(overlay.mColors, ":");
-  fmt::print(out, R"({} -> {} [color="{}")", src, dst, color_list);
-  if (overlay.mPenWidth != 0) fmt::print(out, " penwidth={}", overlay.mPenWidth);
-  if (overlay.mDashed) out << R"( style="dashed")";
-  out << "]\n";
+
+  auto const color_list_string = absl::StrJoin(overlay.mColors, ":");
+  fmt::format_to(std::back_inserter(dot_buffer), R"({} -> {} [color="{}")", src_node_id,
+                 dst_node_id, color_list_string);
+  if (overlay.mPenWidth != 0) {
+    fmt::format_to(std::back_inserter(dot_buffer), " penwidth={}", overlay.mPenWidth);
+  }
+  if (overlay.mDashed) {
+    fmt::format_to(std::back_inserter(dot_buffer), R"( style="dashed")");
+  }
+  fmt::format_to(std::back_inserter(dot_buffer), "]\n");
 }
 
-void RenderToOstream(std::ostream& out,
-                     absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
-                     DotPlan const& plan) {
-  out << DOT_PREAMBLE;
-  fmt::print(out, "subgraph {} {{\n", plan.mSubgraphName);
+void RenderToBuffer(fmt::memory_buffer& dot_buffer,
+                    absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
+                    DotPlan const& plan) {
+  fmt::format_to(std::back_inserter(dot_buffer), "{}", DOT_PREAMBLE);
+  fmt::format_to(std::back_inserter(dot_buffer), "subgraph {} {{\n", plan.mSubgraphName);
 
   auto const node_overlays = BuildNodeOverlays(plan.mNodeLayers);
   auto const edge_overlays = BuildEdgeOverlays(plan.mEdgeLayers);
@@ -228,31 +273,31 @@ void RenderToOstream(std::ostream& out,
   // First pass: nodes + base edges.
   for (auto const& [node_id, node_ptr] : graph) {
     if (node_ptr->GetComponentId() != plan.mCompId) continue;
-    RenderNodeDot(out, *node_ptr, node_id, node_overlays);
+    RenderNodeDot(dot_buffer, *node_ptr, node_id, node_overlays);
     for (Edge const& conn : *node_ptr) {
-      RenderBaseEdgeDot(out, conn);
+      RenderBaseEdgeDot(dot_buffer, conn);
     }
   }
 
   // Second pass: overlay edge statements, expanded to BOTH DOT directions
   // so anti-parallel mirror splines under `neato` carry the same style.
-  for (auto const& [key, overlay] : edge_overlays) {
-    RenderOverlayEdgeStatement(out, key.mLo, key.mHi, overlay);
-    if (key.mLo != key.mHi) {
-      RenderOverlayEdgeStatement(out, key.mHi, key.mLo, overlay);
+  for (auto const& [logical_edge_key, overlay] : edge_overlays) {
+    RenderOverlayEdgeStatement(dot_buffer, logical_edge_key.mLo, logical_edge_key.mHi, overlay);
+    if (logical_edge_key.mLo != logical_edge_key.mHi) {
+      RenderOverlayEdgeStatement(dot_buffer, logical_edge_key.mHi, logical_edge_key.mLo, overlay);
     }
   }
 
-  out << DOT_FOOTER;
+  fmt::format_to(std::back_inserter(dot_buffer), "{}", DOT_FOOTER);
 }
 
 }  // namespace
 
 auto SerializeToDotString(absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& graph,
                           DotPlan const& plan) -> std::string {
-  std::ostringstream stream;
-  RenderToOstream(stream, graph, plan);
-  return std::move(stream).str();
+  fmt::memory_buffer dot_buffer;
+  RenderToBuffer(dot_buffer, graph, plan);
+  return fmt::to_string(dot_buffer);
 }
 
 // ============================================================================
@@ -324,33 +369,52 @@ auto MakeProbeLayer(ProbeTracker const& tracker, usize const comp_id,
 auto ReconstructRefWalk(absl::Span<NodeID const> ref_node_ids,
                         absl::flat_hash_map<NodeID, std::unique_ptr<Node>> const& nodes,
                         usize const comp_id) -> std::vector<Edge> {
-  std::vector<NodeID> surviving;
-  surviving.reserve(ref_node_ids.size());
+  // First pass: filter ref_node_ids down to the IDs that survived pruning
+  // and still belong to the requested component. Collapse consecutive
+  // duplicates so a single backbone position spanning a self-loop or
+  // hairpin doesn't force two entries.
+  std::vector<NodeID> surviving_ref_ids;
+  surviving_ref_ids.reserve(ref_node_ids.size());
   for (NodeID const ref_id : ref_node_ids) {
-    auto const itr = nodes.find(ref_id);
-    if (itr == nodes.end()) continue;
-    if (itr->second->GetComponentId() != comp_id) continue;
-    if (!surviving.empty() && surviving.back() == ref_id) continue;  // collapse repeats
-    surviving.push_back(ref_id);
+    auto const node_iter = nodes.find(ref_id);
+    if (node_iter == nodes.end()) continue;
+    if (node_iter->second->GetComponentId() != comp_id) continue;
+    auto const is_consecutive_duplicate =
+        !surviving_ref_ids.empty() && surviving_ref_ids.back() == ref_id;
+    if (is_consecutive_duplicate) continue;
+    surviving_ref_ids.push_back(ref_id);
   }
 
-  std::vector<Edge> walk;
-  if (surviving.size() < 2) return walk;
-  walk.reserve(surviving.size() - 1);
+  std::vector<Edge> reconstructed_walk;
+  if (surviving_ref_ids.size() < 2) return reconstructed_walk;
+  reconstructed_walk.reserve(surviving_ref_ids.size() - 1);
 
-  for (usize idx = 0; idx + 1 < surviving.size(); ++idx) {
-    auto const src_itr = nodes.find(surviving[idx]);
-    if (src_itr == nodes.end()) return {};
-    auto const& edges = *src_itr->second;
-    auto const* const found =
-        std::ranges::find_if(edges, [next_id = surviving[idx + 1]](Edge const& edge) {
-          return edge.DstId() == next_id;
-        });
-    if (found == edges.end()) return {};  // backbone fragmented; abandon
-    walk.push_back(*found);
+  // Second pass: for each consecutive (curr_id, next_id) pair, locate the
+  // outgoing edge from curr_id whose destination is next_id. If no such
+  // edge exists, the backbone has fragmented and we return an empty walk
+  // — a partial walk would mislead the renderer about which edges are
+  // backbone-confirmed.
+  for (usize ref_idx = 0; ref_idx + 1 < surviving_ref_ids.size(); ++ref_idx) {
+    auto const curr_node_id = surviving_ref_ids[ref_idx];
+    auto const next_node_id = surviving_ref_ids[ref_idx + 1];
+
+    auto const curr_node_iter = nodes.find(curr_node_id);
+    if (curr_node_iter == nodes.end()) return {};
+    auto const& curr_node_outgoing_edges = *curr_node_iter->second;
+
+    auto const matches_next_node = [next_node_id](Edge const& candidate_edge) {
+      return candidate_edge.DstId() == next_node_id;
+    };
+    auto const* const edge_to_next_node =
+        std::ranges::find_if(curr_node_outgoing_edges, matches_next_node);
+
+    if (edge_to_next_node == curr_node_outgoing_edges.end()) {
+      return {};  // backbone fragmented; abandon
+    }
+    reconstructed_walk.push_back(*edge_to_next_node);
   }
 
-  return walk;
+  return reconstructed_walk;
 }
 
 }  // namespace lancet::cbdg

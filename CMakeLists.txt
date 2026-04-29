@@ -89,8 +89,10 @@ add_library(lancet_base STATIC
 		src/lancet/base/repeat.cpp src/lancet/base/repeat.h
 		src/lancet/base/eta_timer.cpp src/lancet/base/eta_timer.h
 		src/lancet/base/crash_handler.cpp src/lancet/base/crash_handler.h
-		src/lancet/base/sequence_complexity.cpp src/lancet/base/sequence_complexity.h)
-target_link_libraries(lancet_base PRIVATE absl::flat_hash_set
+		src/lancet/base/sequence_complexity.cpp src/lancet/base/sequence_complexity.h
+		src/lancet/base/gzip_ostream.cpp src/lancet/base/gzip_ostream.h
+		src/lancet/base/tar_gz_writer.cpp src/lancet/base/tar_gz_writer.h)
+target_link_libraries(lancet_base PRIVATE absl::flat_hash_set zlibstatic
 		PUBLIC spdlog::spdlog absl::span absl::fixed_array absl::strings absl::time)
 target_include_directories(lancet_base PUBLIC "${CMAKE_SOURCE_DIR}/src" "${CMAKE_BINARY_DIR}/generated")
 set_target_properties(lancet_base PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -100,13 +102,21 @@ set_target_properties(lancet_base PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIR
 #
 # Data flow:
 #
-#   cigar_unit, cigar_utils, aux_tag       BAM field types
-#       ↓
-#   reference                              FASTA reader
-#       ↓
-#   sam_flag → alignment                   read representation
-#       ↓
-#   iterator → extractor                   BAM region traversal
+#   ┌─────────────────────────────────┐
+#   │ cigar_unit, cigar_utils, aux_tag│  BAM field types
+#   └────────────────┬────────────────┘
+#                    ▼
+#   ┌────────────────────────────────┐
+#   │            reference           │  FASTA reader
+#   └────────────────┬───────────────┘
+#                    ▼
+#   ┌────────────────────────────────┐
+#   │      sam_flag → alignment      │  read representation
+#   └────────────────┬───────────────┘
+#                    ▼
+#   ┌────────────────────────────────┐
+#   │      iterator → extractor      │  BAM region traversal
+#   └────────────────────────────────┘
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_hts STATIC
 		# ── Header-only: BAM field types ──────────────────────────────────
@@ -139,26 +149,42 @@ endif ()
 #
 # Data flow:
 #
-#   label, graph_params                    configuration
-#       ↓
-#   sample_mask → kmer                     k-mer encoding + sample tagging
-#       ↓
-#   node → edge → path                     graph topology (path bundles k-mers
-#                                          plus EnumeratedHaplotype = path+walk)
-#       ↓
-#   cycle_finder, traversal_index          graph algorithms
-#       ↓
-#   max_flow, graph_complexity             flow + complexity metrics
-#       ↓
-#   component_result                       per-component assembly output (paths + walks + metrics)
-#       ↓
-#   probe_index → probe_tracker → probe_results_writer   truth variant k-mer tracking
-#       ↓
-#   dot_layers / dot_walk_layers /         layered DOT renderer
-#   dot_overlay_factories / dot_plan /     (consumes probe_tracker for probe layer;
-#   dot_renderer / dot_snapshot_buffer      rendered output deferred via buffer)
-#       ↓
-#   graph                                  assembly orchestrator
+#   ┌──────────────────────────────────────────────────────┐
+#   │                 label, graph_params                  │  configuration
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                 sample_mask → kmer                   │  k-mer encoding + sample tagging
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                 node → edge → path                   │  graph topology (path + walk)
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │              cycle_finder, traversal_index           │  graph algorithms
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │               max_flow, graph_complexity             │  flow + complexity metrics
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                  component_result                    │  per-component assembly output
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │   probe_index → probe_tracker → probe_results_writer │  truth variant k-mer tracking
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │ dot_layers / dot_walk_layers / dot_overlay_factories │  layered DOT renderer
+#   │    dot_plan / dot_renderer / dot_snapshot_buffer     │  (deferred output via buffer)
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                        graph                         │  assembly orchestrator
+#   └──────────────────────────────────────────────────────┘
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_cbdg STATIC
 		# ── Header-only: graph configuration ──────────────────────────────
@@ -197,25 +223,43 @@ set_target_properties(lancet_cbdg PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIR
 # ═══════════════════════════════════════════════════════════════════════════════
 # Layer 4: lancet_caller — variant calling: MSA, genotyping, VCF construction
 #
-# Data flow within the caller module:
+# Data flow:
 #
-#   alt_allele, raw_variant               data structures
-#       ↓
-#   variant_bubble, variant_extractor     SPOA DAG bubble detection
-#       ↓
-#   variant_set                           extraction orchestrator
-#       ↓
-#   local_scorer → combined_scorer        alignment scoring
-#       ↓
-#   genotype_likelihood, posterior_bq      statistical models
-#       ↓
-#   variant_support, support_array        per-allele evidence
-#       ↓
-#   sample_format_data, vcf_formatter     per-sample FORMAT fields
-#       ↓
-#   variant_call                          VCF record assembly
-#       ↓
-#   genotyper                             read-to-haplotype orchestrator
+#   ┌──────────────────────────────────────────────────────┐
+#   │               alt_allele, raw_variant                │  data structures
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │          variant_bubble, variant_extractor           │  SPOA DAG bubble detection
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                     variant_set                      │  extraction orchestrator
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │            local_scorer → combined_scorer            │  alignment scoring
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │         genotype_likelihood, posterior_bq            │  statistical models
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │           variant_support, support_array             │  per-allele evidence
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │          sample_format_data, vcf_formatter           │  per-sample FORMAT fields
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                     variant_call                     │  VCF record assembly
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                      genotyper                       │  read-to-haplotype orchestrator
+#   └──────────────────────────────────────────────────────┘
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_caller STATIC
 		# ── Header-only: constants, enums, data structures ────────────────
@@ -255,35 +299,63 @@ set_target_properties(lancet_caller PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQU
 #
 # Data flow:
 #
-#   window, sample_info                    genomic region + sample metadata
-#       ↓
-#   input_spec_parser                      unified --normal/--tumor/--sample parsing
-#       ↓
-#   sample_header_reader                   BAM header SM extraction + sort + index
-#       ↓
-#   bed_parser                             BED file streaming (HTSlib)
-#       ↓
-#   window_builder                         region partitioning
-#       ↓
-#   active_region_detector                 fast pre-scan for mutation evidence + MD tag check
-#       ↓
-#   read_collector                         BAM read extraction per window
-#       ↓
-#   probe_diagnostics                      truth variant MSA + genotyper analysis
-#       ↓
-#   variant_builder                        assembly + calling per window
-#       ↓
-#   variant_annotator → variant_store      annotation + dedup + VCF output
-#       ↓
-#   async_worker                           thread pool executor
-#       ↓
-#   pipeline_executor                      batch-fed thread pool orchestration
+#   ┌──────────────────────────────────────────────────────┐
+#   │                  window, sample_info                 │  genomic region + sample metadata
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                  input_spec_parser                   │  --normal/--tumor/--sample parsing
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                sample_header_reader                  │  BAM header SM extraction
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                      bed_parser                      │  BED file streaming (HTSlib)
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                    window_builder                    │  region partitioning
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                active_region_detector                │  mutation evidence pre-scan
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                    read_collector                    │  BAM read extraction per window
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                   probe_diagnostics                  │  truth variant MSA analysis
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                   variant_builder                    │  assembly + calling per window
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │         variant_annotator → variant_store            │  annotation + dedup + VCF output
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                     async_worker                     │  thread pool executor
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                  pipeline_executor                   │  batch-fed thread pool orchestration
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                  tar_gz_shard_merger                 │  cat-merge per-worker tar.gz shards
+#   └──────────────────────────────────────────────────────┘
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_core STATIC
 		# ── Header-only: window + sample metadata ─────────────────────────
 		src/lancet/core/window.h
 		src/lancet/core/sample_info.h
-		# ── Implementation pairs: parsing → windowing → reads → build → diagnostics → store → execute ─
+		# ── Implementation pairs: parsing → windowing → reads → build → diagnostics → store → execute → merge ─
 		src/lancet/core/input_spec_parser.cpp src/lancet/core/input_spec_parser.h
 		src/lancet/core/sample_header_reader.cpp src/lancet/core/sample_header_reader.h
 		src/lancet/core/bed_parser.cpp src/lancet/core/bed_parser.h
@@ -295,7 +367,8 @@ add_library(lancet_core STATIC
 		src/lancet/core/variant_annotator.cpp src/lancet/core/variant_annotator.h
 		src/lancet/core/variant_store.cpp src/lancet/core/variant_store.h
 		src/lancet/core/async_worker.cpp src/lancet/core/async_worker.h
-		src/lancet/core/pipeline_executor.cpp src/lancet/core/pipeline_executor.h)
+		src/lancet/core/pipeline_executor.cpp src/lancet/core/pipeline_executor.h
+		src/lancet/core/tar_gz_shard_merger.cpp src/lancet/core/tar_gz_shard_merger.h)
 target_include_directories(lancet_core PUBLIC "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(lancet_core PUBLIC lancet_caller absl::synchronization concurrentqueue PRIVATE absl::hash)
 set_target_properties(lancet_core PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -305,13 +378,21 @@ set_target_properties(lancet_core PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIR
 #
 # Data flow:
 #
-#   cli_params                             user-facing option definitions
-#       ↓
-#   vcf_header_builder                     VCF v4.5 header construction
-#       ↓
-#   pipeline_runner                        thin orchestrator: validate → I/O → delegate
-#       ↓
-#   cli_interface                          CLI11 argument parser + validators
+#   ┌──────────────────────────────────────────────────────┐
+#   │                     cli_params                       │  user-facing option definitions
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                  vcf_header_builder                  │  VCF v4.5 header construction
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                    pipeline_runner                   │  validate → I/O → delegate
+#   └──────────────────────────┬───────────────────────────┘
+#                              ▼
+#   ┌──────────────────────────────────────────────────────┐
+#   │                    cli_interface                     │  CLI11 argument parser + validators
+#   └──────────────────────────────────────────────────────┘
 # ═══════════════════════════════════════════════════════════════════════════════
 add_library(lancet_cli STATIC
 		# ── Header-only: CLI parameter definitions ────────────────────────

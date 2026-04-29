@@ -87,7 +87,12 @@ do
 
   log "Running Lancet2 to serialize window graph for ${REGION}"
   Lancet2 pipeline --window-size 1000 --padding 0 --tumor "${TUMOR}" --normal "${NORMAL}" --reference "${REF_FASTA}" \
-    --region "${CHROM}:${VAR_POS}" --out-vcfgz "${WORK_DIR}/${CURR_NAME}.lancet_calls.vcf.gz" --graphs-dir "${WORK_DIR}/graphs"
+    --region "${CHROM}:${VAR_POS}" --out-vcfgz "${WORK_DIR}/${CURR_NAME}.lancet_calls.vcf.gz" \
+    --out-graphs-tgz "${WORK_DIR}/graphs.tar.gz"
+
+  log "Extracting Lancet2 graph archive"
+  mkdir -p "${WORK_DIR}/graphs"
+  tar -xzf "${WORK_DIR}/graphs.tar.gz" -C "${WORK_DIR}/graphs"
 
   TMR_FQ="${WORK_DIR}/tumor_reads.fastq"
   log "Extracting tumor reads from ${REGION}"
@@ -101,7 +106,22 @@ do
 
   UNCHOPPED_GFA="${WORK_DIR}/${CURR_NAME}.unchopped.gfa"
   log "Unchopping Lancet GFA graph and creating giraffe indexes for ${REGION}"
-  vg mod --unchop "$(ls "${WORK_DIR}/graphs/poa_graph/"*".gfa")" | sed 's/ref0/'"${CHROM}"'/g' >| "${UNCHOPPED_GFA}" && \
+  # `vg mod --unchop` accepts a single GFA. Lancet emits one GFA per
+  # connected component per window under poa_graph/<window>/*.gfa, so a
+  # multi-component window would produce more than one match. Detect and
+  # warn rather than silently passing word-split paths to vg.
+  shopt -s nullglob
+  GFA_FILES=("${WORK_DIR}/graphs/poa_graph/"*/*.gfa)
+  shopt -u nullglob
+  if [[ ${#GFA_FILES[@]} -eq 0 ]]; then
+    log "No GFA files found for ${REGION}; skipping"
+    continue
+  fi
+  if [[ ${#GFA_FILES[@]} -gt 1 ]]; then
+    log "WARNING: ${REGION} produced ${#GFA_FILES[@]} GFA files; using the first: ${GFA_FILES[0]}"
+  fi
+  INPUT_GFA="${GFA_FILES[0]}"
+  vg mod --unchop "${INPUT_GFA}" | sed 's/ref0/'"${CHROM}"'/g' >| "${UNCHOPPED_GFA}" && \
   vg autoindex --workflow giraffe --gfa "${UNCHOPPED_GFA}" --prefix "${WORK_DIR}/${CHROM}_${WIN_START}_${WIN_END}"
 
   GBZ="${WORK_DIR}/${CHROM}_${WIN_START}_${WIN_END}.giraffe.gbz"

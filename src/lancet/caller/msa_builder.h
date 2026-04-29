@@ -7,7 +7,6 @@
 #include "spoa/alignment_engine.hpp"
 #include "spoa/graph.hpp"
 
-#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -20,16 +19,16 @@ class MsaBuilder {
   std::unique_ptr<spoa::AlignmentEngine> mEngine;
   spoa::Graph mGraph;
 
-  using FsPath = std::filesystem::path;
-
   void UpdateSpoaState(absl::Span<std::string_view const> sequences,
                        absl::Span<cbdg::Path::BaseWeights const> weights);
 
-  void SerializeGraph(FsPath const& out_gfa_path);
+  /// Render the SPOA alignment graph as a GFA-1.0 document. Caller decides
+  /// where the bytes go (typically enqueued for the background flusher).
+  [[nodiscard]] auto BuildGfaString() const -> std::string;
 
- private:
-  static void WriteFasta(FsPath const& gfa_path, absl::Span<std::string const> msa_alns);
-  void WriteGfa(FsPath const& out_path) const;
+  /// Render the multiple sequence alignment as a FASTA document. The
+  /// `msa_alns` span comes from `mGraph.GenerateMultipleSequenceAlignment`.
+  [[nodiscard]] static auto BuildFastaString(absl::Span<std::string const> msa_alns) -> std::string;
 };
 
 }  // namespace lancet::caller

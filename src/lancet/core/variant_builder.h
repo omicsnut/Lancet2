@@ -1,6 +1,7 @@
 #ifndef SRC_LANCET_CORE_VARIANT_BUILDER_H_
 #define SRC_LANCET_CORE_VARIANT_BUILDER_H_
 
+#include "lancet/base/tar_gz_writer.h"
 #include "lancet/base/types.h"
 #include "lancet/caller/genotyper.h"
 #include "lancet/caller/msa_builder.h"
@@ -29,7 +30,16 @@ class VariantBuilder {
 
   struct Params {
     // ── 8B Align ────────────────────────────────────────────────────────────
-    std::filesystem::path mOutGraphsDir;
+    /// Final user-facing archive path; ends in `.tar.gz`. Empty when
+    /// `--out-graphs-tgz` is unset (no graph outputs are written).
+    std::filesystem::path mOutGraphsTgz;
+
+    /// Hidden subdirectory next to the final archive where each worker
+    /// writes its `worker_<idx>.tar.gz` shard during the run. Populated
+    /// by PipelineRunner only when `mOutGraphsTgz` is set; the merge step
+    /// in PipelineRunner removes this directory after a successful merge.
+    std::filesystem::path mShardsDir;
+
     std::filesystem::path mProbeVariantsPath;  // input missed_variants.txt for k-mer probing
     std::filesystem::path mProbeResultsPath;   // output probe_results.tsv (CLI parsing only)
     std::shared_ptr<cbdg::ProbeIndex const> mProbeIndex;  // precomputed global k-mer index
@@ -53,7 +63,13 @@ class VariantBuilder {
     bool mSkipActiveRegion = false;
   };
 
-  VariantBuilder(std::shared_ptr<Params const> params, u32 window_length);
+  /// `worker_index` is assigned by PipelineExecutor when constructing
+  /// the worker pool (range `[0, num_threads)`). It is used to derive the
+  /// per-worker shard filename `worker_<idx>.tar.gz` under
+  /// `params->mShardsDir`. When `params->mShardsDir` is empty (i.e.
+  /// `--out-graphs-tgz` unset), no shard is opened and snapshot emission
+  /// is disabled entirely.
+  VariantBuilder(std::shared_ptr<Params const> params, u32 window_length, u32 worker_index);
 
   enum class StatusCode : u8 {
     UNKNOWN = 0,
@@ -86,6 +102,14 @@ class VariantBuilder {
   /// Post-graph probe analysis: MSA extraction and genotyper read assignment.
   ProbeDiagnostics mProbeDiagnostics;
 
+  /// Per-worker gzipped TAR shard. All graph outputs (DOTs from the
+  /// snapshot buffer, GFA + FASTA from MSA extraction) for windows
+  /// processed by this worker thread are appended as TAR entries here.
+  /// Null when `--out-graphs-tgz` is unset (zero overhead). PipelineRunner
+  /// merges the shards into the final user-visible archive after all
+  /// workers have joined.
+  std::unique_ptr<base::TarGzWriter> mGraphShardWriter;
+
   // ── 1B Align ────────────────────────────────────────────────────────────
   StatusCode mCurrentCode = StatusCode::UNKNOWN;
 
@@ -99,8 +123,6 @@ class VariantBuilder {
                                     caller::Genotyper::Result& geno_result,
                                     absl::Span<SampleInfo const> samples, usize window_length,
                                     WindowResults& output_variant_calls);
-
-  [[nodiscard]] auto MakeGfaPath(Window const& win, usize comp_id) const -> std::filesystem::path;
 };
 
 [[nodiscard]] auto ToString(VariantBuilder::StatusCode status_code) -> std::string;

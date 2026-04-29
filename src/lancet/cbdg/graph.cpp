@@ -29,7 +29,6 @@
 
 #include <algorithm>
 #include <array>
-#include <filesystem>
 #include <iterator>
 #include <memory>
 #include <numeric>
@@ -93,6 +92,14 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
   auto const region_start0 = mRegion->StartPos1() - 1;
   auto const region_seq = mRegion->SeqView();
   mCurrK = mParams.mMinKmerLen - mParams.mKmerStepLen;
+
+  // Per-window subdir under `dbg_graph/`. Each worker writes its window's
+  // DOT files into a directory inode no other worker is touching, so
+  // `openat(O_CREAT)` calls cannot serialize on the shared `dbg_graph/`
+  // parent inode.
+  auto const window_subdir_name =
+      fmt::format("{}_{}_{}", region_chrom, mRegion->StartPos1(), mRegion->EndPos1());
+  mDotBuffer.SetWindowSubdir(window_subdir_name);
 
   Context probe_ctx{.mChrom = region_chrom,
                     .mRefSeq = region_seq,
@@ -229,10 +236,12 @@ auto Graph::BuildComponentResults(RegionPtr region, ReadList reads) -> Component
     }
   }
 
-  // Flush any FINAL snapshots accumulated during the successful k-attempt.
-  // No-op when --graphs-dir is unset (mDotBuffer stays empty).
-  if (!mParams.mOutGraphsDir.empty()) {
-    mDotBuffer.Commit(mParams.mOutGraphsDir / "dbg_graph");
+  // Drain any DOTs accumulated during the successful k-attempt into the
+  // per-worker TarGzWriter shard. The shard writer is non-null exactly
+  // when `--out-graphs-tgz` is set; otherwise BufferStageSnapshot /
+  // BufferFinalSnapshot short-circuit and there is nothing to commit.
+  if (mGraphShardWriter != nullptr) {
+    mDotBuffer.Commit(*mGraphShardWriter, "dbg_graph");
   }
 
   // Count ALT haplotypes per component (excluding the leading reference path at index 0).
@@ -973,7 +982,10 @@ auto MakeDotFilename(hts::Reference::Region const& region, std::string_view stag
 
 void Graph::BufferFinalSnapshot(usize const comp_id,
                                 absl::Span<EnumeratedHaplotype const> haplotypes) {
-  if (mParams.mOutGraphsDir.empty()) return;
+  // Snapshot emission is enabled iff the per-worker shard writer was
+  // wired in by VariantBuilder, which only happens when `--out-graphs-tgz`
+  // is set on the CLI. Null = production no-graphs run, zero overhead.
+  if (mGraphShardWriter == nullptr) return;
 
   auto const* stage_label = haplotypes.empty() ? "fully_pruned" : "enumerated_walks";
   auto fname = MakeDotFilename(*mRegion, stage_label, mCurrK, comp_id);
@@ -1000,7 +1012,7 @@ void Graph::BufferFinalSnapshot(usize const comp_id,
 }
 
 void Graph::BufferStageSnapshot(PruneStage const stage, usize const comp_id) {
-  if (mParams.mOutGraphsDir.empty()) return;
+  if (mGraphShardWriter == nullptr) return;
   if (mParams.mSnapshotMode != GraphSnapshotMode::VERBOSE) return;
 
   auto fname = MakeDotFilename(*mRegion, StageFilenameLabel(stage), mCurrK, comp_id);

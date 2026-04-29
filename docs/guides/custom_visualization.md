@@ -1,7 +1,7 @@
 # Custom Visualization
 
 For each window being processed, Lancet2 can optionally serialize two types of graphs that are generated during the variant calling process.
-This can be enabled by passing a non-existing directory to the `--graphs-dir` flag to write per window serialized graphs in the directory.
+This can be enabled by passing a `.tar.gz` archive path to the `--out-graphs-tgz` flag — Lancet writes a single gzipped TAR bundle containing the per-window outputs:
 
 1. the kmer-based colored de-bruijn overlap graph after the cleaning/pruning steps of the assembly
    process serialized as `DOT` formatted [graphviz](https://www.graphviz.org/) files. **One DOT file per
@@ -14,21 +14,42 @@ This can be enabled by passing a non-existing directory to the `--graphs-dir` fl
 ```bash
 Lancet2 pipeline --reference ref.fasta \
     --tumor tumor.bam --normal normal.bam \
-    --region "chr22" --graphs-dir output-graphs
+    --region "chr22" --out-graphs-tgz output-graphs.tar.gz
 ```
 
-The above command will create two directories named `dbg_graph` and `poa_graph` in the provided `output-graphs` directory.
+## Why TAR.GZ instead of a directory tree
 
-- In the `dbg_graph` directory, you will find the `DOT` files generated for each component –
+On shared filesystems (e.g. GPFS), per-file `mkdir` + `openat` operations serialize at the metadata server and add many minutes of unavoidable overhead at typical `--num-threads` settings when graph outputs are written as per-window files in a directory tree. Bundling all outputs into a single gzipped TAR archive cuts the metadata cost from ~hundreds-of-thousands of operations to two per worker (one open + one close), shifts the bottleneck from metadata-bound to sequential-write-bandwidth-bound, and as a side benefit gets a ~2-4× storage win from gzip compression of the text-heavy DOT/GFA/FASTA streams.
+
+## Extracting the archive
+
+Once Lancet2 finishes, extract the archive to recover the original per-window directory tree:
+
+```bash
+tar -xzf output-graphs.tar.gz -C extracted/
+```
+
+(Modern GNU `tar` auto-detects gzip via the `.gz` suffix, so `-xf` works in place of `-xzf` on most systems.)
+
+The extracted tree has two top-level subdirectories:
+
+- `dbg_graph/${CHROM}_${START}_${END}/` — `DOT` files for each component:
   `dbg__${CHROM}_${START}_${END}__${STAGE}__k${KMER_SIZE}__comp${COMP_ID}.dot`,
   where `${STAGE}` is `enumerated_walks` (walks enumerated successfully) or
   `fully_pruned` (graph pruned but no walks). Snapshots are written only for the
   k-attempt that succeeded — abandoned attempts (cycle / complexity retry) leave
-  no artifacts on disk.
+  no artifacts in the archive.
 
-- In the `poa_graph` directory, you will find the `GFA` files generated for each window –
-  `msa__${CHROM}_${START}_${END}__c${COMP_ID}.gfa`
-  The `poa_graph` also contains a `FASTA` file with the raw multiple sequence alignment output.
+- `poa_graph/${CHROM}_${START}_${END}/` — `GFA` files for each component:
+  `msa__${CHROM}_${START}_${END}__c${COMP_ID}.gfa`. Each component subdirectory
+  also contains a `FASTA` file with the raw multiple sequence alignment output.
+
+For ad-hoc inspection of a single file without full extraction:
+
+```bash
+tar -xzOf output-graphs.tar.gz dbg_graph/chr22_X_Y/dbg__chr22_X_Y__enumerated_walks__k31__comp0.dot \
+  | dot -Tpdf -o my_window.pdf
+```
 
 ## DOT snapshot verbosity
 
@@ -44,10 +65,10 @@ serialized. Two values are accepted:
 
 ```bash
 # Default: one DOT per component per window
-Lancet2 pipeline ... --graphs-dir output-graphs
+Lancet2 pipeline ... --out-graphs-tgz output-graphs.tar.gz
 
 # Verbose: adds the four post-compression stages too
-Lancet2 pipeline ... --graphs-dir output-graphs --graph-snapshots verbose
+Lancet2 pipeline ... --out-graphs-tgz output-graphs.tar.gz --graph-snapshots verbose
 ```
 
 This flag replaces the legacy `LANCET_DEVELOP_MODE` compile-time gate — verbose
@@ -115,7 +136,7 @@ into unitigs.
 
 ```bash
 # Render every snapshot to PDF
-for dot_file in output-graphs/dbg_graph/*.dot; do
+for dot_file in output-graphs/dbg_graph/*/*.dot; do
     dot -Tpdf -o "${dot_file%.dot}.pdf" "${dot_file}"
 done
 ```
@@ -153,9 +174,9 @@ and jq, and ensure that they are available as commands that can be executed in t
 2. Install Sequence Tube Map (https://github.com/vgteam/sequenceTubeMap) version [0452ecb82d057372e359a9b456d789336e5ab8a1](https://github.com/vgteam/sequenceTubeMap/tree/0452ecb82d057372e359a9b456d789336e5ab8a1).
 
 3. Use the Lancet2's [`prep_stm_viz.sh`](https://github.com/nygenome/Lancet2/blob/main/scripts/prep_stm_viz.sh) script to run Lancet2 on a small set of variants of interest that need to be
-   visualized in Sequence Tube Map. The script will run Lancet2 using the --graphs-dir flag to generate GFA formatted
-   sequence graphs for each variant of interest. Local VG graphs and indices required to load the sample reads along
-   with the Lancet2 graph are then constructed enabling simplified use with “custom” data option in Sequence Tube Map interface.
+   visualized in Sequence Tube Map. The script will run Lancet2 using the `--out-graphs-tgz` flag, then `tar -xzf` the resulting
+   archive to recover the GFA-formatted sequence graphs for each variant of interest. Local VG graphs and indices required to load the sample reads along
+   with the Lancet2 graph are then constructed enabling simplified use with "custom" data option in Sequence Tube Map interface.
 
 4. After running the Sequence Tube Map Server as detailed in the Tube Map Readme, set “Data” to “custom” and “BED file”
    to “index.bed”. Pick a “Region”(or variant) of interest and hit “Go” to visualize.
