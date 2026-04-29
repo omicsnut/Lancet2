@@ -259,7 +259,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/polars-1.40.0-pyh58ad624_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/polars-runtime-32-1.40.0-py310hffdcd12_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/pygments-2.20.0-pyhd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/bioconda/linux-64/pysam-0.23.3-py310h4a09ff2_3.conda
+      - conda: https://conda.anaconda.org/bioconda/linux-64/pysam-0.24.0-py310h4a09ff2_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/python-3.10.20-h3c07f61_0_cpython.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python-gil-3.10.20-hd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/python_abi-3.10-8_cp310.conda
@@ -3205,9 +3205,9 @@ packages:
   - railroad-diagrams ; extra == 'diagrams'
   - jinja2 ; extra == 'diagrams'
   requires_python: '>=3.9'
-- conda: https://conda.anaconda.org/bioconda/linux-64/pysam-0.23.3-py310h4a09ff2_3.conda
-  sha256: 28cce606bfb302e52bf6e8ec7aea8fd8b193c1014cb3e34dea5a842406c8a4d2
-  md5: cfe4c8c1cfd05b7ede494dc8bc5ace5f
+- conda: https://conda.anaconda.org/bioconda/linux-64/pysam-0.24.0-py310h4a09ff2_0.conda
+  sha256: 44936b261b3d56851068e0e9ad5ef23a5d4384fb4f92b356585597534eaac01a
+  md5: e434223a1dfcd9a74ba7b59c0e9fbdd4
   depends:
   - __glibc >=2.17,<3.0.a0
   - bzip2 >=1.0.8,<2.0a0
@@ -3220,8 +3220,8 @@ packages:
   - python >=3.10,<3.11.0a0
   - python_abi 3.10.* *_cp310
   license: MIT
-  size: 3918380
-  timestamp: 1776869179705
+  size: 3978962
+  timestamp: 1777327172965
 - conda: https://conda.anaconda.org/conda-forge/linux-64/python-3.10.20-h3c07f61_0_cpython.conda
   sha256: 8ff2ce308faf2588b69c65b120293f59a8f2577b772b34df4e817d220b09e081
   md5: 5d4e2b00d99feacd026859b7fa239dc0
