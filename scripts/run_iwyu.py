@@ -431,10 +431,13 @@ def run_fix(build_dir: Path) -> int:
         skipped = fix_result.stdout.count("no contentful changes")
         print(f"    Edited {edited} file(s), skipped {skipped} file(s)")
 
-    # Post-fix: rewrite <third-party/...> → "third-party/..." per convention
-    normalized = normalize_include_style(REPO_ROOT)
-    if normalized > 0:
-        print(f"==> Normalized include style in {normalized} file(s)")
+        # Normalize bracket style after each pass so the next IWYU analysis
+        # sees quoted third-party includes (project convention) instead of
+        # angle brackets. Without this, pass N+1 generates bracket-style
+        # "should remove" directives that undo the fixes from pass N.
+        normalized = normalize_include_style(REPO_ROOT)
+        if normalized > 0:
+            print(f"    Normalized include style in {normalized} file(s)")
 
     print("==> Done. Run 'pixi run fmt-fix' to reorder includes, "
           "then 'pixi run iwyu-check' to verify.")

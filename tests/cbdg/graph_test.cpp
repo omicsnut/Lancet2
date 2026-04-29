@@ -6,6 +6,7 @@
 #include "lancet/cbdg/node.h"
 #include "lancet/cbdg/traversal_index.h"
 
+#include "absl/container/flat_hash_map.h"
 #include "absl/hash/hash.h"
 #include "catch_amalgamated.hpp"
 

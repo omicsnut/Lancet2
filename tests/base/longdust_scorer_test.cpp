@@ -7,6 +7,7 @@
 #include "lancet_test_config.h"
 
 #include <array>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -16,7 +17,6 @@
 #include <string_view>
 
 #include <cmath>
-#include <ctype.h>
 // longdust.c and kalloc.c are compiled into TestLancet2 via FetchContent.
 // This header provides access to longdust's internal f[] table and Q-score
 // functions for exact cross-validation against our C++ LongdustQScorer.
