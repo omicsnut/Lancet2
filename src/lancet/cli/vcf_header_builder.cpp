@@ -45,9 +45,9 @@ constexpr auto FORMAT_STR_HEADER = R"raw(##fileformat=VCFv4.5
 ##FORMAT=<ID=SB,Number=1,Type=Float,Description="Strand bias log odds ratio (Haldane-corrected, coverage-invariant)">
 ##FORMAT=<ID=SCA,Number=1,Type=Float,Description="Soft clip asymmetry (ALT minus REF)">
 ##FORMAT=<ID=FLD,Number=1,Type=Float,Description="Fragment length delta (signed mean ALT isize minus mean REF isize)">
-##FORMAT=<ID=RPCD,Number=1,Type=Float,Description="Read position Cohen's D effect size (0.0 if untestable)">
-##FORMAT=<ID=BQCD,Number=1,Type=Float,Description="Base quality Cohen's D effect size (0.0 if untestable)">
-##FORMAT=<ID=MQCD,Number=1,Type=Float,Description="Mapping quality Cohen's D effect size (0.0 if untestable)">
+##FORMAT=<ID=RPCD,Number=1,Type=Float,Description="Read position Cohen's D effect size (. if untestable)">
+##FORMAT=<ID=BQCD,Number=1,Type=Float,Description="Base quality Cohen's D effect size (. if untestable)">
+##FORMAT=<ID=MQCD,Number=1,Type=Float,Description="Mapping quality Cohen's D effect size (. if untestable)">
 ##FORMAT=<ID=ASMD,Number=1,Type=Float,Description="Allele-specific mismatch delta (mean ALT NM minus mean REF NM minus variant length)">
 ##FORMAT=<ID=SDFC,Number=1,Type=Float,Description="Site depth fold change (sample DP / per-sample window mean coverage)">
 ##FORMAT=<ID=PRAD,Number=1,Type=Float,Description="Polar radius: log10(1 + sqrt(AD_Ref^2 + AD_Alt^2))">
