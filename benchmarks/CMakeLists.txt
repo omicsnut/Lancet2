@@ -14,6 +14,15 @@ add_executable(BenchmarkLancet2
 		extractor_bench.cpp
 		repeat_bench.cpp)
 target_include_directories(BenchmarkLancet2 PRIVATE "${CMAKE_BINARY_DIR}/generated" "${CMAKE_SOURCE_DIR}")
-target_link_libraries(BenchmarkLancet2 PRIVATE mimalloc-static benchmark lancet_cli)
+
+# ── Sanitizer support ─────────────────────────────────────────────────────────
+if (LANCET_SANITIZE_BUILD)
+	target_link_libraries(BenchmarkLancet2 PRIVATE benchmark lancet_cli)
+	target_compile_definitions(BenchmarkLancet2 PRIVATE LANCET_SANITIZE_BUILD=1)
+else ()
+	target_link_libraries(BenchmarkLancet2 PRIVATE mimalloc-static benchmark lancet_cli)
+endif ()
+# ──────────────────────────────────────────────────────────────────────────────
+
 set_target_properties(BenchmarkLancet2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 set_property(TARGET BenchmarkLancet2 PROPERTY $<$<ENABLE_LTO>:INTERPROCEDURAL_OPTIMIZATION TRUE>)

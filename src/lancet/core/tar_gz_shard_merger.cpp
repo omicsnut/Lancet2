@@ -173,7 +173,7 @@ void TarGzShardMerger::Merge() {
       auto const eta_str = FmtDuration(merge_eta_timer.EstimatedEta(), ELAPSED_PRECISION);
 
       // clang-format off
-      static constexpr auto MERGE_PROGRESS_LOG_FMT = "Merging per-worker tar.gz shards: {:>8.4f}% | Elapsed: {} | ETA: {} @ {:.2f} ) shards/s | {} of {} shards merged";
+      static constexpr auto MERGE_PROGRESS_LOG_FMT = "Merging per-worker tar.gz shards: {:>8.4f}% | Elapsed: {} | ETA: {} @ {:.2f} shards/s | {} of {} shards merged";
       // clang-format on
 
       LOG_INFO(MERGE_PROGRESS_LOG_FMT, percent_complete, elapsed_str, eta_str,

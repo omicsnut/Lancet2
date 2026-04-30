@@ -1,0 +1,167 @@
+{
+  "_comment": [
+    "Lancet2 commit message style configuration.",
+    "Loaded by .claude/hooks/validate_commit_message.py at every git commit -m and",
+    "by .claude/commands/commit.md when composing messages.",
+    "",
+    "Two grounding sources:",
+    "  1. .chglog/config.yml (subject parsing, allowed types, BREAKING CHANGE keyword)",
+    "  2. docs_dev/style/cpp_style.md § Git commit messages (body shape: trivial-",
+    "     vs-substantial, two-section pattern, file-list bullet format, language",
+    "     sub-headers)",
+    "",
+    "From .chglog/config.yml:",
+    "  - header.pattern: ^(\\w*)\\:\\s(.*)$        (type and subject only — NO scope)",
+    "  - header.pattern_maps: [Type, Subject]",
+    "  - commits.filters.Type: [feat, fix, perf, chore]",
+    "  - commit_groups.title_maps: feat='New Features', fix='Bug Fixes',",
+    "                              perf='Performance Improvements', chore='Refactoring'",
+    "  - notes.keywords: [BREAKING CHANGE]",
+    "",
+    "From docs_dev/style/cpp_style.md § Git commit messages:",
+    "  - Trivial commits (typos, exec-bit, formatting-only, dependency bumps) ship",
+    "    with no body. Substantial commits use a two-section body:",
+    "    (a) Context paragraphs explaining why, with backtick'd symbols/flags/files;",
+    "    (b) File-list bullets in the form `- path: change`, optionally grouped under",
+    "        language sub-headers (e.g. `C++ changes:`, `Python changes:`).",
+    "    Brace shorthand `name.{h,cpp}` is the convention for header/source pairs."
+  ],
+
+  "header_pattern": "^(?P<type>\\w+): (?P<subject>.+)$",
+  "header_pattern_source": ".chglog/config.yml options.header.pattern",
+
+  "allowed_types": ["feat", "fix", "perf", "chore"],
+
+  "type_to_changelog_section": {
+    "feat":  "New Features",
+    "fix":   "Bug Fixes",
+    "perf":  "Performance Improvements",
+    "chore": "Refactoring"
+  },
+
+  "max_subject_length": 72,
+  "min_subject_length": 10,
+
+  "subject_must_be_lowercase_first_letter": true,
+  "subject_must_not_end_with_period": true,
+  "subject_imperative_mood": "soft_warn",
+
+  "_body_comment": [
+    "Body shape rules implement the two-section pattern from",
+    "docs_dev/style/cpp_style.md § Git commit messages.",
+    "",
+    "Body-required policy is keyed off two signals, both regardless of commit type:",
+    "  1. Subject pattern. If the subject matches one of the trivial_commit_subject",
+    "     patterns (typos, exec-bit, format, dep bumps), the body is optional.",
+    "  2. Diff size. If insertions + deletions in the staged diff fall at or below",
+    "     small_diff_line_threshold, missing body is a soft-warn rather than hard-block.",
+    "     For `git commit -am ...`, unstaged-tracked changes are also counted, since",
+    "     `-a` would stage them at commit time.",
+    "",
+    "The combinations:",
+    "  trivial subject + small diff   + no body → silent pass (the typical case)",
+    "  trivial subject + large diff   + no body → soft-warn ('trivial subject but",
+    "                                              the diff is N lines — double check')",
+    "  non-trivial    + small diff   + no body → soft-warn ('consider adding a body')",
+    "  non-trivial    + large diff   + no body → HARD BLOCK",
+    "  any            + body present + any     → run body-shape checks",
+    "",
+    "When a body IS present and contains a file-list section, the validator checks",
+    "that file-list lines match `file_list_bullet_pattern`. The shape check is soft-",
+    "warn rather than hard-block because the regex cannot perfectly recognize valid",
+    "prose."
+  ],
+
+  "small_diff_line_threshold": 30,
+
+  "trivial_commit_subject_patterns": [
+    "^(fix|chore): typo\\b",
+    "^(fix|chore): fix typo\\b",
+    "^chore: bump\\b",
+    "^chore: update\\s+\\w+\\s+to\\s+v?\\d",
+    "^chore: pin\\b",
+    "^chore: format\\b",
+    "^chore: clang-format\\b",
+    "^chore: rerun\\s+\\w+\\b",
+    "^chore: exec(utable)? bit\\b",
+    "^chore: chmod\\b",
+    "^chore: reformat\\b",
+    "^chore: whitespace\\b",
+    "^chore: gitignore\\b"
+  ],
+
+  "file_list_bullet_pattern": "^- (?P<path>[\\w./{}, *-]+):\\s+(?P<change>.+)$",
+  "language_subheader_pattern": "^(?:C\\+\\+|Python|Shell|Bash|CMake|YAML|JSON|Markdown|Rust|Go) changes:$",
+
+  "body_shape_handling": "soft_warn",
+
+  "max_body_line_length": 72,
+
+  "breaking_change_keyword": "BREAKING CHANGE",
+
+  "auto_generated_subject_prefixes_allowed": [
+    "Merge branch ",
+    "Merge pull request ",
+    "Merge remote-tracking branch ",
+    "Revert \""
+  ],
+
+  "fixup_squash_handling": "soft_warn",
+
+  "examples_good": [
+    "fix: preserve missing-value emission for ASMD on indels",
+    "perf: reuse spoa::AlignmentEngine across windows",
+    "chore: extract input-spec parser for N-sample case/control",
+    "feat: add --extract-pairs to pipeline subcommand",
+    "chore: bump pixi.lock to clang 22.1.4",
+    "chore: fix typo in --num-threads help text"
+  ],
+
+  "examples_bad": [
+    "Update file.cpp",
+    "fix bug",
+    "WIP",
+    "Fixed the variant store deduplication issue.",
+    "FEAT: add new feature",
+    "fix(caller): scope is not allowed by .chglog/config.yml header pattern",
+    "refactor: refactor is not in the chglog filter list; use 'chore:' instead",
+    "docs: docs is not in the chglog filter list",
+    "fix:no-space-after-colon"
+  ],
+
+  "examples_substantial_body": [
+    {
+      "subject": "fix: preserve missing-value emission for ASMD on indels",
+      "body": [
+        "ASMD was emitting `0.0` for indel paths where the alt-allele soft-clip",
+        "subtraction underflowed past the reference length, producing a value",
+        "that downstream filters interpreted as a real (poor) alignment quality",
+        "score. The correct emission is `.` (untestable) per `vcf_header_builder.cpp`.",
+        "",
+        "The fix moves the underflow check to `compute_asmd` and treats any",
+        "negative intermediate as untestable rather than clamping to zero.",
+        "",
+        "- src/lancet/caller/variant_call.{h,cpp}: route untestable ASMD to `.`",
+        "- src/lancet/caller/sample_format_data.cpp: skip ASMD on indel paths",
+        "- tests/caller/asmd_test.cpp: regression case for indel underflow"
+      ]
+    },
+    {
+      "subject": "feat: add --probe-variants for known-truth diagnostics",
+      "body": [
+        "The probe-diagnostics infrastructure in `cbdg/probe_index.{h,cpp}` could",
+        "not be exercised from the CLI; this exposes it via `--probe-variants <vcf>`,",
+        "loading the provided VCF, hashing each variant's k-mer set, and tracking",
+        "graph paths that recover those k-mers. The output goes to `<out>.probe.tsv`.",
+        "",
+        "C++ changes:",
+        "- src/lancet/cli/cli_interface.{h,cpp}: register `--probe-variants` flag",
+        "- src/lancet/cli/cli_params.h: add `probe_variants_path` field",
+        "- src/lancet/core/probe_diagnostics.cpp: wire CLI input to probe runner",
+        "",
+        "Python changes:",
+        "- python/score/probe_summary.py: parse the new `<out>.probe.tsv` format"
+      ]
+    }
+  ]
+}

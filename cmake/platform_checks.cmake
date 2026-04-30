@@ -1,12 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # Platform & Compiler Validation
 #
-# Enforces build requirements before any targets are defined:
+# Enforces build requirements and detects available tools:
 #   - OS:       Linux or macOS (no Windows, no WSL)
 #   - Arch:     x86_64 / amd64 or arm64 / aarch64 (no 32-bit)
 #   - Compiler: GCC ≥ 12.0 or Clang ≥ 14.0 (C++20 concepts + ranges)
 #   - Static:   macOS forces dynamic linking (Apple linker limitation)
 #   - Default:  Release build type when none is specified
+#   - ccache:   compile + link caching when available
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── OS check ──────────────────────────────────────────────────────────────────
@@ -62,4 +63,13 @@ if (LANCET_PROFILE_MODE AND NOT CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
 	message(STATUS "LANCET_PROFILE_MODE=ON requires RelWithDebInfo for source-level profiling.")
 	message(STATUS "Overriding CMAKE_BUILD_TYPE from '${CMAKE_BUILD_TYPE}' to 'RelWithDebInfo'.")
 	set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build." FORCE)
+endif ()
+
+# ── ccache ────────────────────────────────────────────────────────────────────
+# Use ccache if found to cache previously built object files
+find_program(CCACHE_EXE ccache)
+if (CCACHE_EXE)
+	message(STATUS "Found ccache in PATH. Using ccache to speed up recompilation")
+	set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${CCACHE_EXE})
+	set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ${CCACHE_EXE})
 endif ()

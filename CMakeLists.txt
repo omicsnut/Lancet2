@@ -24,20 +24,19 @@ message(STATUS "Lancet v${PROJECT_VERSION}")
 option(LANCET_TESTS "Builds the Lancet tests executable" "OFF")
 option(LANCET_BENCHMARKS "Builds the Lancet benchmarks executable" "OFF")
 option(LANCET_PROFILE_MODE "Enables CPU profiling for the Lancet executable" "OFF")
-option(LANCET_BUILD_STATIC "Build a statically linked Lancet executable" "ON")
-option(LANCET_NATIVE_BUILD "Optimize for this specific CPU. Faster but binary may not run on different hardware" "OFF")
+option(LANCET_BUILD_STATIC "Builds a statically linked Lancet executable" "ON")
+option(LANCET_NATIVE_BUILD "Optimizes the build for the specific CPU. Faster but binary may not run on different hardware" "OFF")
 option(LANCET_VERBOSE_LOGS "Enables TRACE level log messages when --verbose flag is provided at runtime" "OFF")
+option(LANCET_SANITIZE_BUILD "Builds with a sanitizer (ASan/MSan/TSan/UBSan). Excludes mimalloc to avoid allocator-override interference" "OFF")
+cmake_dependent_option(LANCET_ENABLE_CLOUD_IO "Enables native S3 and GCS streaming via libcurl" OFF "NOT LANCET_BUILD_STATIC" OFF)
+
 set_property(CACHE LANCET_TESTS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_BENCHMARKS PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_PROFILE_MODE PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_BUILD_STATIC PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_NATIVE_BUILD PROPERTY STRINGS "OFF" "ON")
 set_property(CACHE LANCET_VERBOSE_LOGS PROPERTY STRINGS "OFF" "ON")
-
-cmake_dependent_option(LANCET_ENABLE_CLOUD_IO
-	"Enables native S3 and GCS streaming via libcurl" OFF
-	"NOT LANCET_BUILD_STATIC" OFF)
-
+set_property(CACHE LANCET_SANITIZE_BUILD PROPERTY STRINGS "OFF" "ON")
 if (NOT LANCET_BUILD_STATIC)
 	set_property(CACHE LANCET_ENABLE_CLOUD_IO PROPERTY STRINGS "OFF" "ON")
 endif ()
@@ -54,10 +53,12 @@ MESSAGE(STATUS "CMAKE_C_COMPILER: ${CMAKE_C_COMPILER}")
 MESSAGE(STATUS "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
 
 include(cmake/platform_checks.cmake)
-include(cmake/optimization_flags.cmake)
-include(cmake/build_toolchain.cmake)
+include(cmake/compiler_flags.cmake)
 
-# ── External Dependencies ─────────────────────────────────────────────────────
+# ── System Dependencies ───────────────────────────────────────────────────────
+# BZip2 and LibLZMA are required by HTSlib for compressed I/O.
+# CURL and OpenSSL are optional, enabled via -DLANCET_ENABLE_CLOUD_IO=ON
+# for native S3/GCS streaming in dynamic-linked builds.
 find_package(BZip2 REQUIRED)
 find_package(LibLZMA REQUIRED)
 
@@ -66,6 +67,7 @@ if (LANCET_ENABLE_CLOUD_IO)
 	find_package(OpenSSL REQUIRED)
 endif ()
 
+# ── Vendored Dependencies ────────────────────────────────────────────────────
 include(cmake/dependencies.cmake)
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -410,7 +412,16 @@ set_target_properties(lancet_cli PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRE
 # ═══════════════════════════════════════════════════════════════════════════════
 add_executable(Lancet2 src/lancet/main.cpp)
 target_include_directories(Lancet2 PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(Lancet2 PRIVATE lancet_cli mimalloc-static absl::cleanup)
+
+# ── Sanitizer support ─────────────────────────────────────────────────────────
+if (LANCET_SANITIZE_BUILD)
+	target_link_libraries(Lancet2 PRIVATE lancet_cli absl::cleanup)
+	target_compile_definitions(Lancet2 PRIVATE LANCET_SANITIZE_BUILD=1)
+else ()
+	target_link_libraries(Lancet2 PRIVATE lancet_cli mimalloc-static absl::cleanup)
+endif ()
+# ──────────────────────────────────────────────────────────────────────────────
+
 set_target_properties(Lancet2 PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 set_property(TARGET Lancet2 PROPERTY $<$<ENABLE_LTO>:INTERPROCEDURAL_OPTIMIZATION TRUE>)
 install(TARGETS Lancet2 DESTINATION bin)
@@ -446,6 +457,7 @@ if (LANCET_TESTS)
 	add_subdirectory(tests)
 endif ()
 
+# https://github.com/google/benchmark/blob/main/docs/user_guide.md
 if (LANCET_BENCHMARKS)
 	add_subdirectory(benchmarks)
 endif ()

@@ -13,10 +13,17 @@ build:
   number: 0
   string: ${{ env.get("LANCET_BUILD_STRING") }}
   script: |
+    # Use clang explicitly (matches pixi-local and Docker builds).
+    # conda-forge's compiler('cxx') macro resolves to gxx_linux-64 on
+    # Linux by default; we override here to use clang_linux-64 from
+    # requirements.build below, with versions pinned to pixi.toml.
+    export CC=$BUILD_PREFIX/bin/clang
+    export CXX=$BUILD_PREFIX/bin/clang++
     mkdir build && cd build
     cmake -GNinja \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=$PREFIX \
+      -DCMAKE_PREFIX_PATH=$PREFIX \
       -DLANCET_BUILD_STATIC=OFF \
       -DLANCET_ENABLE_CLOUD_IO=ON \
       ..
@@ -24,27 +31,66 @@ build:
 
 requirements:
   build:
-    - ${{ compiler('c') }}
-    - ${{ compiler('cxx') }}
+    # Versions match pixi.toml exactly, so the conda package is built
+    # with the same clang / lld / libc++ versions as pixi-local and
+    # Docker. This eliminates compiler-version drift across the three
+    # deployment paths.
+    - clang ==22.1.4
+    - clangxx ==22.1.4
+    - libcxx ==22.1.4
+    - libcxxabi ==22.1.4
+    - libcxx-devel ==22.1.4
+    - libcxx-headers ==22.1.4
+    - compiler-rt ==22.1.4
+    - lld ==22.1.4
     - cmake >=3.25
     - ninja
   host:
-    - libcurl
-    - openssl
-    - bzip2
-    - xz
+    # Build-time host deps. Versions match pixi.toml so the binary
+    # links against the same library versions everywhere.
+    - libcxx ==22.1.4
+    - libcurl ==8.20.0
+    - openssl ==3.6.2
+    - bzip2 ==1.0.8
+    - xz ==5.8.3
   run:
-    - libcurl
-    - openssl
-    - bzip2
-    - xz
+    # Runtime deps. Pinned to the same versions as host so end users
+    # who install via conda get the exact build-time libs. Pin
+    # widening for forward-compat would let conda's resolver pick
+    # newer libs at install time; we don't want that for a variant
+    # caller where reproducibility matters.
+    #
+    # libgcc, libcxxabi, and graphviz are not auto-injected because we
+    # use explicit clang packages instead of conda-forge's compiler()
+    # macro. libgcc provides libgcc_s (--unwindlib=libgcc) and
+    # libatomic (mimalloc/abseil). libcxxabi provides the C++ ABI
+    # layer (-lc++abi). graphviz provides the `dot` CLI (run-only).
+    - libgcc
+    - libcxx ==22.1.4
+    - libcxxabi ==22.1.4
+    - libcurl ==8.20.0
+    - openssl ==3.6.2
+    - bzip2 ==1.0.8
+    - xz ==5.8.3
+    - graphviz ==14.1.2
 
 tests:
   - script:
-      - Lancet2 --version
+      - echo Lancet2 version $(Lancet2 --version) && dot --version
 
 about:
   homepage: https://github.com/nygenome/Lancet2
   license: BSD-3-Clause
   license_file: LICENSE
   summary: Lancet2 is an accurate, C++-based variant caller utilizing localized colored de Bruijn graph assembly
+  description: |
+    Lancet2 is an accurate, C++-based variant caller utilizing localized 
+    colored de Bruijn graph assembly to detect SNVs and indels from
+    paired tumor/normal short-read sequencing data.
+
+    Hardware requirement: this binary is compiled with -march=x86-64-v3 and
+    requires a Haswell or newer CPU (Intel 2013+, AMD Excavator/Zen+ 2015+)
+    with AVX2, BMI2, FMA, and LZCNT support. On incompatible hardware the
+    binary will exit immediately with an Illegal Instruction (SIGILL) crash.
+    To target older hardware, rebuild from source with -DLANCET_NATIVE_BUILD=ON
+    or edit cmake/optimization_flags.cmake to lower the -march baseline.

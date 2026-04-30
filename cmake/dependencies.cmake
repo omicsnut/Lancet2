@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Third-Party Dependencies — fetched and built from source
+# Third-Party Dependencies — cmake policies, vendored libraries
 #
 # All dependencies are pinned to exact versions for reproducible builds.
 # FetchContent downloads at configure time; ExternalProject builds at build time.
@@ -15,20 +15,41 @@
 #   libdeflate    — fast DEFLATE/gzip compression
 #   zlib-ng       — zlib-compatible compression (SIMD-optimized)
 #
-# Cloud I/O (optional, dynamic-linked; enabled via -DLANCET_ENABLE_CLOUD_IO=ON):
-#   libcurl       — S3/GCS streaming (system, found via find_package)
-#   OpenSSL       — TLS for cloud transport (system, found via find_package)
-#
 # Bioinformatics:
 #   htslib        — BAM/CRAM/VCF I/O (ExternalProject, builds libhts.a)
 #   minimap2      — read-to-haplotype alignment (ExternalProject, builds libminimap2.a)
 #   spoa          — SIMD Partial Order Alignment (graph-based MSA)
 #
 # Testing / Benchmarking / Profiling:
-#   Catch2        — unit test framework (amalgamated, tests only)
-#   benchmark     — Google Benchmark (benchmarks only)
-#   gperftools    — CPU profiler (profile mode only)
+#   Catch2        — unit test framework (amalgamated, only when -DLANCET_TESTS=ON)
+#   benchmark     — Google Benchmark (only when -DLANCET_BENCHMARKS=ON)
+#   gperftools    — CPU profiler (only when -DLANCET_PROFILE_MODE=ON)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# ── Policy Defaults for FetchContent Subprojects ──────────────────────────────
+# With cmake_minimum_required(VERSION 3.25), all these policies are already NEW
+# in Lancet2's own scope. These CMAKE_POLICY_DEFAULT_* variables force NEW
+# behavior on FetchContent-downloaded subprojects that may declare a lower
+# cmake_minimum_required (e.g., abseil, spoa, zlib-ng).
+#
+# CMP0012: if() recognizes numbers and boolean constants
+# CMP0048: project() supports VERSION keyword
+# CMP0063: Honor visibility properties for all target types
+# CMP0069: Enforce INTERPROCEDURAL_OPTIMIZATION (LTO)
+# CMP0074: find_package uses <PackageName>_ROOT variables
+# CMP0077: option() honors normal variables set before it
+# CMP0135: FetchContent sets file timestamps to extraction time
+# CMP0067: Honor language standard in try_compile checks
+set(CMAKE_POLICY_DEFAULT_CMP0012 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0063 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0074 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)
+set(CMAKE_POLICY_DEFAULT_CMP0067 NEW)
+
+# ── Vendored Dependencies ────────────────────────────────────────────────────
 include(ExternalProject)
 include(FetchContent)
 include(ProcessorCount)
@@ -53,7 +74,7 @@ endif ()
 FetchContent_Declare(mimalloc GIT_REPOSITORY https://github.com/microsoft/mimalloc.git GIT_TAG v3.3.2 SYSTEM)
 FetchContent_MakeAvailable(mimalloc)
 
-FetchContent_Declare(abseil GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git GIT_TAG 6d6854b SYSTEM)
+FetchContent_Declare(abseil GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git GIT_TAG 06534e0 SYSTEM)
 FetchContent_GetProperties(abseil)
 if (NOT abseil_POPULATED)
 	set(BUILD_TESTING OFF)
@@ -101,7 +122,7 @@ FetchContent_MakeAvailable(zlib-ng)
 
 set(HTSLIB_ROOT_DIR "${CMAKE_CURRENT_BINARY_DIR}/_deps/htslib")
 set(LIB_HTS "${HTSLIB_ROOT_DIR}/libhts.a")
-set(HTSLIB_CONFIG_PARAMS ${HTSLIB_ROOT_DIR} ${CMAKE_C_COMPILER} ${LANCET_ENABLE_CLOUD_IO})
+set(HTSLIB_CONFIG_PARAMS ${HTSLIB_ROOT_DIR} ${CMAKE_C_COMPILER} ${LANCET_ENABLE_CLOUD_IO} ${CMAKE_INSTALL_PREFIX})
 ExternalProject_Add(htslib
 		URL https://github.com/samtools/htslib/releases/download/1.23.1/htslib-1.23.1.tar.bz2
 		URL_MD5 aee2c757fd8c88b9b5b61e8a1eae99de PREFIX "${CMAKE_CURRENT_BINARY_DIR}/_deps"
@@ -163,6 +184,10 @@ if (LANCET_BENCHMARKS)
 	set(BENCHMARK_ENABLE_INSTALL OFF)
 	set(BENCHMARK_INSTALL_DOCS OFF)
 	set(BENCHMARK_ENABLE_LTO OFF)
+	# Pre-set to skip benchmark's try_run regex probe. The probe fails in
+	# -static builds because the tiny test binary can't resolve pthreads
+	# symbols from libc++abi.a at runtime. libc++'s std::regex works fine.
+	set(HAVE_STD_REGEX TRUE CACHE BOOL "" FORCE)
 	FetchContent_Declare(benchmark GIT_REPOSITORY https://github.com/google/benchmark.git GIT_TAG v1.9.5 SYSTEM)
 	FetchContent_MakeAvailable(benchmark)
 endif ()

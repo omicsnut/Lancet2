@@ -1,7 +1,6 @@
 #include "benchmark/benchmark.h"
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(LANCET_SANITIZE_BUILD)
 #include "mimalloc-override.h"  // IWYU pragma: keep
 #endif
 
-// NOLINTNEXTLINE(misc-include-cleaner, cppcoreguidelines-pro-type-vararg, cppcoreguidelines-owning-memory, cert-err58-cpp)
 BENCHMARK_MAIN();

@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "Per-developer Claude Code settings. DO NOT COMMIT.",
+    "Copy this file to settings.local.json and adjust paths to match your checkout.",
+    "",
+    "The default values below assume `bash data/download_test_data.sh` has been run",
+    "from the repository root, which downloads the test data into data/",
+    "from gs://lancet2-test-datasets/test_harness_data/.",
+    "",
+    "Two end-to-end test profiles are configured:",
+    "",
+    "  GERMLINE — single-sample run on NA12878 (chr1) against GRCh38",
+    "    Used to exercise the single-sample/germline pipeline path.",
+    "    Full chr1 in /e2e; 1 Mb subregion for sanitizer/quick-iter work.",
+    "",
+    "  SOMATIC  — tumor/normal pair (HCC1395 / HCC1395BL) on chr4 against GRCh38",
+    "    Used to exercise the primary somatic case/control pipeline.",
+    "    Full chr4 in /e2e; 1 Mb subregion for sanitizer/quick-iter work.",
+    "",
+    "Truth-comparison VCFs (expected_small_variants_giab.chr1.vcf.gz,",
+    "expected_large_variants_manta.chr1.vcf.gz) ship in the dataset but /e2e",
+    "does not consume them; truth comparison is a separate harness."
+  ],
+
+  "env": {
+    "LANCET_TEST_GERMLINE_CRAM":         "data/NA12878.final.cram",
+    "LANCET_TEST_GERMLINE_REFERENCE":    "data/GRCh38_full_analysis_set_plus_decoy_hla.fa.gz",
+    "LANCET_TEST_GERMLINE_REGION":       "chr1",
+    "LANCET_TEST_GERMLINE_REGION_SMALL": "chr1:1000000-2000000",
+
+    "LANCET_TEST_SOMATIC_TUMOR":         "data/chr4_with_pairs.HCC1395_SAMN10102573_SRR7890893.bam",
+    "LANCET_TEST_SOMATIC_NORMAL":        "data/chr4_with_pairs.HCC1395BL_SAMN10102574_SRR7890943.bam",
+    "LANCET_TEST_SOMATIC_REFERENCE":     "data/GRCh38_full_analysis_set_plus_decoy_hla.fa.gz",
+    "LANCET_TEST_SOMATIC_REGION":        "chr4",
+    "LANCET_TEST_SOMATIC_REGION_SMALL":  "chr4:60000000-61000000",
+
+    "LANCET_TEST_REFERENCE_T2T":         "data/chm13v2.0.fa.gz"
+  },
+
+  "_notes": [
+    "Skill-to-region mapping:",
+    "  /e2e                   → REGION (full chromosome) for both profiles, back-to-back",
+    "  profile-and-optimize   → REGION (full chromosome) of the somatic profile",
+    "  sanitizer-triage       → REGION_SMALL (1 Mb) of either profile, default somatic",
+    "  add-cpp-test           → REGION_SMALL (1 Mb) of the somatic profile",
+    "",
+    "LANCET_TEST_REFERENCE_T2T is optional; it supports T2T-CHM13 stratified",
+    "evaluation work that is not currently wired into any skill but will not",
+    "be removed if absent."
+  ]
+}

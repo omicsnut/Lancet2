@@ -1,0 +1,69 @@
+# Lancet2 .claudeignore
+# Files and directories Claude Code should not load into its context.
+# This is distinct from .gitignore: .gitignore controls what git tracks,
+# .claudeignore controls what Claude can read.
+
+# Build outputs (large, regenerable, not source of truth)
+cmake-build-*/
+build/
+_deps/
+.pixi/
+
+# Sanitizer build trees (created by sanitizer-triage skill via
+# pixi run configure-{asan,msan,tsan,ubsan})
+cmake-build-asan/
+cmake-build-msan/
+cmake-build-tsan/
+cmake-build-ubsan/
+
+# Documentation site builds
+site/
+docs/_build/
+
+# Large binary EBM model files
+data/
+
+# Editor and IDE state
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Python virtualenvs (if any local tooling spins one up)
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Observability logs (append-only; quarterly audit reads them via /audit-bundle)
+.claude/observability/
+
+# Claude Code internal state (the worktrees and projects directories that
+# Claude creates are interesting briefly but should not flood future contexts)
+.claude/worktrees/
+.claude/projects/
+.worktrees/
+
+# Agent memory is git-tracked, so it's NOT in this ignore file —
+# but we explicitly note it here so future contributors don't add it.
+# (See .chglog/config.yml for the chglog filter that excludes
+# .claude/agent-memory/ from CHANGELOG generation.)
+
+# Per-developer settings (paths to test data, personal preferences)
+.claude/settings.local.json
+
+# Profile data captures (transient, large)
+*.bin
+profile.bin
+*.prof
+
+# Generated VCFs from /e2e and profile-and-optimize cycles
+/tmp/lancet2_e2e_*.vcf.gz
+/tmp/lancet2_*.bin
+
+# Logs
+*.log

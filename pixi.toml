@@ -7,124 +7,528 @@ version = "2.9.0"
 
 [tasks]
 
-# ── CMake Configure ──────────────────────────────────────────────────────────
-# Both presets accept extra CMake flags: pixi run <task> -- -DFLAG=VALUE
-configure-release = { cmd = [
-  "cmake", "-GNinja",
-  "-B", "cmake-build-release",
-  "-DCMAKE_BUILD_TYPE=Release",
-  "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-  "-DLANCET_TESTS=ON",
-  "-DLANCET_BUILD_STATIC=ON",
-  "-DLANCET_ENABLE_CLOUD_IO=OFF",
-], description = "Configure Release build (extra CMake flags via --)" }
+# ── CMake Configure (clang is the default) ──────────────────────────────────
+# All `configure-*` tasks pin clang explicitly. See the comment block above
+# the sanitizer section for the rationale (originally an abseil-vs-GCC-UBSan
+# bug; the project moved to all-clang afterward for compiler consistency).
+# GCC variants are preserved with a `-gcc` suffix for compiler-comparison
+# and fallback. Both presets accept extra CMake flags via:
+#   pixi run <task> -- -DFLAG=VALUE
+configure-release = {
 
-configure-debug = { cmd = [
-  "cmake", "-GNinja",
-  "-B", "cmake-build-debug",
-  "-DCMAKE_BUILD_TYPE=Debug",
-  "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-  "-DLANCET_TESTS=ON",
-  "-DLANCET_BUILD_STATIC=ON",
-  "-DLANCET_ENABLE_CLOUD_IO=OFF",
-], description = "Configure Debug build (tests ON, compile_commands.json)" }
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-release",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BENCHMARKS=ON",
+    "-DLANCET_BUILD_STATIC=ON",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+  ],
+  description = "Configure Release build with clang (extra CMake flags via --)"}
 
-# ── Build ────────────────────────────────────────────────────────────────────
-build-release = { cmd = "cmake --build cmake-build-release", depends-on = [
-  "configure-release",
-], description = "Build Lancet2 in Release mode" }
+configure-debug = {
 
-build-debug = { cmd = "cmake --build cmake-build-debug", depends-on = [
-  "configure-debug",
-], description = "Build Lancet2 in Debug mode (with tests)" }
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-debug",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BUILD_STATIC=ON",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+  ],
+  description = "Configure Debug build with clang (tests ON, compile_commands.json)"}
 
-# ── Profiling (RelWithDebInfo + gperftools) ──────────────────────────────────
-# Dedicated tasks for profiling builds. Uses RelWithDebInfo (same flags as
-# Release, plus -g for DWARF debug info) to enable pprof source-line annotation.
-# platform_checks.cmake enforces RelWithDebInfo when LANCET_PROFILE_MODE=ON,
-# so passing -DCMAKE_BUILD_TYPE explicitly here is redundant but explicit.
-configure-profile = { cmd = [
-  "cmake", "-GNinja",
-  "-B", "cmake-build-relwithdebinfo",
-  "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
-  "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-  "-DLANCET_PROFILE_MODE=ON",
-  "-DLANCET_BUILD_STATIC=ON",
-  "-DLANCET_ENABLE_CLOUD_IO=OFF",
-], description = "Configure profiling build (RelWithDebInfo + gperftools)" }
+# ── GCC variants (compiler-comparison and fallback) ─────────────────────────
+# Use these when you want to verify a build still compiles cleanly under
+# GCC (catches accidental clang-only constructs creeping in), or when
+# triaging a clang-specific codegen issue. Build trees are suffixed with
+# -gcc so they coexist with the clang trees.
+configure-release-gcc = {
 
-build-profile = { cmd = "cmake --build cmake-build-relwithdebinfo", depends-on = [
-  "configure-profile",
-], description = "Build Lancet2 for profiling (RelWithDebInfo + gperftools)" }
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-release-gcc",
+    "-DCMAKE_C_COMPILER=gcc",
+    "-DCMAKE_CXX_COMPILER=g++",
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BENCHMARKS=ON",
+    "-DLANCET_BUILD_STATIC=ON",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+  ],
+  description = "Configure Release build with GCC (compiler-comparison fallback)"}
 
-# ── Test & Benchmark ─────────────────────────────────────────────────────────
-test = { cmd = "./cmake-build-debug/tests/TestLancet2", depends-on = [
-  "build-debug",
-], description = "Run Catch2 unit tests" }
+configure-debug-gcc = {
 
-bench = { cmd = "./cmake-build-release/benchmarks/BenchmarkLancet2", depends-on = [
-  "build-release",
-], description = "Run benchmarks (first: pixi run configure-release -- -DLANCET_BENCHMARKS=ON)" }
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-debug-gcc",
+    "-DCMAKE_C_COMPILER=gcc",
+    "-DCMAKE_CXX_COMPILER=g++",
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BUILD_STATIC=ON",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+  ],
+  description = "Configure Debug build with GCC (compiler-comparison fallback)"}
 
-# ── Fix (apply auto-fixes, then reformat) ────────────────────────────────────
-fmt-fix = { cmd = "python3 scripts/run_clang_format.py --fix", description = "Apply clang-format to all C++ sources" }
+# ── Build ───────────────────────────────────────────────────────────────────
+build-release = {
 
-lint-fix = { cmd = "python3 scripts/run_clang_tidy.py --fix", depends-on = [
-  "build-release",
-], description = "Run clang-tidy with auto-fix (review changes carefully)" }
+  cmd = "cmake --build cmake-build-release",
+  depends-on = ["configure-release"],
+  description = "Build Lancet2 in Release mode (clang)"}
 
-iwyu-fix = { cmd = "python3 scripts/run_iwyu.py --fix && python3 scripts/run_clang_format.py --fix", depends-on = [
-  "build-release",
-], description = "Fix includes via IWYU, then reformat (IWYU → fix_includes → clang-format)" }
+build-debug = {
 
-# ── Check (CI gate — no modifications, exit 1 on violations) ─────────────────
-fmt-check = { cmd = "python3 scripts/run_clang_format.py", description = "Check C++ formatting (dry-run, fails on diff)" }
+  cmd = "cmake --build cmake-build-debug",
+  depends-on = ["configure-debug"],
+  description = "Build Lancet2 in Debug mode (clang, with tests)"}
 
-lint-check = { cmd = "python3 scripts/run_clang_tidy.py", depends-on = [
-  "build-release",
-], description = "Run clang-tidy on all sources (no fixes, fails on warnings)" }
+build-release-gcc = {
 
-iwyu-check = { cmd = "python3 scripts/run_iwyu.py", depends-on = [
-  "build-release",
-], description = "Check include hygiene with IWYU (no fixes, fails on violations)" }
+  cmd = "cmake --build cmake-build-release-gcc",
+  depends-on = ["configure-release-gcc"],
+  description = "Build Lancet2 in Release mode (GCC fallback)"}
 
-lint-all = { depends-on = [
-  "fmt-check",
-  "lint-check",
-  "iwyu-check",
-], description = "Run all checks (clang-format + clang-tidy + IWYU)" }
+build-debug-gcc = {
 
-# ── Documentation ────────────────────────────────────────────────────────────
+  cmd = "cmake --build cmake-build-debug-gcc",
+  depends-on = ["configure-debug-gcc"],
+  description = "Build Lancet2 in Debug mode (GCC fallback, with tests)"}
+
+# ── Profiling (RelWithDebInfo + gperftools) ─────────────────────────────────
+# Same flags as Release plus -g for DWARF debug info, enabling pprof
+# source-line annotation. platform_checks.cmake enforces RelWithDebInfo
+# when LANCET_PROFILE_MODE=ON, so passing -DCMAKE_BUILD_TYPE explicitly
+# here is redundant but explicit. Profile binary uses clang to match the
+# release binary exactly — pprof samples are only meaningful when the
+# profiled binary's codegen matches what users actually run.
+configure-profile = {
+
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-relwithdebinfo",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_PROFILE_MODE=ON",
+    "-DLANCET_BUILD_STATIC=ON",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+  ],
+  description = "Configure profiling build (clang, RelWithDebInfo + gperftools)"}
+
+build-profile = {
+
+  cmd = "cmake --build cmake-build-relwithdebinfo",
+  depends-on = ["configure-profile"],
+  description = "Build Lancet2 for profiling (clang, RelWithDebInfo + gperftools)"}
+
+configure-profile-gcc = {
+
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-relwithdebinfo-gcc",
+    "-DCMAKE_C_COMPILER=gcc",
+    "-DCMAKE_CXX_COMPILER=g++",
+    "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_PROFILE_MODE=ON",
+    "-DLANCET_BUILD_STATIC=ON",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+  ],
+  description = "Configure profiling build (GCC fallback, RelWithDebInfo)"}
+
+build-profile-gcc = {
+
+  cmd = "cmake --build cmake-build-relwithdebinfo-gcc",
+  depends-on = ["configure-profile-gcc"],
+  description = "Build Lancet2 for profiling (GCC fallback)"}
+
+# ── Test & Benchmark ────────────────────────────────────────────────────────
+test = {
+
+  cmd = "./cmake-build-debug/tests/TestLancet2",
+  depends-on = ["build-debug"],
+  description = "Run unit tests using Catch2 framework (clang build)"}
+
+bench = {
+
+  cmd = "./cmake-build-release/benchmarks/BenchmarkLancet2",
+  depends-on = ["build-release"],
+  description = "Run micro-benchmarks using Google Benchmark (clang build)"}
+
+test-gcc = {
+
+  cmd = "./cmake-build-debug-gcc/tests/TestLancet2",
+  depends-on = ["build-debug-gcc"],
+  description = "Run unit tests against the GCC build (compiler-comparison)"}
+
+bench-gcc = {
+
+  cmd = "./cmake-build-release-gcc/benchmarks/BenchmarkLancet2",
+  depends-on = ["build-release-gcc"],
+  description = "Run micro-benchmarks against the GCC build (compiler-comparison)"}
+
+# ── Fix (apply auto-fixes, then reformat) ───────────────────────────────────
+fmt-fix = {
+
+  cmd = "python3 scripts/run_clang_format.py --fix",
+  description = "Apply clang-format to all C++ sources"}
+
+lint-fix = {
+
+  cmd = "python3 scripts/run_clang_tidy.py --fix",
+  depends-on = ["build-release"],
+  description = "Run clang-tidy with auto-fix (review changes carefully)"}
+
+iwyu-fix = {
+
+  cmd = "python3 scripts/run_iwyu.py --fix && python3 scripts/run_clang_format.py --fix",
+  depends-on = ["build-release"],
+  description = "Fix includes via IWYU, then reformat"}
+
+# ── Check (CI gate — no modifications, exit 1 on violations) ────────────────
+fmt-check = {
+
+  cmd = "python3 scripts/run_clang_format.py",
+  description = "Check C++ formatting (dry-run, fails on diff)"}
+
+lint-check = {
+
+  cmd = "python3 scripts/run_clang_tidy.py",
+  depends-on = ["build-release"],
+  description = "Run clang-tidy on all sources (no fixes, fails on warnings)"}
+
+iwyu-check = {
+
+  cmd = "python3 scripts/run_iwyu.py",
+  depends-on = ["build-release"],
+  description = "Check include hygiene with IWYU (no fixes, fails on violations)"}
+
+lint-all = {
+
+  depends-on = ["fmt-check", "lint-check", "iwyu-check"],
+  description = "Run all checks (clang-format + clang-tidy + IWYU)"}
+
+# ── Documentation ───────────────────────────────────────────────────────────
 docs-serve = { cmd = "mkdocs serve", description = "Serve docs locally at http://127.0.0.1:8000" }
 
-docs-build = { cmd = "mkdocs build --strict", description = "Build docs with strict validation (zero-warning)" }
+docs-build = {
 
-docs-export = { cmd = "python3 scripts/export_docs.py -o Lancet2_Docs.md", description = "Export all docs into a single Markdown file" }
+  cmd = "mkdocs build --strict",
+  description = "Build docs with strict validation (zero-warning)"}
 
-# ── Release & Deployment ─────────────────────────────────────────────────────
-update-changelog = { cmd = "bash scripts/update_changelog.sh", depends-on = [
-  "ensure-git-chglog",
-], description = "Update CHANGELOG.md via git-chglog" }
+docs-export = {
 
-# ── Go Binary Management (all Go tools installed into $CONDA_PREFIX/bin) ──────
-ensure-git-chglog = { cmd = "GOBIN=$CONDA_PREFIX/bin go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest", description = "Install/update git-chglog into the workspace" }
+  cmd = "python3 scripts/export_docs.py -o Lancet2_Docs.md",
+  description = "Export all docs into a single Markdown file"}
 
-# NOTE: ensure-pprof and analyze-profile tasks live in the profiling environment.
-# Use: pixi run -e profiling analyze-profile <profile.bin>
+# ── Release & Deployment ────────────────────────────────────────────────────
+update-changelog = {
+
+  cmd = "bash scripts/update_changelog.sh",
+  depends-on = ["ensure-git-chglog"],
+  description = "Update CHANGELOG.md via git-chglog"}
+
+# ── Sanitizer configure/build/test tasks ────────────────────────────────────
+# WHY THESE LIVE IN pixi.toml:
+# Sanitizer builds need the project's pixi-managed toolchain (clang
+# version, sysroot, libc++ vs libstdc++, sanitizer runtime libraries
+# matching the compiler). Hand-rolling `cmake -B cmake-build-asan ...`
+# outside `pixi run` works on a developer machine that happens to have
+# a compatible system clang, but breaks reproducibility across the
+# team. Putting the tasks in pixi.toml makes them first-class workflow
+# citizens — same as configure-debug, build-profile, etc. — and means
+# the SKILL is a thin wrapper over `pixi run`.
+#
+# WHY THE -DLANCET_SANITIZE_BUILD=ON FLAG:
+# Lancet2's `Lancet2` (pipeline) binary uses `mimalloc-override.h` to
+# replace malloc/free/new/delete with mimalloc's versions at the
+# preprocessor level. This bypasses ASan's interceptors entirely:
+# allocations go directly to mi_malloc, ASan never sees them, every
+# Lancet2 allocation is invisible to the sanitizer. Same problem
+# breaks MSan (mimalloc isn't MSan-instrumented; MSan considers every
+# byte it returns uninitialized → false positives) and TSan (TSan
+# can't track accesses through an uninstrumented allocator).
+#
+# The fix: define LANCET_SANITIZE_BUILD when configuring sanitizer
+# trees. The project's main.cpp is patched (see the source-guard
+# patches that ship with the bundle) to skip the mimalloc include
+# and the mi_option_set/mi_collect calls under this macro. The
+# sanitizer build then uses libc malloc/free, which sanitizers fully
+# understand.
+#
+# Production-allocator coverage trade-off: sanitizer runs do NOT
+# exercise mimalloc-specific behavior. Bugs that depend on mimalloc's
+# allocation pattern, page recycling, or thread-local heap layout
+# won't surface under sanitizers. The sanitizer-triage SKILL
+# documents this explicitly so a clean ASan run is not mistaken for
+# "production is clean."
+#
+# WHY -DLANCET_BUILD_STATIC=OFF:
+# Static linkage with -static drags in the libc and libstdc++ static
+# archives, which conflict with sanitizer runtime libraries (which
+# are typically dynamic). Independent of the mimalloc situation,
+# all four sanitizer trees disable static linkage.
+#
+# WHY -O1 RATHER THAN -O0 OR -O2:
+# UBSan documents that some checks (alignment, signed-overflow) are
+# optimization-dependent and produce false negatives at -O0. -O1 is
+# the recommended baseline. -O2 is faster but loses inlining
+# information needed for readable stacks. Build type Debug + explicit
+# -O1 in CXX_FLAGS gets us the right combination.
+#
+# SEPARATE BUILD TREES PER SANITIZER:
+# Each sanitizer gets its own cmake-build-* tree:
+#   - ASan and TSan are mutually exclusive at link time
+#   - MSan needs an instrumented libc++; mixing with ASan's
+#     allocator interposition causes link-time errors
+#   - UBSan can stack on ASan in the same tree, but if you need
+#     UBSan-only (no ASan), you want a separate tree
+# All four trees are matched by the cmake-build-* glob in
+# protected_paths.txt — they're write-blocked from the agent but
+# build-system writes are unaffected.
+#
+# A NOTE ON TestLancet2 vs Lancet2:
+# TestLancet2 (the Catch2 unit-test binary) does NOT link mimalloc —
+# look at tests/CMakeLists.txt to confirm. So `pixi run test-asan`
+# etc. work cleanly on a stock checkout: no source patches required.
+#
+# The `Lancet2` pipeline binary DOES link mimalloc. Running
+# the pipeline binary under a sanitizer requires the source-guard
+# patches (provided as documented diffs in the bundle's integration
+# guide) to be applied. Without those patches, building the pipeline
+# binary under a sanitizer either fails to link or runs but reports
+# nothing.
+#
+# WHY THERE'S NO pipeline-* TASK (IT'S DELIBERATE):
+# test-* tasks are packaged because their args are stable — run
+# the Catch2 suite, optionally with a tag filter forwarded after
+# `--`. A pipeline-* task would either freeze a specific region /
+# sample pair / thread count (rigid) or be a thin forwarder for
+# `./cmake-build-asan/Lancet2` (no value over typing it directly).
+#
+# Pipeline-level sanitizer runs are therefore ad-hoc. The canonical
+# invocation is documented in the sanitizer-triage SKILL (search
+# `.claude/skills/sanitizer-triage/SKILL.md` for "pipeline-level
+# reproduction"). The `pixi run` prefix is mandatory: sanitizer
+# builds are dynamically linked (-DLANCET_BUILD_STATIC=OFF) and
+# need the pixi env's library path for libasan.so / libtsan.so /
+# libc++.
+#
+# WHY ALL BUILD TASKS PIN clang AS THE COMPILER:
+# All build tasks (release, debug, profile, sanitizers) pin clang.
+# The sanitizer pin originated as a workaround for abseil-cpp issue
+# #1634 / GCC bugzilla #71962, where GCC's -fsanitize=undefined
+# breaks abseil's constexpr expansion of raw_hash_set policy
+# functions. After validating that clang produces equivalent perf
+# and matching variant-call concordance, the project moved to
+# clang for all build paths to keep the toolchain consistent.
+# GCC fallback variants (configure-release-gcc, etc.) remain
+# available for compiler-comparison work and for catching any
+# clang-only constructs that creep into the source tree.
+#
+# WHY ASAN / TSAN / UBSAN GET -march=x86-64-v3 BUT MSAN DOESN'T:
+# All Linux x86 builds (release, debug, profile, asan, tsan, ubsan)
+# target the x86-64-v3 baseline so sanitizer findings reflect the
+# codegen that users actually run. Without this, sanitizer builds
+# silently used the -march=x86-64 baseline (no AVX2), and a clean
+# ASan pass would not certify the AVX2-vectorized inner loops in
+# repeat.cpp / the alignment scoring kernels. MSan is the deliberate
+# exception: AVX2 intrinsics had MSan-instrumentation gaps in clang
+# 14-16 (uninitialized-shadow propagation through SIMD registers)
+# which clang 22.1.4 has fixed, but the cost of regressing into a
+# silent false-positive flood is high enough that we keep MSan at
+# the conservative SSE baseline. MSan is rarely used on Lancet2
+# anyway because vendored deps aren't MSan-instrumented.
+#
+# Linux x86 Debug builds (configure-debug, configure-debug-gcc) get
+# -march=x86-64-v3 from cmake/optimization_flags.cmake's "Linux x86
+# Debug Arch" section. Sanitizer tasks override CMAKE_CXX_FLAGS
+# wholesale here, so they can't inherit through that CMake path —
+# the flag has to be set in their CXX_FLAGS line directly above.
+
+# ── ASan + UBSan (the most common combination) ─────────────────────────────
+# Catches: heap/stack/global buffer overflows, use-after-free,
+# double-free, stack-use-after-scope, signed-overflow, alignment,
+# divide-by-zero, null-deref, type-mismatch, invalid-bool. LSan is
+# bundled with ASan on Linux (default ASAN_OPTIONS=detect_leaks=1).
+# Overhead: ~2× CPU, ~2-3× memory. Use _SMALL test regions for pipeline.
+configure-asan = {
+
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-asan",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BUILD_STATIC=OFF",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+    "-DLANCET_SANITIZE_BUILD=ON",
+    "-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -march=x86-64-v3 -fno-omit-frame-pointer -O1 -g",
+    "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined",
+  ],
+  description = "Configure ASan+UBSan build (cmake-build-asan/)"}
+
+build-asan = {
+
+  cmd = "cmake --build cmake-build-asan",
+  depends-on = ["configure-asan"],
+  description = "Build Lancet2 with ASan+UBSan instrumentation"}
+
+test-asan = {
+
+  cmd = "./cmake-build-asan/tests/TestLancet2",
+  depends-on = ["build-asan"],
+  description = "Run Catch2 tests under ASan+UBSan"}
+
+# ── MSan (uninitialized-memory tracking) ────────────────────────────────────
+# Catches: reads of uninitialized memory across function boundaries.
+# Caveat: MSan requires every linked library to be instrumented, which
+# means an MSan-instrumented libc++. Lancet2's vendored deps (htslib,
+# abseil, spdlog, SPOA, minimap2) are NOT instrumented by default, so
+# MSan will produce false positives on every call into them. MSan is
+# only useful for debugging suspected uninitialized reads in pure
+# Lancet2 code paths that don't touch vendored deps. For most work,
+# ASan is the right default.
+configure-msan = {
+
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-msan",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BUILD_STATIC=OFF",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+    "-DLANCET_SANITIZE_BUILD=ON",
+    "-DCMAKE_CXX_FLAGS=-fsanitize=memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -O1 -g",
+    "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=memory",
+  ],
+  description = "Configure MSan build (cmake-build-msan/)"}
+
+build-msan = {
+
+  cmd = "cmake --build cmake-build-msan",
+  depends-on = ["configure-msan"],
+  description = "Build Lancet2 with MSan instrumentation"}
+
+test-msan = {
+
+  cmd = "./cmake-build-msan/tests/TestLancet2",
+  depends-on = ["build-msan"],
+  description = "Run Catch2 tests under MSan"}
+
+# ── TSan (data-race detection) ──────────────────────────────────────────────
+# Catches: data races, mutex misuse (double-lock, unlock-without-lock,
+# signal handlers calling unsafe code), atomicity violations.
+# Overhead: ~5-15× CPU, 5-10× memory. Always use _SMALL pipeline
+# regions and a thread count high enough to surface contention (≥4).
+configure-tsan = {
+
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-tsan",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BUILD_STATIC=OFF",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+    "-DLANCET_SANITIZE_BUILD=ON",
+    "-DCMAKE_CXX_FLAGS=-fsanitize=thread -march=x86-64-v3 -fno-omit-frame-pointer -O1 -g",
+    "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread",
+  ],
+  description = "Configure TSan build (cmake-build-tsan/)"}
+
+build-tsan = {
+
+  cmd = "cmake --build cmake-build-tsan",
+  depends-on = ["configure-tsan"],
+  description = "Build Lancet2 with TSan instrumentation"}
+
+test-tsan = {
+
+  cmd = "./cmake-build-tsan/tests/TestLancet2",
+  depends-on = ["build-tsan"],
+  description = "Run Catch2 tests under TSan"}
+
+# ── UBSan-only (rarely needed standalone; usually combined with ASan) ───────
+# When you specifically want UBSan diagnostics without ASan's overhead,
+# or when ASan's allocator interposition is interfering with the bug
+# you're chasing. Standalone UBSan is much faster than ASan+UBSan.
+configure-ubsan = {
+
+  cmd = [
+    "cmake", "-GNinja",
+    "-B", "cmake-build-ubsan",
+    "-DCMAKE_C_COMPILER=clang",
+    "-DCMAKE_CXX_COMPILER=clang++",
+    "-DCMAKE_BUILD_TYPE=Debug",
+    "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+    "-DLANCET_TESTS=ON",
+    "-DLANCET_BUILD_STATIC=OFF",
+    "-DLANCET_ENABLE_CLOUD_IO=OFF",
+    "-DLANCET_SANITIZE_BUILD=ON",
+    "-DCMAKE_CXX_FLAGS=-fsanitize=undefined -march=x86-64-v3 -fno-omit-frame-pointer -O1 -g",
+    "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=undefined",
+  ],
+  description = "Configure UBSan-only build (cmake-build-ubsan/)"}
+
+build-ubsan = {
+
+  cmd = "cmake --build cmake-build-ubsan",
+  depends-on = ["configure-ubsan"],
+  description = "Build Lancet2 with UBSan-only instrumentation"}
+
+test-ubsan = {
+
+  cmd = "./cmake-build-ubsan/tests/TestLancet2",
+  depends-on = ["build-ubsan"],
+  description = "Run Catch2 tests under UBSan-only"}
+
+# ── Go Binary Management ───────────────────────────────────────────────────
+# All Go tools installed into $CONDA_PREFIX/bin
+ensure-git-chglog = {
+
+  cmd = "GOBIN=$CONDA_PREFIX/bin go install github.com/git-chglog/git-chglog/cmd/git-chglog@latest",
+  description = "Install/update git-chglog into the workspace"}
+
+# NOTE: ensure-pprof and analyze-profile tasks live in the profiling
+# environment. Use: pixi run -e profiling analyze-profile <profile.bin>
 # See [feature.profiling.tasks] at the bottom of this file.
 
-[tasks.version-bump]
-cmd = "python3 scripts/bump_version.py {{ kind }} && bash scripts/update_changelog.sh"
-args = [{ arg = "kind", default = "patch", choices = ["major", "minor", "patch"] }]
-description = "Bump version (major|minor|patch), update changelog, and push"
+version-bump = {
 
-[tasks.conda-build-local]
-cmd = "bash scripts/build_conda_local.sh"
-description = "Build a local conda package via rattler-build"
+  cmd = "python3 scripts/bump_version.py {{ kind }} && bash scripts/update_changelog.sh",
+  args = [{ arg = "kind", default = "patch", choices = ["major", "minor", "patch"] }],
+  description = "Bump version (major|minor|patch), update changelog, and push"}
 
-[tasks.docker-push]
-cmd = "bash scripts/build_push_image.sh"
-description = "Build and push Docker image to GCR (requires gcloud auth)"
+conda-build-local = {
+
+  cmd = "bash scripts/build_conda_local.sh",
+  description = "Build a local conda package via rattler-build"}
+
+docker-build-push = {
+
+  cmd = "bash scripts/build_push_image.sh",
+  description = "Build and push Docker image to GCR (requires gcloud auth)"}
 
 [dependencies]
 git = "==2.53.0"
@@ -143,6 +547,12 @@ libstdcxx = "==15.2.0"
 clang = "==22.1.4"
 clangxx = "==22.1.4"
 libcxx = "==22.1.4"
+libcxxabi = "==22.1.4"
+libcxx-devel = "==22.1.4"
+libcxx-headers = "==22.1.4"
+compiler-rt = "==22.1.4"
+lld = "==22.1.4"
+lldb = "==21.1.8"
 gdb = "==17.1"
 clang-tools = "==22.1.4"
 include-what-you-use = "==0.26"
@@ -156,34 +566,38 @@ mkdocs-material = "==9.7.6"
 mkdocs-minify-plugin = "==0.8.0"
 mkdocs-git-revision-date-localized-plugin = "==1.5.1"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Feature: profiling — isolated Python deps for CPU profile analysis
+# ── Feature: profiling — isolated Python deps for CPU profile analysis ──────
 #
-# All profiling tasks require the -e profiling flag:
-#   pixi run -e profiling analyze-profile path/to/profile.bin                         (all views)
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view overview
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view top --top 50
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view modules
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view components
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view lines
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view tree
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view tree --focus "lancet::caller"
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --view hotpaths
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --html report.html    (static HTML)
-#   pixi run -e profiling analyze-profile path/to/profile.bin -- --list "BuildGraph"   (source)
+# All profiling tasks require the -e profiling flag.
 #
-# Same-binary diff (both profiles collected from the same binary):
-#   pixi run -e profiling analyze-profile new.bin -- --diff-base old.bin               (same-binary diff)
-#   pixi run -e profiling analyze-profile new.bin -- --diff-base old.bin --html d.html (diff HTML)
+# Base command (all examples below):
+#   pixi run -e profiling analyze-profile <profile.bin> [-- FLAGS]
 #
-# Cross-binary diff (profiles from different binaries — the primary optimization workflow):
-#   pixi run -e profiling analyze-profile old.bin -- --binary old_binary --save-summary before   (save)
-#   pixi run -e profiling analyze-profile new.bin -- --binary new_binary --save-summary after    (save)
-#   pixi run -e profiling analyze-profile -- --diff-tag before after                             (diff)
+# Single-profile views (append after --):
+#   (no flags)                                all views (default)
+#   --view overview                           overview
+#   --view top --top 50                       top-N functions
+#   --view modules                            by module
+#   --view components                         by component
+#   --view lines                              by source line
+#   --view tree                               call tree
+#   --view tree --focus "lancet::caller"      focused subtree
+#   --view hotpaths                           hot paths
+#   --html report.html                        static HTML report
+#   --list "BuildGraph"                       source listing
+#
+# Same-binary diff (both profiles from the same binary):
+#   --diff-base old.bin                       diff vs baseline
+#   --diff-base old.bin --html d.html         diff as HTML
+#
+# Cross-binary diff (profiles from different binaries —
+# the primary optimization workflow):
+#   1. --binary old_binary --save-summary before       (save)
+#   2. --binary new_binary --save-summary after        (save)
+#   3. --diff-tag before after                         (diff)
 #
 # History:
-#   pixi run -e profiling analyze-profile -- --history                                 (trends)
-# ═══════════════════════════════════════════════════════════════════════════════
+#   --history                                 trend report
 
 [feature.profiling.pypi-dependencies]
 rich = "==15.0.0"
@@ -197,19 +611,11 @@ description = "Install/update pprof into the profiling workspace"
 cmd = "python3 scripts/analyze_profile.py {{ profile }}"
 args = [{ arg = "profile", default = "" }]
 depends-on = ["ensure-pprof"]
-description = "Analyze a gperftools CPU profile (use -- for additional flags)"
+description = "Analyze a gperftools CPU profile (use -- for flags)"
 
+# ── Feature: hts-tools — bioinformatics CLI utilities ───────────────────────
 [feature.hts-tools]
 channels = ["conda-forge", "bioconda"]
-
-[feature.walk-palette]
-channels = ["conda-forge", "bioconda"]
-
-[feature.walk-palette.dependencies]
-numpy = "==2.4.3"
-scipy = "==1.17.1"
-scikit-image = "==0.26.0"
-scikit-learn = "==1.8.0"
 
 [feature.hts-tools.dependencies]
 samtools = "==1.23.1"
@@ -221,7 +627,28 @@ pysam = "==0.24.0"
 edlib = "==1.3.9"
 polars = "==1.40.0"
 
+# ── Feature: walk-palette — haplotype walk color optimization ───────────────
+[feature.walk-palette]
+channels = ["conda-forge", "bioconda"]
+
+[feature.walk-palette.dependencies]
+numpy = "==2.4.3"
+scipy = "==1.17.1"
+scikit-image = "==0.26.0"
+scikit-learn = "==1.8.0"
+
+# ── Environments ────────────────────────────────────────────────────────────
 [environments]
 profiling = { features = ["profiling"], solve-group = "default" }
-hts-tools = { features = ["hts-tools"], solve-group = "hts-tools", no-default-feature = true }
-walk-palette = { features = ["walk-palette"], solve-group = "walk-palette", no-default-feature = true }
+
+hts-tools = {
+
+  features = ["hts-tools"],
+  solve-group = "hts-tools",
+  no-default-feature = true}
+
+walk-palette = {
+
+  features = ["walk-palette"],
+  solve-group = "walk-palette",
+  no-default-feature = true}

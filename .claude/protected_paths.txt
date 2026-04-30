@@ -1,0 +1,84 @@
+# Lancet2 protected paths
+#
+# Single source of truth for paths the agent must not WRITE to. This file
+# is consumed by:
+#
+#   1. .claude/hooks/block_protected_paths.py — the PreToolUse hook
+#      registered against `Edit|Write|MultiEdit` only. It substring-matches
+#      these patterns against the proposed file_path and exits 2 (deny) on
+#      match. Read, Glob, Grep, and Bash are not gated by this hook — they
+#      can freely access every path below.
+#
+#   2. .claude/settings.json `permissions.deny` rules — declarative
+#      deny rules of the form `Edit(<glob>)` and `Bash(<command-glob>)`.
+#      Edit() rules apply only to file-writing tools per Claude Code's
+#      permission model; they do not block Read or Glob. The bundle
+#      treats the hook as primary enforcement and `permissions.deny`
+#      as belt-and-suspenders.
+#
+# READ vs WRITE — the asymmetry that matters
+# ============================================
+# Every path on this list is WRITE-protected, not READ-protected. The
+# distinction is deliberate. Source code of vendored dependencies under
+# `cmake-build-*/_deps/` is the ultimate answer for many deep questions
+# ("why does spdlog block on overflow?", "what does absl::Mutex do
+# under contention?", "how does htslib handle CRAM compression?"). The
+# agent must be able to read these freely. It must NEVER write to them
+# — a vendored dep edited in-place is a silent footgun that disappears
+# on the next CMake reconfigure.
+#
+# The hook achieves this asymmetry "for free" because Claude Code's
+# PreToolUse matcher selects `Edit|Write|MultiEdit` only. There is
+# no separate read-allowlist needed.
+#
+# The /audit-bundle slash command (Pairing 8) verifies the
+# settings.json deny rules stay in sync with this file.
+#
+# Format
+# ============================================
+# - One pattern per line.
+# - Comments allowed (lines starting with `#`).
+# - Blank lines allowed.
+# - The hook performs a Python `in` substring-match against the
+#   proposed file_path, so `cmake-build-` matches `cmake-build-debug/...`,
+#   `cmake-build-release/...`, etc. The glob form `cmake-build-*` here
+#   is documentation-faithful (matches the settings.json deny glob)
+#   but functionally identical for the hook's substring-match.
+# - To express a directory, end with `/`.
+#
+# Notes/scratch
+# ============================================
+# `notes/` is INTENTIONALLY NOT on this list. Claude is free to write to:
+#   - notes/scratch/         (free-write area; gitignored)
+#   - notes/<FEATURE>/       (spec + kickoff files; gitignored)
+# Send experimental work there rather than into src/, tests/, or root.
+
+# ─── Build trees and dependencies ─────────────────────────────────────
+# Writing here is blocked; reading is fine.
+# `cmake-build-*/_deps/` in particular contains vendored dependency
+# source (htslib, abseil, spdlog, SPOA, minimap2, concurrentqueue,
+# CLI11, mimalloc, etc.) that the agent reads as the authoritative
+# answer to deep questions. Read-access is preserved by Claude Code's
+# write-only hook matcher.
+cmake-build-*
+_deps/
+.pixi/
+
+# ─── Worktrees and Claude's internal state ────────────────────────────
+.worktrees/
+.git/
+
+# ─── Build configuration (mistakes propagate widely) ──────────────────
+cmake/
+Dockerfile
+pixi.lock
+pixi.toml
+
+# ─── CI and release infrastructure ────────────────────────────────────
+.github/
+data/
+.chglog/
+CHANGELOG.md
+
+# ─── Legal ────────────────────────────────────────────────────────────
+LICENSE
