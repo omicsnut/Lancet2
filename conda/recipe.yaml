@@ -38,7 +38,8 @@ requirements:
     - clang ==22.1.4
     - clangxx ==22.1.4
     - libcxx ==22.1.4
-    - libcxxabi ==22.1.4
+    - if: linux
+      then: libcxxabi ==22.1.4
     - libcxx-devel ==22.1.4
     - libcxx-headers ==22.1.4
     - compiler-rt ==22.1.4
@@ -60,14 +61,18 @@ requirements:
     # newer libs at install time; we don't want that for a variant
     # caller where reproducibility matters.
     #
-    # libgcc, libcxxabi, and graphviz are not auto-injected because we
-    # use explicit clang packages instead of conda-forge's compiler()
-    # macro. libgcc provides libgcc_s (--unwindlib=libgcc) and
-    # libatomic (mimalloc/abseil). libcxxabi provides the C++ ABI
-    # layer (-lc++abi). graphviz provides the `dot` CLI (run-only).
-    - libgcc
+    # libgcc and libcxxabi are Linux-only: on macOS, libc++abi is part
+    # of the system (Xcode) and unwinding uses libSystem, not libgcc.
+    # They are not auto-injected because we use explicit clang packages
+    # instead of conda-forge's compiler() macro. libgcc provides
+    # libgcc_s (--unwindlib=libgcc) and libatomic (mimalloc/abseil).
+    # libcxxabi provides the C++ ABI layer (-lc++abi).
+    # graphviz provides the `dot` CLI (run-only, not linked).
+    - if: linux
+      then:
+        - libgcc
+        - libcxxabi ==22.1.4
     - libcxx ==22.1.4
-    - libcxxabi ==22.1.4
     - libcurl ==8.20.0
     - openssl ==3.6.2
     - bzip2 ==1.0.8
@@ -75,8 +80,17 @@ requirements:
     - graphviz ==14.1.2
 
 tests:
-  - script:
-      - echo Lancet2 version $(Lancet2 --version) && dot --version
+  - script: \
+      if ! command -v Lancet2 >/dev/null 2>&1; then \
+        echo "'Lancet2' not found in PATH" >&2; \
+        return 1; \
+      fi; \
+      if ! command -v dot >/dev/null 2>&1; then \
+        echo "'dot' not found in PATH" >&2; \
+        return 1; \
+      fi; \
+      echo "Lancet2 version $(Lancet2 --version)"; \
+      echo "dot version $(dot --version)"
 
 about:
   homepage: https://github.com/nygenome/Lancet2
@@ -88,9 +102,11 @@ about:
     colored de Bruijn graph assembly to detect SNVs and indels from
     paired tumor/normal short-read sequencing data.
 
-    Hardware requirement: this binary is compiled with -march=x86-64-v3 and
-    requires a Haswell or newer CPU (Intel 2013+, AMD Excavator/Zen+ 2015+)
-    with AVX2, BMI2, FMA, and LZCNT support. On incompatible hardware the
-    binary will exit immediately with an Illegal Instruction (SIGILL) crash.
-    To target older hardware, rebuild from source with -DLANCET_NATIVE_BUILD=ON
-    or edit cmake/optimization_flags.cmake to lower the -march baseline.
+    Hardware requirements:
+      linux-64:  compiled with -march=x86-64-v3 (Haswell 2013+: AVX2,
+                 BMI2, FMA, LZCNT). Pre-Haswell CPUs will crash with
+                 SIGILL on the first AVX2 instruction.
+      osx-arm64: compiled for Apple Silicon (M1 and later). Intel Macs
+                 are not supported by this package.
+    To target other hardware, rebuild from source with
+    -DLANCET_NATIVE_BUILD=ON or edit cmake/optimization_flags.cmake.
