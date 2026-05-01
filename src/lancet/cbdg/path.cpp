@@ -9,7 +9,6 @@
 
 #include <algorithm>
 #include <functional>
-#include <ranges>
 #include <string_view>
 
 namespace lancet::cbdg {

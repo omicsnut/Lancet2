@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <ranges>
 #include <string_view>
 
 namespace lancet::caller {

@@ -16,7 +16,6 @@ extern "C" {
 #include <algorithm>
 #include <filesystem>
 #include <optional>
-#include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>

@@ -11,6 +11,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using lancet::base::TarGzWriter;

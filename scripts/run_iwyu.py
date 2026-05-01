@@ -61,6 +61,11 @@ DEFAULT_BUILD_DIR = "cmake-build-release"
 # IWYU mapping files resolved via PIXI_PROJECT_ROOT at runtime.
 LANCET_MAPPING = "cmake/iwyu/lancet.imp"
 
+# libc++'s own mapping file. Overrides IWYU's incorrect built-in mapping that
+# maps internal headers like <__math/*> to <math> instead of <cmath>.
+# Located in the pixi env's libc++ include directory.
+LIBCXX_MAPPING = "include/c++/v1/libcxx.imp"
+
 # IWYU analysis flags for Lancet2's C++20 codebase.
 IWYU_FLAGS = [
     "--error",
@@ -357,6 +362,10 @@ def build_iwyu_cmd(build_dir: Path) -> list[str]:
     project_root = os.environ.get("PIXI_PROJECT_ROOT", str(REPO_ROOT))
     lancet_map = str(Path(project_root) / LANCET_MAPPING)
 
+    # Resolve libcxx.imp from the pixi env's conda prefix.
+    conda_prefix = os.environ.get("CONDA_PREFIX", "")
+    libcxx_map = str(Path(conda_prefix) / LIBCXX_MAPPING) if conda_prefix else ""
+
     cmd: list[str] = [
         "iwyu_tool.py",
         "-p", str(build_dir),
@@ -368,6 +377,8 @@ def build_iwyu_cmd(build_dir: Path) -> list[str]:
     for flag in IWYU_FLAGS:
         xiwyu.extend(["-Xiwyu", flag])
     xiwyu.extend(["-Xiwyu", f"--mapping_file={lancet_map}"])
+    if libcxx_map and Path(libcxx_map).is_file():
+        xiwyu.extend(["-Xiwyu", f"--mapping_file={libcxx_map}"])
 
     cmd.extend(["--", *xiwyu])
     return cmd
@@ -455,9 +466,13 @@ def run_check(build_dir: Path) -> int:
     """Run IWYU in check-only mode. Returns 1 if any violations are found."""
     cmd = build_iwyu_cmd(build_dir)
 
+    conda_prefix = os.environ.get("CONDA_PREFIX", "")
+    libcxx_map = str(Path(conda_prefix) / LIBCXX_MAPPING) if conda_prefix else "(not found)"
+
     print("==> Running IWYU on Lancet sources...")
-    print(f"    Build dir: {build_dir.relative_to(REPO_ROOT)}")
-    print(f"    Mapping:   {LANCET_MAPPING}")
+    print(f"    Build dir:     {build_dir.relative_to(REPO_ROOT)}")
+    print(f"    Lancet map:    {LANCET_MAPPING}")
+    print(f"    libc++ map:    {libcxx_map}")
     print()
 
     result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)

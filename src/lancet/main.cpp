@@ -4,7 +4,7 @@
 
 #include "absl/cleanup/cleanup.h"
 #ifndef LANCET_SANITIZE_BUILD
-#include "mimalloc.h" // IWYU pragma: keep
+#include "mimalloc.h"  // IWYU pragma: keep
 #endif
 #include "spdlog/sinks/ansicolor_sink.h"
 #include "spdlog/spdlog.h"
